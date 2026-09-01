@@ -75,6 +75,10 @@ export function ViewerProfile() {
                   const value = Number(e.target.value);
                   if (value >= 5 && value <= 60)
                     void preferences(profile.data!.auto_next, value);
+                  else {
+                    e.target.value = String(profile.data!.next_countdown);
+                    setMessage('Choose a countdown from 5 to 60 seconds.');
+                  }
                 }}
               />
             </label>

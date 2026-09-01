@@ -34,6 +34,7 @@ const navigation = [
 ];
 
 const secondary = [
+  { label: 'Active streams', href: '/streams', icon: MonitorPlay },
   { label: 'Settings', href: '/settings', icon: Settings },
   { label: 'Privacy', href: '/privacy', icon: ShieldCheck },
 ];
@@ -59,7 +60,8 @@ export function AppShell({
 
   useEffect(() => {
     apiRequest<CurrentUser>('/auth/me').then(setUser).catch(() => setAccessError('Sign in to access administration.'));
-    apiRequest<PrivacyPosture>('/privacy').then(setPrivacy).catch(() => undefined);
+    const checkPrivacy = () => apiRequest<PrivacyPosture>('/privacy').then(setPrivacy).catch(() => setPrivacy(undefined));
+    void checkPrivacy();
     const updatePrivacy = (event: Event) => {
       const next = (event as CustomEvent<PrivacyPosture>).detail;
       if (next) setPrivacy(next);
@@ -69,7 +71,7 @@ export function AppShell({
       .then((result) => setServerOnline(result.status === 'ok'))
       .catch(() => setServerOnline(false));
     void checkServer();
-    const timer = window.setInterval(() => void checkServer(), 15000);
+    const timer = window.setInterval(() => { void checkServer(); void checkPrivacy(); }, 15000);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener('privacy-posture-changed', updatePrivacy);

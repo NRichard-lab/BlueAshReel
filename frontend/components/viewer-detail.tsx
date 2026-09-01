@@ -32,11 +32,11 @@ function SeasonEpisodes({ seasonId }: { seasonId: string }) {
       </div>
       {(result.data?.total ?? 0) > 30 && (
         <div className="mt-4 flex gap-4">
-          <Button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
+          <Button disabled={result.loading || page === 1} onClick={() => setPage((p) => p - 1)}>
             Previous
           </Button>
           <Button
-            disabled={page * 30 >= (result.data?.total ?? 0)}
+            disabled={result.loading || page * 30 >= (result.data?.total ?? 0)}
             onClick={() => setPage((p) => p + 1)}
           >
             Next
@@ -47,15 +47,18 @@ function SeasonEpisodes({ seasonId }: { seasonId: string }) {
   );
 }
 function Seasons({ mediaId }: { mediaId: string }) {
+  const [seasonPage, setSeasonPage] = useState(1);
   const result = useViewerData<{
     items: { id: string; season_number: number; episode_count: number }[];
-  }>(`/browse/shows/${mediaId}/seasons`);
+    total: number;
+  }>(`/browse/shows/${mediaId}/seasons?page=${seasonPage}`);
   const [selected, setSelected] = useState('');
   const seasonId = selected || result.data?.items[0]?.id;
   return (
     <section className="mt-10">
       <h2 className="mb-4 text-xl font-semibold">Episodes</h2>
-      <NativeSelect
+      <CatalogState {...result} empty={!result.data?.items.length} />
+      {!!result.data?.items.length && !result.error && <NativeSelect
         aria-label="Season"
         value={seasonId ?? ''}
         onChange={(e) => setSelected(e.target.value)}
@@ -65,7 +68,11 @@ function Seasons({ mediaId }: { mediaId: string }) {
             Season {s.season_number} · {s.episode_count} episodes
           </Option>
         ))}
-      </NativeSelect>
+      </NativeSelect>}
+      {(result.data?.total ?? 0) > 100 && <div className="mt-3 flex gap-3">
+        <Button disabled={result.loading || seasonPage === 1} onClick={() => { setSeasonPage(seasonPage - 1); setSelected(''); }}>Previous seasons</Button>
+        <Button disabled={result.loading || seasonPage * 100 >= (result.data?.total ?? 0)} onClick={() => { setSeasonPage(seasonPage + 1); setSelected(''); }}>More seasons</Button>
+      </div>}
       <div className="mt-5">
         {seasonId && <SeasonEpisodes key={seasonId} seasonId={seasonId} />}
       </div>
@@ -78,6 +85,8 @@ export function ViewerDetail({ mediaId }: { mediaId: string }) {
     `/browse/media/${mediaId}/next`,
   );
   const [message, setMessage] = useState('');
+  const [failedPoster, setFailedPoster] = useState<string | null>(null);
+  const [failedBackground, setFailedBackground] = useState<string | null>(null);
   const item = result.data;
   const file = item?.files.find((f) => f.available) ?? item?.files[0];
   async function mark() {
@@ -111,19 +120,21 @@ export function ViewerDetail({ mediaId }: { mediaId: string }) {
           >
             ← {item.show_id ? 'Back to show' : 'Back to collection'}
           </Link>
-          {item.background_url && (
+          {item.background_url && failedBackground !== item.background_url && (
             <Image unoptimized width={1600} height={400}
               src={item.background_url}
               alt=""
+              onError={() => setFailedBackground(item.background_url)}
               className="mb-7 max-h-64 w-full rounded-xl object-cover"
             />
           )}
           <div className="grid gap-8 sm:grid-cols-[190px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)]">
             <div className="hidden sm:block">
-              {item.poster_url ? (
+              {item.poster_url && failedPoster !== item.poster_url ? (
                 <Image unoptimized width={480} height={720}
                   src={item.poster_url}
                   alt={`${item.title} local poster`}
+                  onError={() => setFailedPoster(item.poster_url)}
                   className="aspect-[2/3] w-full rounded-xl object-cover"
                 />
               ) : (

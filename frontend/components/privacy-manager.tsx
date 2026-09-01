@@ -35,6 +35,13 @@ export function PrivacyManager() {
     }).finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    const refresh = () => { void apiRequest<PrivacyRecord>('/privacy').then(setPrivacy).catch(() => setPrivacy(undefined)); };
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener('focus', refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, []);
+
   const save = async () => {
     setSaving(true); setError(undefined); setNotice(undefined);
     try { const result = await apiRequest<PrivacyRecord>('/privacy', { method: 'PATCH', body: jsonBody({ integrations: draft }) }); setPrivacy(result); setDraft(result.integrations); window.dispatchEvent(new CustomEvent('privacy-posture-changed', { detail: result })); setNotice('Outbound integration controls saved and audited.'); }
@@ -50,7 +57,7 @@ export function PrivacyManager() {
 
       <div className="mt-6 grid gap-4 md:grid-cols-3">
         {[
-          { icon: HardDrive, title: 'Local processing', text: 'FFprobe analysis and future transcoding run on your hardware.' },
+          { icon: HardDrive, title: 'Local processing', text: 'Media analysis, subtitles, remuxing and transcoding run on your hardware.' },
           { icon: CloudOff, title: 'No media uploads', text: 'Source media is never sent to an external service.' },
           { icon: LockKeyhole, title: 'No tracking', text: 'No analytics, advertising, tracking pixels, or external crash reporting.' },
         ].map(({ icon: Icon, title, text }) => <Card key={title}><CardHeader><span className="mb-2 grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="size-5" /></span><CardTitle>{title}</CardTitle><CardDescription>{text}</CardDescription></CardHeader></Card>)}
@@ -59,10 +66,10 @@ export function PrivacyManager() {
       <Card className="mt-5">
         <CardHeader className="border-b"><CardTitle>Runtime posture</CardTitle><CardDescription>Core operation does not require Internet access.</CardDescription></CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
-          {loading ? [0, 1, 2].map((item) => <Skeleton key={item} className="h-20" />) : <>
+          {loading ? [0, 1, 2].map((item) => <Skeleton key={item} className="h-20" />) : !privacy ? <output>Live privacy status is unavailable. No enforcement claim can be shown.</output> : <>
             <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Local-only</span><Badge variant="secondary">{privacy?.local_only ? 'Yes' : 'No'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Primary architecture mode</p></div>
             <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Telemetry</span><Badge variant={privacy?.telemetry_enabled ? 'destructive' : 'secondary'}>{privacy?.telemetry_enabled ? 'On' : 'Off'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application analytics</p></div>
-            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Runtime outbound</span><Badge variant={privacy?.runtime_outbound_allowed ? 'outline' : 'secondary'}>{privacy?.runtime_outbound_allowed ? 'Permitted' : 'Blocked'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Host policy signal</p></div>
+            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Runtime outbound</span><Badge variant={privacy?.runtime_outbound_allowed ? 'outline' : 'secondary'}>{privacy?.runtime_outbound_allowed ? 'Permitted' : 'Blocked'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application gate; network isolation requires the reference deployment.</p></div>
           </>}
         </CardContent>
       </Card>
@@ -70,7 +77,7 @@ export function PrivacyManager() {
       <Card className="mt-5">
         <CardHeader className="border-b"><CardTitle className="flex items-center gap-2"><WifiOff className="size-4" /> Future integration switches</CardTitle><CardDescription>Each outbound provider remains explicit, auditable, and Owner-controlled. No provider is contacted in this phase.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
-          {!loading && !privacy?.runtime_outbound_allowed ? (
+          {!loading && privacy && !privacy.runtime_outbound_allowed ? (
             <Alert>
               <CloudOff />
               <AlertTitle>Deployment gate is locked</AlertTitle>

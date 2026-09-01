@@ -44,6 +44,8 @@ export async function apiRequest<T>(
     cache: 'no-store',
   });
 
+  if (response.ok && (response.status === 204 || response.status === 205)) return undefined as T;
+
   const contentType = response.headers.get('content-type') ?? '';
   const payload = contentType.includes('application/json')
     ? await response.json()

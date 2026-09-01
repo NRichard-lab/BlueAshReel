@@ -61,7 +61,11 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
       await apiRequest(`/playback/${current.id}/${end ? 'end' : 'progress'}`, { method: 'POST', body, keepalive: end });
       if (alive.current && !end) setNotice('Progress saved locally');
     } catch (e) {
-      if (alive.current && !end) setNotice(e instanceof Error ? e.message : 'Progress could not be saved.');
+      if (end) {
+        // A dropped final checkpoint must not leave a conversion running.
+        try { await apiRequest(`/playback/${current.id}/stop`, { method: 'POST', keepalive: true }); }
+        catch { if (alive.current) setNotice('Stream stop could not be confirmed. The Owner can stop it in Active Streams.'); }
+      } else if (alive.current) setNotice(e instanceof Error ? e.message : 'Progress could not be saved.');
     }
   }, []);
 
@@ -105,7 +109,7 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
       setSession(current); setPosition(current.position_seconds);
       desired.current = current.position_seconds - (current.video_offset ?? 0);
       setStatus(`${methodLabel[current.decision.method]} · waiting for decoded video`);
-      if (current.decision.method === 'direct' || video.canPlayType('application/vnd.apple.mpegurl')) {
+      if (current.decision.method === 'direct') {
         video.src = current.url;
       } else if (Hls.isSupported()) {
         const hls = new Hls({ enableWorker: false, startPosition: Math.max(0, desired.current),
@@ -115,6 +119,8 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
           if (data.fatal) fail('Local streaming failed. Retry playback; if it repeats, ask the Owner to check Active Streams.', current.id);
         });
         hls.loadSource(current.url); hls.attachMedia(video);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = current.url;
       } else throw new Error('This browser does not support the local streaming output.');
       void video.play().catch(() => { if (alive.current && sessionRef.current?.id === current.id) setStatus('Stream ready. Press Play to begin.'); });
     } catch (e) { fail(e instanceof Error ? e.message : 'Playback could not start.'); }
@@ -224,9 +230,15 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
           }}
           onPause={() => { setPlaying(false); if (sessionRef.current) { setStatus('Paused'); void checkpoint('pause'); } }}
           onWaiting={() => { if (sessionRef.current) setStatus('Buffering local video…'); }}
-          onTimeUpdate={() => { const v = videoRef.current; if (v && sessionRef.current) setPosition((sessionRef.current.video_offset ?? 0) + v.currentTime); }}
+          onTimeUpdate={() => { const v = videoRef.current; if (v && sessionRef.current) setPosition(Math.min(sessionRef.current.duration_seconds, (sessionRef.current.video_offset ?? 0) + v.currentTime)); }}
           onError={() => { if (sessionRef.current && !starting.current) fail('The browser could not decode this source. Try a lower quality or ask the Owner to check the file.'); }}
-          onEnded={() => { void checkpoint('ended', true); setSession(null); setPlaying(false); setStatus('Playback finished');
+          onEnded={() => {
+            const current = sessionRef.current;
+            if (current && (current.video_offset ?? 0) + (videoRef.current?.currentTime ?? 0) < current.duration_seconds - 2) {
+              fail('The local stream ended before the media finished. Reconnect to resume; ask the Owner to check the source if it repeats.', current.id); return;
+            }
+            void checkpoint('ended', true).then(() => { if (alive.current) { setWatched(null); result.reload(); } });
+            setSession(null); setPlaying(false); setStatus('Playback finished');
             if (profile.data?.auto_next && next.data?.item) setCountdown(profile.data.next_countdown); }}>
             <track key={`${session?.id}-${session?.subtitle_index}`} kind="captions" label="Selected local subtitles" srcLang={file?.subtitles.find(s => s.index === session?.subtitle_index)?.language || 'und'} default
               src={session?.subtitle_index != null && file?.subtitles.find(s => s.index === session.subtitle_index)?.text_supported ? `/api/v1/playback/${session.id}/subtitles/${session.subtitle_index}.vtt` : undefined}
@@ -268,7 +280,7 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
           <Option value="">Default track</Option>{file?.audio.map(a => <Option key={a.index} value={a.index}>{a.title || `Track ${a.index}`} · {a.language || 'und'} · {a.codec}</Option>)}
         </NativeSelect></label>
         <label htmlFor="subtitle-track" className="space-y-2 text-sm"><span>Subtitles</span><NativeSelect id="subtitle-track" aria-label="Subtitles" value={subtitle} onChange={e => setSubtitle(e.target.value)}>
-          <Option value="">Off</Option>{file?.subtitles.map(s => <Option key={s.index} value={s.index}>{s.title || `Track ${s.index}`} · {s.codec}{!s.text_supported ? ' · needs conversion' : ''}</Option>)}
+          <Option value="">Off</Option>{file?.subtitles.map(s => <Option key={s.index} value={s.index}>{s.title || `Track ${s.index}`} · {s.codec}{!s.text_supported ? ' · unsupported' : ''}</Option>)}
         </NativeSelect></label>
         <label htmlFor="quality-limit" className="space-y-2 text-sm"><span>Quality limit</span><NativeSelect id="quality-limit" aria-label="Quality limit" value={quality} onChange={e => setQuality(e.target.value)}>
           <Option value="original">Original (server limits apply)</Option><Option value="1080p">1080p · up to 6 Mbps</Option><Option value="720p">720p · up to 3 Mbps</Option><Option value="480p">480p · up to 1.2 Mbps</Option>

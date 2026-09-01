@@ -1,5 +1,17 @@
 # Backup and restore
 
+Phase 2 backups include household grants, preferences, playback sessions and per-user
+watch history. Treat archives as sensitive. Deleting current viewing history does
+not rewrite existing backups; expire them according to household policy. Temporary
+HLS/subtitle output is disposable and should not be backed up as application data.
+
+The validator recognizes exact Phase 1, 2A and 2B table sets, preserving the existing
+pre-upgrade workflow when new scripts inspect an older installed image. The current
+migration head is 2b0100000001. Test clean and populated upgrades before installation.
+Restored active sessions are expired on API startup; durable watch checkpoints
+remain resumable after login. Downgrading Phase 2 discards its new history/grants;
+use a verified pre-upgrade backup if that loss is unacceptable.
+
 BlueReel backs up a running SQLite database through SQLite's online backup API. It never copies an active `app.db` file directly. The resulting timestamped ZIP includes a standalone validated database, application data, product/deployment configuration, and cached artwork unless excluded.
 
 ## Create a backup

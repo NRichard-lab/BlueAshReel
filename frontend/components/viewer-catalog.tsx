@@ -19,6 +19,7 @@ export function MediaCard({
   item: MediaCardRecord;
   compact?: boolean;
 }) {
+  const [failedArtwork, setFailedArtwork] = useState<string | null>(null);
   return (
     <article
       className={`min-w-0 ${compact ? 'flex items-center gap-5 rounded-xl border bg-card p-3' : ''}`}
@@ -28,11 +29,12 @@ export function MediaCard({
         className={`group relative block overflow-hidden rounded-xl border border-border bg-card ${compact ? 'w-16 shrink-0' : 'w-full'}`}
         aria-label={`Details for ${item.title}`}
       >
-        {item.poster_url ? (
+        {item.poster_url && failedArtwork !== item.poster_url ? (
           <Image unoptimized width={480} height={720}
             src={item.poster_url}
             alt=""
             loading="lazy"
+            onError={() => setFailedArtwork(item.poster_url)}
             className="aspect-[2/3] w-full object-cover"
           />
         ) : (
@@ -183,8 +185,9 @@ export function ViewerCatalog({
   const result = useViewerData<PageResult<MediaCardRecord>>(
     `/browse/media?${params}`,
   );
-  const libraries = useViewerData<{ items: { id: string; name: string }[] }>(
-    '/browse/libraries',
+  const [libraryPage, setLibraryPage] = useState(1);
+  const libraries = useViewerData<{ items: { id: string; name: string }[]; total: number }>(
+    `/browse/libraries?page=${libraryPage}`,
   );
   const title = {
     movies: 'Movies',
@@ -280,6 +283,10 @@ export function ViewerCatalog({
         )}
       </div>
       <CatalogState {...result} empty={!result.data?.items.length} />
+      {(libraries.data?.total ?? 0) > 100 && <div className="mb-4 flex gap-3 text-sm">
+        <Button variant="outline" disabled={libraryPage === 1} onClick={() => { setLibraryPage(libraryPage - 1); filter(setLibrary, ''); }}>Previous library choices</Button>
+        <Button variant="outline" disabled={libraryPage * 100 >= (libraries.data?.total ?? 0)} onClick={() => { setLibraryPage(libraryPage + 1); filter(setLibrary, ''); }}>More library choices</Button>
+      </div>}
       {!result.loading && !result.error && (
         <div
           className={

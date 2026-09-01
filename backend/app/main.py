@@ -11,14 +11,17 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import sessionmaker
 
 from app.api.catalog import router as catalog_router
 from app.api.household import router as household_router
 from app.api.playback import router as playback_router
 from app.api.router import router
 from app.config import get_config, get_product_config
+from app.database import create_database_engine
 from app.logging_config import configure_logging
 from app.services.temp_cleanup import cleanup_stale_temp
+from app.services.transcoding import PlaybackManager
 
 config = get_config()
 product = get_product_config()
@@ -28,12 +31,21 @@ logger = logging.getLogger("api")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    for directory in (config.app_data_dir, config.temp_dir, config.artwork_dir):
+    local_config = _app.dependency_overrides.get(get_config, get_config)()
+    for directory in (local_config.app_data_dir, local_config.temp_dir, local_config.artwork_dir):
         directory.expanduser().mkdir(parents=True, exist_ok=True)
-    removed = cleanup_stale_temp(config)
+    removed = cleanup_stale_temp(local_config)
     if removed:
         logger.info("Stale application temporary entries removed", extra={"fields": {"count": removed}})
-    yield
+    local_engine = create_database_engine(local_config.database_url)
+    manager = PlaybackManager(local_config, sessionmaker(bind=local_engine, expire_on_commit=False))
+    _app.state.playback_manager = manager
+    try:
+        manager.start()
+        yield
+    finally:
+        manager.close()
+        local_engine.dispose()
 
 
 app = FastAPI(

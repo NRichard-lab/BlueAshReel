@@ -4,21 +4,28 @@ from datetime import timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import AppConfig, get_config
 from app.database import get_db
 from app.dependencies import Principal, current_principal, require_csrf, require_owner, require_user_csrf
-from app.models import ApplicationSetting, PlaybackSession, WatchProgress, utcnow
+from app.models import ApplicationSetting, MediaFile, PlaybackSession, User, WatchProgress, utcnow
+from app.security import _as_utc
 from app.services.catalog import authorized_file
 from app.services.compatibility import TEXT_SUBTITLES, Decision, PlaybackChoice, decide
 from app.services.playback import byte_range, file_chunks, load_playback, playback_budget, save_progress, setting
-from app.services.subtitles import extract_subtitles
+from app.services.process_supervisor import owned_size
+from app.services.subtitles import extract_subtitles, retime_vtt
+from app.services.transcoding import SEGMENT_NAME, PlaybackManager, no_links
 
 router = APIRouter(tags=["playback"])
+
+
+def get_playback_manager(request: Request) -> PlaybackManager:
+    return request.app.state.playback_manager  # type: ignore[no-any-return]
 
 
 class ProgressInput(BaseModel):
@@ -52,6 +59,7 @@ def create_playback(
     principal: Principal = Depends(require_user_csrf),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
+    manager: PlaybackManager = Depends(get_playback_manager),
 ) -> dict[str, Any]:
     playback_budget.check(f"create:{principal.user.id}", 12)
     # Admission is atomic across concurrent requests in the single local SQLite database.
@@ -59,12 +67,10 @@ def create_playback(
     db.execute(text("BEGIN IMMEDIATE"))
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
-    file, _source = authorized_file(db, principal.user.id, payload.file_id, config)
+    file, source = authorized_file(db, principal.user.id, payload.file_id, config)
     choice = decide(file, payload, config)
     if choice.method == "unsupported":
         raise HTTPException(422, choice.reason)
-    if choice.method != "direct":
-        raise HTTPException(501, "This file needs the local remux/transcode layer; it cannot direct-play.")
     cutoff = utcnow() - timedelta(seconds=config.playback_session_timeout_seconds)
     db.execute(
         update(PlaybackSession)
@@ -90,6 +96,16 @@ def create_playback(
     position = progress.position_seconds if progress and not progress.watched and not payload.restart else 0
     if payload.position_seconds is not None:
         position = min(payload.position_seconds, max(0, (file.duration_seconds or 0) - 0.1))
+    offset = position if choice.method != "direct" else 0
+    if offset:
+        choice = choice.model_copy(
+            update={
+                "method": "transcode",
+                "video_copy": False,
+                "audio_copy": False,
+                "reason": "Precise local seek/resume requires video conversion at this position.",
+            }
+        )
     playback = PlaybackSession(
         user_id=principal.user.id,
         auth_session_id=principal.session.id,
@@ -109,12 +125,26 @@ def create_playback(
     )
     db.add(playback)
     db.commit()
+    url = f"/api/v1/playback/{playback.id}/file"
+    if choice.method != "direct":
+        # Do not hold SQLite's writer lock during process admission/readiness.
+        try:
+            manager.create(file, source, playback, choice, offset)
+            url = f"/api/v1/playback/{playback.id}/hls/index.m3u8"
+            db.expire_all()
+            load_playback(db, principal, playback.id, config)
+        except HTTPException as exc:
+            playback.state, playback.ended_at, playback.error = "failed", utcnow(), str(exc.detail)[:200]
+            db.commit()
+            manager.stop(playback.id)
+            raise
     return {
         "id": playback.id,
         "decision": choice,
         "position_seconds": position,
         "duration_seconds": playback.duration_seconds,
-        "url": f"/api/v1/playback/{playback.id}/file",
+        "url": url,
+        "video_offset": offset,
         "audio_index": playback.audio_index,
         "subtitle_index": playback.subtitle_index,
         "quality": playback.quality,
@@ -191,12 +221,25 @@ def progress(
 
 
 @router.post("/playback/{session_id}/stop", status_code=204)
-def stop(session_id: str, principal: Principal = Depends(require_user_csrf), db: Session = Depends(get_db)) -> None:
+def stop(
+    session_id: str,
+    principal: Principal = Depends(require_user_csrf),
+    db: Session = Depends(get_db),
+    manager: PlaybackManager = Depends(get_playback_manager),
+) -> None:
     playback = db.get(PlaybackSession, session_id)
     if playback is None or playback.user_id != principal.user.id or playback.auth_session_id != principal.session.id:
         raise HTTPException(404, "Playback session not found")
-    playback.state = "stopped"
+    playback.state = "stopping"
     playback.ended_at = utcnow()
+    db.commit()
+    try:
+        manager.stop(session_id)
+    except HTTPException:
+        playback.state, playback.error = "stop_failed", "Local process stop or cleanup needs attention"
+        db.commit()
+        raise
+    playback.state, playback.was_playing = "stopped", False
     db.commit()
 
 
@@ -207,9 +250,15 @@ def end_playback(
     principal: Principal = Depends(require_user_csrf),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
+    manager: PlaybackManager = Depends(get_playback_manager),
 ) -> None:
-    progress(session_id, payload, principal, db, config)
-    stop(session_id, principal, db)
+    try:
+        progress(session_id, payload, principal, db, config)
+    finally:
+        # Exit must release the process even if the final progress checkpoint
+        # is rate-limited or the source vanished. Stop rechecks ownership.
+        db.rollback()
+        stop(session_id, principal, db, manager)
 
 
 @router.get("/playback/{session_id}/subtitles/{index}.vtt")
@@ -219,16 +268,128 @@ def subtitle(
     principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
+    manager: PlaybackManager = Depends(get_playback_manager),
 ) -> Response:
     playback_budget.check(f"subtitle:{principal.user.id}", 20)
-    _playback, file, source = load_playback(db, principal, session_id, config)
+    playback, file, source = load_playback(db, principal, session_id, config)
     track = next((s for s in file.subtitle_streams if s.stream_index == index), None)
     if track is None:
         raise HTTPException(404, "Subtitle track not found")
     if track.codec not in TEXT_SUBTITLES:
         raise HTTPException(422, "Image subtitles require a locally converted video representation")
+    offset = manager.for_session(session_id).offset if playback.method != "direct" else 0
     db.rollback()
-    return Response(extract_subtitles(source, index, config), media_type="text/vtt; charset=utf-8")
+    return Response(
+        retime_vtt(extract_subtitles(source, index, config, runner=manager.subtitle_output), offset),
+        media_type="text/vtt; charset=utf-8",
+    )
+
+
+@router.get("/playback/{session_id}/hls/{name}")
+def hls_file(
+    session_id: str,
+    name: str,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+    manager: PlaybackManager = Depends(get_playback_manager),
+) -> Response:
+    playback, _file, _source = load_playback(db, principal, session_id, config)
+    if playback.method == "direct" or (name != "index.m3u8" and not SEGMENT_NAME.fullmatch(name)):
+        raise HTTPException(404, "Streaming resource not found")
+    job = manager.for_session(session_id)
+    path = job.directory / name
+    if not no_links(path) or not path.is_file():
+        raise HTTPException(404, "Streaming resource is not available")
+    if name == "index.m3u8":
+        if path.stat().st_size > 2 * 1048576:
+            raise HTTPException(422, "Local manifest exceeds safety limit")
+        contents = path.read_text(encoding="utf-8")
+        if any(
+            line and not line.startswith("#") and not SEGMENT_NAME.fullmatch(line) for line in contents.splitlines()
+        ):
+            raise HTTPException(422, "Invalid local manifest")
+        return Response(contents, media_type="application/vnd.apple.mpegurl")
+    return FileResponse(path, media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/streams")
+def streams(
+    _principal: Principal = Depends(require_owner),
+    db: Session = Depends(get_db),
+    manager: PlaybackManager = Depends(get_playback_manager),
+) -> dict[str, Any]:
+    rows = db.execute(
+        select(PlaybackSession, User.username, MediaFile)
+        .join(User, PlaybackSession.user_id == User.id)
+        .join(MediaFile, PlaybackSession.media_file_id == MediaFile.id)
+        .options(selectinload(MediaFile.video_streams))
+        .where(PlaybackSession.state.in_(["active", "stopping", "stop_failed"]))
+        .order_by(PlaybackSession.started_at)
+        .limit(32)
+    ).all()
+    items = []
+    for row, username, file in rows:
+        try:
+            job = manager.for_session(row.id)
+        except HTTPException:
+            job = None
+        video = min(file.video_streams, key=lambda stream: stream.stream_index) if file.video_streams else None
+        items.append(
+            {
+                "id": row.id,
+                "username": username,
+                "method": row.method,
+                "state": row.state,
+                "source_height": video.height if video else None,
+                "output_height": row.decision.get("output_height"),
+                "bitrate_kbps": row.decision.get("bitrate_kbps"),
+                "observed_bitrate_kbps": job.metrics.get("output_bitrate_kbps") if job else None,
+                "speed": job.metrics.get("speed") if job else None,
+                "encoder": job.encoder if job else "none (direct)",
+                "elapsed_seconds": max(0, (utcnow() - _as_utc(row.started_at)).total_seconds()),
+                "startup_ms": row.startup_ms,
+                "temp_bytes": owned_size(job.directory) if job else 0,
+                "error": row.error,
+            }
+        )
+    return {"items": items, "total": len(items), "health": manager.health()}
+
+
+@router.post("/streams/{session_id}/stop", status_code=204)
+def owner_stop(
+    session_id: str,
+    _principal: Principal = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    manager: PlaybackManager = Depends(get_playback_manager),
+) -> None:
+    row = db.get(PlaybackSession, session_id)
+    if row is None:
+        raise HTTPException(404, "Playback session not found")
+    row.state, row.ended_at, row.was_playing = "stopping", utcnow(), False
+    db.commit()
+    try:
+        manager.stop(session_id)
+    except HTTPException:
+        row.state, row.error = "stop_failed", "Local process stop or cleanup needs attention"
+        db.commit()
+        raise
+    row.state, row.error = "stopped", None
+    db.commit()
+
+
+@router.get("/playback-health")
+def playback_health(
+    _principal: Principal = Depends(require_owner), manager: PlaybackManager = Depends(get_playback_manager)
+) -> dict[str, Any]:
+    return manager.health()
+
+
+@router.post("/playback-health/detect")
+def detect_hardware(
+    _principal: Principal = Depends(require_csrf), manager: PlaybackManager = Depends(get_playback_manager)
+) -> dict[str, str]:
+    return manager.detect_hardware()
 
 
 @router.get("/playback-policy")

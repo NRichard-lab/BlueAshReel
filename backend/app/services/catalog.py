@@ -6,9 +6,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import and_, exists, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, exists, func, select
+from sqlalchemy.orm import Session, noload, selectinload
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import ScalarSelect
 
 from app.config import AppConfig
 from app.models import (
@@ -21,6 +22,7 @@ from app.models import (
     Season,
     Series,
     UserLibrary,
+    VideoStream,
     WatchProgress,
 )
 
@@ -59,7 +61,9 @@ def file_available() -> ColumnElement[bool]:
 
 
 def load_item(db: Session, user_id: str, media_id: str) -> MediaItem:
-    item = db.scalar(select(MediaItem).where(MediaItem.id == media_id, permitted_library(user_id)))
+    item = db.scalar(
+        select(MediaItem).options(noload(MediaItem.files)).where(MediaItem.id == media_id, permitted_library(user_id))
+    )
     if item is None:
         raise HTTPException(404, "Media not found in your available libraries")
     return item
@@ -129,18 +133,50 @@ def safe_text(value: str | None) -> str | None:
     if value is None:
         return None
     # Embedded track labels can be untrusted metadata, including absolute paths.
-    if re.search(r"(?:[A-Za-z]:[\\/]|/\w+/|\\\\)", value):
+    if re.search(r"(?:[A-Za-z]:[\\/]|/[^\s/]+/|\\\\)", value):
         return None
     return "".join(c for c in value if c.isprintable())[:200]
 
 
-def cards(db: Session, user_id: str, items: list[MediaItem]) -> list[dict[str, Any]]:
+def primary_video_height() -> ScalarSelect[int | None]:
+    return (
+        select(VideoStream.height)
+        .where(VideoStream.media_file_id == MediaFile.id)
+        .order_by(VideoStream.stream_index)
+        .limit(1)
+        .correlate(MediaFile)
+        .scalar_subquery()
+    )
+
+
+def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | None = None) -> list[dict[str, Any]]:
     ids = [item.id for item in items]
+    height = primary_video_height()
+    ranking = (
+        select(
+            MediaFile.id,
+            func.row_number()
+            .over(
+                partition_by=MediaFile.media_item_id,
+                order_by=(MediaFile.available.desc(), height.desc(), MediaFile.id),
+            )
+            .label("rank"),
+        )
+        .join(LibraryPath)
+        .where(MediaFile.media_item_id.in_(ids), LibraryPath.enabled.is_(True), MediaFile.analysis_error.is_(None))
+    )
+    if resolution:
+        ranking = ranking.where(
+            MediaFile.available.is_(True),
+            height >= resolution,
+        )
+    ranked = ranking.subquery()
     files = db.scalars(
         select(MediaFile)
-        .join(LibraryPath)
-        .where(MediaFile.media_item_id.in_(ids), LibraryPath.enabled.is_(True))
-        .options(selectinload(MediaFile.video_streams))
+        .where(MediaFile.id.in_(select(ranked.c.id).where(ranked.c.rank == 1)))
+        .options(
+            selectinload(MediaFile.video_streams), noload(MediaFile.audio_streams), noload(MediaFile.subtitle_streams)
+        )
         .order_by(MediaFile.available.desc(), MediaFile.id)
     ).all()
     best: dict[str, MediaFile] = {}
@@ -153,16 +189,19 @@ def cards(db: Session, user_id: str, items: list[MediaItem]) -> list[dict[str, A
             select(WatchProgress).where(WatchProgress.user_id == user_id, WatchProgress.media_item_id.in_(ids))
         )
     }
-    artwork: dict[str, str] = {}
-    for art in db.scalars(
-        select(LocalArtwork)
-        .join(LibraryPath)
-        .where(
-            LocalArtwork.media_item_id.in_(ids), LocalArtwork.artwork_type == "poster", LibraryPath.enabled.is_(True)
+    artwork = {
+        media_id: artwork_id
+        for media_id, artwork_id in db.execute(
+            select(LocalArtwork.media_item_id, func.min(LocalArtwork.id))
+            .join(LibraryPath)
+            .where(
+                LocalArtwork.media_item_id.in_(ids),
+                LocalArtwork.artwork_type == "poster",
+                LibraryPath.enabled.is_(True),
+            )
+            .group_by(LocalArtwork.media_item_id)
         )
-        .order_by(LocalArtwork.id)
-    ):
-        artwork.setdefault(art.media_item_id, art.id)
+    }
     episodes = {
         row[0]: row[1:]
         for row in db.execute(
@@ -179,7 +218,7 @@ def cards(db: Session, user_id: str, items: list[MediaItem]) -> list[dict[str, A
     )
     for item in items:
         file = best.get(item.id)
-        video = file.video_streams[0] if file and file.video_streams else None
+        video = min(file.video_streams, key=lambda stream: stream.stream_index) if file and file.video_streams else None
         state = progress.get(item.id)
         episode = episodes.get(item.id)
         result.append(

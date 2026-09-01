@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 from conftest import TestContext
 from sqlalchemy import select, text
 
-from app.models import Episode, MediaFile, MediaItem, Season, Series, VideoStream, WatchProgress
+from app.models import Episode, MediaFile, MediaItem, PlaybackSession, Season, Series, VideoStream, WatchProgress
 
 
 def library(context: TestContext, csrf: str, name: str = "Movies", kind: str = "movies") -> dict:
@@ -181,6 +183,21 @@ def test_delete_account_history_choice(owner_context: tuple[TestContext, str], d
     user = create_viewer(context, csrf, [lib["id"]])
     with context.session_factory() as db:
         db.add(WatchProgress(user_id=user["id"], media_item_id=item))
+        file = db.scalar(select(MediaFile).where(MediaFile.media_item_id == item))
+        db.add(
+            PlaybackSession(
+                user_id=user["id"],
+                media_item_id=item,
+                media_file_id=file.id,
+                fingerprint=file.fingerprint,
+                method="direct",
+                decision={},
+                capabilities={},
+                quality="original",
+                duration_seconds=120,
+                state="stopped",
+            )
+        )
         db.commit()
     assert context.client.delete(f"/api/v1/users/{user['id']}", headers={"X-CSRF-Token": csrf}).status_code == 422
     assert (
@@ -194,6 +211,10 @@ def test_delete_account_history_choice(owner_context: tuple[TestContext, str], d
         assert (state is None) == delete_history
         if state:
             assert state.user_id is None
+        session = db.scalar(select(PlaybackSession))
+        assert (session is None) == delete_history
+        if session:
+            assert session.user_id is None
 
 
 def test_disabled_library_and_manager_paths(owner_context: tuple[TestContext, str]) -> None:
@@ -216,14 +237,74 @@ def test_search_index_and_bounded_large_catalog(owner_context: tuple[TestContext
     with context.session_factory() as db:
         db.add_all(
             MediaItem(library_id=lib["id"], kind="movie", title=f"Fixture {n}", sort_title=f"fixture {n}")
-            for n in range(1000)
+            for n in range(20000)
         )
         db.commit()
         plan = db.execute(
             text("EXPLAIN QUERY PLAN SELECT rowid FROM media_search WHERE media_search MATCH 'Fixture'")
         ).all()
         assert any("VIRTUAL TABLE INDEX" in str(row) for row in plan)
+    started = time.perf_counter()
     response = context.client.get("/api/v1/browse/media?q=Fixture&page=2&page_size=24")
+    print(f"20,000-item indexed catalog page: {(time.perf_counter() - started) * 1000:.1f} ms")
     assert response.status_code == 200, response.text
-    assert response.json()["total"] == 1000
+    assert response.json()["total"] == 20000
     assert len(response.json()["items"]) == 24
+
+
+def test_preferred_file_stays_consistent_and_details_are_bounded(owner_context: tuple[TestContext, str]) -> None:
+    context, csrf = owner_context
+    lib = library(context, csrf)
+    item = movie(context, lib)
+    with context.session_factory() as db:
+        for n in range(40):
+            file = MediaFile(
+                media_item_id=item,
+                library_path_id=lib["paths"][0]["id"],
+                relative_path=f"variant-{n}.mkv",
+                size_bytes=32,
+                modified_ns=1,
+                fingerprint="f" * 64,
+                available=True,
+            )
+            db.add(file)
+            db.flush()
+            db.add(VideoStream(media_file_id=file.id, stream_index=0, codec="hevc", height=2160 if n == 39 else 480))
+            preferred = file.id
+        db.commit()
+    card = context.client.get("/api/v1/browse/media?resolution=2160").json()["items"][0]
+    detail = context.client.get(f"/api/v1/browse/media/{item}").json()
+    assert card["file_id"] == detail["file_id"] == detail["files"][0]["id"] == preferred
+    assert len(detail["files"]) == 10 and detail["file_total"] == 41
+    legacy = context.client.get("/api/v1/media").json()["items"][0]
+    assert len(legacy["files"]) == 1 and legacy["file_total"] == 41
+    legacy_detail = context.client.get(f"/api/v1/media/{item}?file_page=2").json()
+    assert len(legacy_detail["files"]) == 10 and legacy_detail["file_page"] == 2
+
+
+def test_search_index_tracks_update_and_delete(owner_context: tuple[TestContext, str]) -> None:
+    context, csrf = owner_context
+    lib = library(context, csrf)
+    item = movie(context, lib, "Original")
+    with context.session_factory() as db:
+        row = db.get(MediaItem, item)
+        row.title = "Renamed"
+        db.commit()
+    assert context.client.get("/api/v1/browse/media?q=Original").json()["total"] == 0
+    assert context.client.get("/api/v1/browse/media?q=Renamed").json()["total"] == 1
+    with context.session_factory() as db:
+        db.delete(db.get(MediaItem, item))
+        db.commit()
+    assert context.client.get("/api/v1/browse/media?q=Renamed").json()["total"] == 0
+
+
+def test_resolution_uses_played_video_not_secondary_stream(owner_context: tuple[TestContext, str]) -> None:
+    context, csrf = owner_context
+    lib = library(context, csrf)
+    item = movie(context, lib)
+    with context.session_factory() as db:
+        fid = db.scalar(select(MediaFile.id).where(MediaFile.media_item_id == item))
+        db.add(VideoStream(media_file_id=fid, stream_index=2, codec="h264", height=2160))
+        db.commit()
+    assert context.client.get("/api/v1/browse/media?resolution=2160").json()["total"] == 0
+    assert context.client.get("/api/v1/browse/media?resolution=720").json()["items"][0]["height"] == 720

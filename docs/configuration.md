@@ -1,5 +1,31 @@
 # Configuration reference
 
+## Phase 2 playback settings
+
+Compose forwards the following host .env values explicitly. Native execution uses
+the same names through AppConfig. Owner playback-policy settings override the
+three history defaults in SQLite; change process/storage limits through configuration.
+
+| Variable | Default | Bounds / meaning |
+| --- | --- | --- |
+| PLAYBACK_SESSION_TIMEOUT_SECONDS | 90 | 30–600 seconds without a checkpoint |
+| PLAYBACK_MAX_STREAMS | 8 | 1–32 household streams |
+| PLAYBACK_STREAMS_PER_USER | 2 | 1–8 per user |
+| PLAYBACK_WATCHED_THRESHOLD | 90 | 50–100 percent |
+| PLAYBACK_MINIMUM_WATCH_SECONDS | 30 | 5–300; capped at half the clip duration |
+| PLAYBACK_HISTORY_DAYS | 365 | 0–3650; zero keeps indefinitely |
+| TRANSCODE_MAX_PROCESSES | 2 | 1–8 conversion/storage reservations |
+| TRANSCODE_THREADS | 2 | 1–16 decoder/encoder threads per job |
+| TRANSCODE_MAX_HEIGHT | 2160 | 240–4320 pixels |
+| TRANSCODE_MAX_BITRATE_KBPS | 12000 | 500–50000 kbps |
+| TRANSCODE_MAX_STORAGE_MB | 4096 | 64–1048576 MiB, split among slots |
+| TRANSCODE_STARTUP_TIMEOUT_SECONDS | 45 | 5–180 seconds |
+| TRANSCODE_HARDWARE | software | software/qsv/nvenc/amf; successful test required |
+
+See [temporary sizing and hardware](transcoding.md). Keep one API process per
+database/temp root. A second manager fails its ownership lock instead of racing
+cleanup. CPU-only operation is the default; base Compose exposes no GPU devices.
+
 Deployment settings live in the uncommitted `.env` file. Product identity lives only in `config/product.json`. Application settings that need an audit trail are stored in SQLite and changed through Owner-authorized APIs/UI.
 
 Run a bootstrap script to generate `.env`; do not copy the placeholder secret into a live installation.

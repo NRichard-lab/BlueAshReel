@@ -4,7 +4,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -91,7 +91,7 @@ class AppConfig(BaseSettings):
     transcode_max_bitrate_kbps: int = Field(default=12000, ge=500, le=50000)
     transcode_max_storage_mb: int = Field(default=4096, ge=64, le=1048576)
     transcode_startup_timeout_seconds: int = Field(default=45, ge=5, le=180)
-    transcode_hardware: str = "software"
+    transcode_hardware: Literal["software", "qsv", "nvenc", "amf"] = "software"
 
     @field_validator("app_secret_key")
     @classmethod

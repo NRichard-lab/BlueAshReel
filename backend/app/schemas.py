@@ -195,6 +195,8 @@ class MediaPublic(ApiModel):
     match_confidence: float
     available: bool
     files: list[MediaFileSummary] = Field(default_factory=list)
+    file_total: int = 0
+    file_page: int = 1
 
 
 class MediaList(ApiModel):

@@ -20,6 +20,10 @@ describe('central product configuration', () => {
 });
 
 describe('apiRequest', () => {
+  it('accepts successful empty mutation responses even with JSON content-type', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 204, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    await expect(apiRequest('/auth/logout', { method: 'POST' })).resolves.toBeUndefined();
+  });
   it('uses same-origin cookies and the versioned API prefix', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
       status: 200,

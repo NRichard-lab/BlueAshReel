@@ -68,6 +68,8 @@ def parse_ffprobe_output(payload: dict[str, Any]) -> ProbeResult:
     collections: dict[str, list[ProbeStream]] = {"video": [], "audio": [], "subtitle": []}
     streams_value = payload.get("streams")
     raw_streams: list[Any] = streams_value if isinstance(streams_value, list) else []
+    if len(raw_streams) > 128:
+        raise FFprobeError("Media exceeds the supported local stream-count limit")
     for stream_value in raw_streams:
         if not isinstance(stream_value, dict):
             continue

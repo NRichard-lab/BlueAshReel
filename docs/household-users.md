@@ -18,7 +18,7 @@ next catalog or media request. No operation may remove, disable, or demote the l
 active Owner. Administrators cannot edit Owner accounts or their own access.
 
 Deleting an account requires an explicit history choice. With deletion selected,
-watch progress is removed. Otherwise it is anonymized, retained only locally, and
+watch progress and playback-session history are removed. Otherwise they are anonymized, retained only locally, and
 cannot be resumed by a future account with the same name. Profile history deletion
 only affects the signed-in person.
 
@@ -34,5 +34,5 @@ with season/episode identifiers such as `Local Series S01E02`. Titles and artwor
 come only from scanned local files. Missing artwork uses a clearly labeled placeholder.
 No guessed synopsis, rating, cast, or external art is added.
 
-This document accompanies the Phase 2A layer. The following playback layers add the
-player, progress checkpoints, local conversion, and operational validation.
+The player, progress checkpoints, local conversion and monitoring are described in
+[playback](playback.md), [conversion](transcoding.md), and [validation](phase2-validation.md).

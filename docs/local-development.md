@@ -109,3 +109,27 @@ To test migrations against a clean disposable database, set `DATABASE_URL` to a 
 - Health responses do not return sensitive records or host paths.
 - Background work is enqueued and polled; it is not performed inside HTTP requests.
 - Tests use generated fixtures, never private media.
+
+## Phase 2 playback fixtures and validation
+
+Run the opt-in generator from the repository root with a local FFmpeg executable:
+
+```sh
+python scripts/generate_playback_fixtures.py --ffmpeg /usr/bin/ffmpeg
+```
+
+It creates only synthetic test-pattern/sine-wave media beneath ignored
+`runtime/phase2-validation/media`. Existing fixtures are not overwritten. Use a
+separate disposable database and runtime directories for validation, never a
+household installation. Add the Movies, TV and Private subdirectories as local
+libraries, scan them, and assign only Movies/TV to a test Viewer.
+
+Set `TEST_FFMPEG_PATH` to that executable before running `pytest --cov=app` in
+`backend`; otherwise real-FFmpeg integration tests skip explicitly. The suite
+tests clean migrations and a populated Phase 1 upgrade/downgrade. Native playback
+uses one API process owning the local playback manager; do not run multiple
+Uvicorn workers against its temporary directory. API reload expires sessions and
+reaps local helpers; progress survives in SQLite.
+
+See [Phase 2 validation](phase2-validation.md) for the tested browser flows,
+measured results, limitations and dedicated-workstation/container checklist.

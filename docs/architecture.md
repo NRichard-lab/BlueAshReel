@@ -22,8 +22,8 @@ All four runtime containers use the Compose `private` network, which is marked `
 | Component | Responsibility | Persistent access |
 | --- | --- | --- |
 | Caddy | Local reverse proxy, response compression, basic security headers | None |
-| Frontend | First-run setup and administration interface | None |
-| FastAPI backend | Authentication, authorization, versioned REST API, settings, health | SQLite, app data, artwork |
+| Frontend | Setup, household browsing/player, profile/history and administration | None |
+| FastAPI backend | Authentication, assigned-library authorization, catalog, range/HLS delivery, playback management | SQLite, app data, artwork, temp, read-only media |
 | Worker | Restart-safe jobs, media discovery, FFprobe analysis, local artwork | SQLite, app data, artwork, temp, read-only media |
 | SQLite | Normalized state, audit events, durable job queue; WAL mode | `DATABASE_PATH/app.db` |
 
@@ -52,7 +52,7 @@ SQLite WAL permits readers while the worker writes. A future database adapter ca
 
 ## Trust model
 
-- The Owner is the first and only provisioned role in this phase; role and authorization tables preserve future Administrator and Viewer support.
+- Owner, Administrator and Viewer roles are active. All viewers, including Owners, need explicit library assignments. Management permissions do not bypass playback authorization.
 - Browser authentication uses server-managed, HTTP-only cookies; no long-lived credential belongs in browser local storage.
 - The reverse proxy is the only published service.
 - Runtime egress is blocked at the Docker network layer, and integration permission is separately denied by configuration and database settings.
@@ -60,3 +60,27 @@ SQLite WAL permits readers while the worker writes. A future database adapter ca
 - Container logs use three 10 MiB local files per service.
 
 The decision rationale is recorded in [ADR 0001](adr/0001-local-first-foundation.md).
+
+## Phase 2 data and process flow
+
+Migration `2a0100000001` adds library grants, preferences, watch progress, video
+compatibility fields and trigger-maintained FTS5. `2b0100000001` adds indexed
+playback sessions. Both upgrade a populated Phase 1 database without modifying
+original rows; downgrade discards only the new Phase 2 records/columns.
+
+Catalog queries page media and choose one preferred file per card with a window
+query. Home rails are independently bounded; details page file variants ten at a
+time. Search intersects indexed FTS results with assigned enabled libraries.
+Discovery rejects files containing more than 128 streams to bound track metadata.
+
+A short SQLite write transaction admits playback and orders checkpoints. No
+FFmpeg startup wait holds that writer lock. One API process owns a local conversion
+manager (enforced by a storage lock), separate from the durable scan worker. New
+background scans yield while converted playback is active. FFmpeg executes in
+bounded child processes supervised through private pipes; EOF after API failure
+triggers termination and reaping before the output ownership lock is released.
+Startup expires old playback sessions but keeps durable resume points.
+
+The reverse proxy never exposes a media directory. Every direct, HLS and subtitle
+request passes authenticated authorization; only generated segment basenames are
+accepted. No media URL grants access by possession alone. See [conversion](transcoding.md).

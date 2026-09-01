@@ -1,5 +1,26 @@
 # Privacy and outbound connections
 
+## Phase 2 streaming boundary
+
+Media, subtitles, artwork, searches, codec details and viewing records stay local.
+HLS and subtitle conversion use argument arrays with only file/pipe input protocols
+and approved local demuxers. No external authentication/player/CDN is added. hls.js
+is a pinned bundled dependency, not a runtime download. Capability reports contain
+only minimal codec/height hints, not user-agent strings or device identifiers.
+
+Every segment/file/subtitle request rechecks the originating login and assigned
+enabled library. Routine request logs use route templates, never titles, IDs from
+URLs, search text, usernames or paths. FFmpeg stderr is discarded. Active Streams
+shows household identities only to an authenticated Owner. Health exposes counters,
+encoder names and generic failure states, not media or server paths.
+
+History is stored in SQLite. Users may delete their own; deleting it invalidates
+active streams so old checkpoints cannot recreate it. Owner retention (365 days
+default, zero indefinite) runs locally at startup and once per minute. Existing
+backups must be expired separately. Live privacy badges refresh enforcement state.
+Native tests verify application-level no-outbound behavior; OS/network isolation
+must still be validated in the dedicated workstation's internal Docker network.
+
 BlueReel's phase-one runtime is designed to function with no Internet route. Media inspection, filename parsing, artwork discovery, account data, audit data, and job processing remain on the host.
 
 ## Data that remains local

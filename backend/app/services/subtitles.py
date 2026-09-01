@@ -4,6 +4,7 @@ import html
 import re
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -47,7 +48,9 @@ def sanitize_vtt(source: str) -> str:
     return "WEBVTT\n\n" + "\n\n".join(cues) + "\n"
 
 
-def extract_subtitles(source: Path, stream_index: int, config: AppConfig) -> str:
+def extract_subtitles(
+    source: Path, stream_index: int, config: AppConfig, runner: Callable[[list[str]], bytes] | None = None
+) -> str:
     command = [
         config.ffmpeg_path,
         "-hide_banner",
@@ -73,6 +76,8 @@ def extract_subtitles(source: Path, stream_index: int, config: AppConfig) -> str
     if not _SUBTITLE_SLOTS.acquire(blocking=False):
         raise HTTPException(429, "Local subtitle conversion is busy. Try again shortly.")
     try:
+        if runner is not None:
+            return sanitize_vtt(runner(command).decode("utf-8", errors="replace"))
         with subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -109,3 +114,26 @@ def extract_subtitles(source: Path, stream_index: int, config: AppConfig) -> str
         raise HTTPException(422, "Local subtitle conversion could not start") from exc
     finally:
         _SUBTITLE_SLOTS.release()
+
+
+def retime_vtt(source: str, offset: float) -> str:
+    if offset <= 0:
+        return source
+
+    def formatted(value: float) -> str:
+        milliseconds = round(max(0, value) * 1000)
+        seconds, ms = divmod(milliseconds, 1000)
+        minutes, sec = divmod(seconds, 60)
+        hours, minute = divmod(minutes, 60)
+        return f"{hours:02}:{minute:02}:{sec:02}.{ms:03}"
+
+    result = ["WEBVTT"]
+    for block in source.split("\n\n"):
+        lines = block.splitlines()
+        match = _TIMING.match(lines[0]) if lines else None
+        if match and timestamp(match[2]) > offset:
+            result.append(
+                f"{formatted(timestamp(match[1]) - offset)} --> {formatted(timestamp(match[2]) - offset)}\n"
+                + "\n".join(lines[1:])
+            )
+    return "\n\n".join(result) + "\n"

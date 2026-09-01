@@ -65,6 +65,10 @@ def decide(file: MediaFile, choice: PlaybackChoice, config: AppConfig) -> Decisi
         return unsupported("The selected subtitle track is unavailable.")
     if subtitle and subtitle.codec not in TEXT_SUBTITLES | IMAGE_SUBTITLES:
         return unsupported("This subtitle format is not supported by local playback.")
+    if subtitle and subtitle.codec in IMAGE_SUBTITLES:
+        return unsupported(
+            "Image subtitle burn-in is not supported by this build. Choose a text track or turn subtitles off."
+        )
     caps = choice.capabilities
     quality_height, quality_bitrate = {
         "original": (config.transcode_max_height, config.transcode_max_bitrate_kbps),

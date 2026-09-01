@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import distinct, func, select, text, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, noload, selectinload
 
 from app.config import AppConfig, ProductConfig, get_config, get_product_config
 from app.database import database_is_ready, get_db
@@ -67,7 +67,7 @@ from app.schemas import (
 )
 from app.security import create_session, hash_password, normalize_username, verify_login
 from app.services.audit import record_audit
-from app.services.catalog import permitted_library
+from app.services.catalog import permitted_library, primary_video_height, safe_text
 from app.services.ffprobe import ffmpeg_available, ffprobe_available
 from app.services.jobs import ScanAlreadyRunning, enqueue_scan, release_scan_lock
 from app.services.media_state import recompute_media_availability
@@ -721,7 +721,7 @@ def cancel_job(
     return _job_public(job)
 
 
-def _media_public(item: MediaItem) -> MediaPublic:
+def _media_public(item: MediaItem, files: list[MediaFile], file_total: int, file_page: int = 1) -> MediaPublic:
     return MediaPublic(
         id=item.id,
         library_id=item.library_id,
@@ -730,6 +730,8 @@ def _media_public(item: MediaItem) -> MediaPublic:
         year=item.year,
         match_confidence=item.match_confidence,
         available=item.available,
+        file_total=file_total,
+        file_page=file_page,
         files=[
             MediaFileSummary(
                 id=media_file.id,
@@ -748,7 +750,7 @@ def _media_public(item: MediaItem) -> MediaPublic:
                         "height": stream.height,
                         "bitrate": stream.bitrate,
                         "frame_rate": stream.frame_rate,
-                        "language": stream.language,
+                        "language": safe_text(stream.language),
                     }
                     for stream in media_file.video_streams
                 ],
@@ -759,8 +761,8 @@ def _media_public(item: MediaItem) -> MediaPublic:
                         "channels": stream.channels,
                         "channel_layout": stream.channel_layout,
                         "bitrate": stream.bitrate,
-                        "language": stream.language,
-                        "title": stream.title,
+                        "language": safe_text(stream.language),
+                        "title": safe_text(stream.title),
                     }
                     for stream in media_file.audio_streams
                 ],
@@ -768,15 +770,15 @@ def _media_public(item: MediaItem) -> MediaPublic:
                     {
                         "index": stream.stream_index,
                         "codec": stream.codec,
-                        "language": stream.language,
-                        "title": stream.title,
+                        "language": safe_text(stream.language),
+                        "title": safe_text(stream.title),
                         "forced": stream.forced,
                         "hearing_impaired": stream.hearing_impaired,
                     }
                     for stream in media_file.subtitle_streams
                 ],
             )
-            for media_file in item.files
+            for media_file in files
         ],
     )
 
@@ -804,37 +806,95 @@ def list_media(
     total = db.scalar(select(func.count()).select_from(MediaItem).where(*filters)) or 0
     items = db.scalars(
         select(MediaItem)
-        .options(
-            selectinload(MediaItem.files).selectinload(MediaFile.video_streams),
-            selectinload(MediaItem.files).selectinload(MediaFile.audio_streams),
-            selectinload(MediaItem.files).selectinload(MediaFile.subtitle_streams),
-        )
+        .options(noload(MediaItem.files))
         .where(*filters)
         .order_by(MediaItem.sort_title.asc(), MediaItem.id.asc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
-    return MediaList(items=[_media_public(item) for item in items], total=total, page=page, page_size=page_size)
+    ids = [item.id for item in items]
+    ranked = (
+        select(
+            MediaFile.id,
+            func.row_number()
+            .over(
+                partition_by=MediaFile.media_item_id,
+                order_by=(
+                    MediaFile.available.desc(),
+                    MediaFile.analysis_error.is_(None).desc(),
+                    primary_video_height().desc(),
+                    MediaFile.id,
+                ),
+            )
+            .label("rank"),
+        )
+        .where(MediaFile.media_item_id.in_(ids))
+        .subquery()
+    )
+    files = db.scalars(
+        select(MediaFile)
+        .where(MediaFile.id.in_(select(ranked.c.id).where(ranked.c.rank == 1)))
+        .options(
+            selectinload(MediaFile.video_streams),
+            selectinload(MediaFile.audio_streams),
+            selectinload(MediaFile.subtitle_streams),
+        )
+    ).all()
+    selected = {file.media_item_id: file for file in files}
+    totals = {
+        media_id: count
+        for media_id, count in db.execute(
+            select(MediaFile.media_item_id, func.count())
+            .where(MediaFile.media_item_id.in_(ids))
+            .group_by(MediaFile.media_item_id)
+        )
+    }
+    return MediaList(
+        items=[
+            _media_public(item, [selected[item.id]] if item.id in selected else [], totals.get(item.id, 0))
+            for item in items
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/media/{media_id}", response_model=MediaPublic, tags=["media"])
 def get_media(
     media_id: str,
+    file_page: int = Query(1, ge=1),
     _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> MediaPublic:
     item = db.scalar(
         select(MediaItem)
-        .options(
-            selectinload(MediaItem.files).selectinload(MediaFile.video_streams),
-            selectinload(MediaItem.files).selectinload(MediaFile.audio_streams),
-            selectinload(MediaItem.files).selectinload(MediaFile.subtitle_streams),
-        )
+        .options(noload(MediaItem.files))
         .where(MediaItem.id == media_id, permitted_library(_principal.user.id))
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Media item not found")
-    return _media_public(item)
+    files = list(
+        db.scalars(
+            select(MediaFile)
+            .where(MediaFile.media_item_id == item.id)
+            .options(
+                selectinload(MediaFile.video_streams),
+                selectinload(MediaFile.audio_streams),
+                selectinload(MediaFile.subtitle_streams),
+            )
+            .order_by(
+                MediaFile.available.desc(),
+                MediaFile.analysis_error.is_(None).desc(),
+                primary_video_height().desc(),
+                MediaFile.id,
+            )
+            .offset((file_page - 1) * 10)
+            .limit(10)
+        )
+    )
+    total = db.scalar(select(func.count()).select_from(MediaFile).where(MediaFile.media_item_id == item.id)) or 0
+    return _media_public(item, files, total, file_page)
 
 
 def _setting_value(db: Session, key: str, default: Any) -> Any:

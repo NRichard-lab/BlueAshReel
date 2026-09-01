@@ -23,7 +23,6 @@ from app.models import (
     Season,
     Series,
     UserLibrary,
-    VideoStream,
     WatchProgress,
     utcnow,
 )
@@ -32,6 +31,7 @@ from app.services.catalog import (
     file_available,
     load_item,
     permitted_library,
+    primary_video_height,
     progress_join,
     safe_text,
     strict_local_file,
@@ -41,15 +41,25 @@ router = APIRouter(prefix="/browse", tags=["viewer catalog"])
 
 
 @router.get("/libraries")
-def libraries(principal: Principal = Depends(current_principal), db: Session = Depends(get_db)) -> dict[str, Any]:
-    rows = db.execute(
+def libraries(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    query = (
         select(Library.id, Library.name, Library.library_type)
         .join(UserLibrary)
         .where(UserLibrary.user_id == principal.user.id, Library.enabled.is_(True))
-        .order_by(Library.name)
-        .limit(1000)
+        .order_by(Library.name, Library.id)
     )
-    return {"items": [dict(row._mapping) for row in rows]}
+    rows = db.execute(query.offset((page - 1) * page_size).limit(page_size))
+    return {
+        "items": [dict(row._mapping) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": db.scalar(select(func.count()).select_from(query.subquery())),
+    }
 
 
 @router.get("/media")
@@ -79,7 +89,16 @@ def catalog(
         query = query.where(file_available() == available)
     if resolution:
         query = query.where(
-            MediaItem.id.in_(select(MediaFile.media_item_id).join(VideoStream).where(VideoStream.height >= resolution))
+            MediaItem.id.in_(
+                select(MediaFile.media_item_id)
+                .join(LibraryPath)
+                .where(
+                    primary_video_height() >= resolution,
+                    MediaFile.available.is_(True),
+                    MediaFile.analysis_error.is_(None),
+                    LibraryPath.enabled.is_(True),
+                )
+            )
         )
     if history:
         query = query.where(WatchProgress.id.is_not(None))
@@ -129,7 +148,7 @@ def catalog(
             .limit(page_size)
         )
     )
-    return {"items": cards(db, user_id, items), "total": total, "page": page, "page_size": page_size}
+    return {"items": cards(db, user_id, items, resolution), "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/home")
@@ -176,7 +195,10 @@ def home(principal: Principal = Depends(current_principal), db: Session = Depend
 
 @router.get("/media/{media_id}")
 def detail(
-    media_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)
+    media_id: str,
+    file_page: int = Query(1, ge=1),
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     item = load_item(db, principal.user.id, media_id)
     result = cards(db, principal.user.id, [item])[0]
@@ -189,7 +211,9 @@ def detail(
             selectinload(MediaFile.audio_streams),
             selectinload(MediaFile.subtitle_streams),
         )
-        .order_by(MediaFile.available.desc(), MediaFile.id)
+        .order_by((MediaFile.id == result["file_id"]).desc(), MediaFile.available.desc(), MediaFile.id)
+        .offset((file_page - 1) * 10)
+        .limit(10)
     ).all()
     result["files"] = [
         {
@@ -239,6 +263,13 @@ def detail(
         }
         for f in files
     ]
+    result["file_page"] = file_page
+    result["file_page_size"] = 10
+    result["file_total"] = db.scalar(
+        select(func.count(MediaFile.id))
+        .join(LibraryPath)
+        .where(MediaFile.media_item_id == item.id, LibraryPath.enabled.is_(True))
+    )
     art = db.scalar(
         select(LocalArtwork)
         .join(LibraryPath)
@@ -254,7 +285,11 @@ def detail(
 
 @router.get("/shows/{media_id}/seasons")
 def seasons(
-    media_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)
+    media_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=100),
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     load_item(db, principal.user.id, media_id)
     rows = db.execute(
@@ -264,9 +299,15 @@ def seasons(
         .where(Series.media_item_id == media_id)
         .group_by(Season.id)
         .order_by(Season.season_number)
-        .limit(1000)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
-    return {"items": [dict(row._mapping) for row in rows]}
+    return {
+        "items": [dict(row._mapping) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": db.scalar(select(func.count(Season.id)).join(Series).where(Series.media_item_id == media_id)),
+    }
 
 
 @router.get("/seasons/{season_id}/episodes")
@@ -335,6 +376,10 @@ class WatchInput(BaseModel):
 def watched(
     media_id: str, payload: WatchInput, principal: Principal = Depends(require_user_csrf), db: Session = Depends(get_db)
 ) -> dict[str, bool]:
+    db.rollback()
+    db.execute(text("BEGIN IMMEDIATE"))
+    if not principal.user.is_active or principal.session.revoked_at is not None:
+        raise HTTPException(401, "Authentication required")
     load_item(db, principal.user.id, media_id)
     progress = db.scalar(
         select(WatchProgress).where(WatchProgress.user_id == principal.user.id, WatchProgress.media_item_id == media_id)

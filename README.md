@@ -2,7 +2,7 @@
 
 **A Blue Ash Application.**
 
-BlueReel is a private, local-first home-media catalog and administration service. This first development phase combines a FastAPI API, a React/TypeScript interface, SQLite in WAL mode, FFmpeg/FFprobe analysis, a durable database-backed worker, and a localhost-only Docker Compose deployment.
+BlueReel is a private, local-first home-media streaming website. Phase 2 adds household library permissions, movie/TV browsing, a first-party browser player, durable per-user progress, and local FFmpeg remuxing/transcoding to the Phase 1 FastAPI, React/TypeScript, SQLite WAL, scanner, and localhost-only Docker foundations.
 
 The product name, subtitle, version, and API prefix live in one place: [`config/product.json`](config/product.json). Do not duplicate branding in source or deployment secrets.
 
@@ -69,7 +69,12 @@ Health responses are intentionally narrow and do not include users, media titles
 - [Backup and restore](docs/backup-and-restore.md)
 - [Upgrade procedure](docs/upgrades.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Phase-one limitations](docs/not-implemented.md)
+- [Household users and permissions](docs/household-users.md)
+- [Playback and history](docs/playback.md)
+- [Local conversion and hardware](docs/transcoding.md)
+- [API reference](docs/api.md)
+- [Phase 2 validation and workstation checklist](docs/phase2-validation.md)
+- [Current limitations](docs/not-implemented.md)
 - [Architecture decision record](docs/adr/0001-local-first-foundation.md)
 
 ## Repository map
@@ -79,7 +84,7 @@ backend/     FastAPI application, durable worker, migrations, and tests
 config/      Central product identity
 docker/      Production-style container images and Caddy configuration
 docs/        Architecture, operations, privacy, and recovery guidance
-frontend/    React and TypeScript administration interface
+frontend/    React and TypeScript streaming website and administration
 scripts/     Bootstrap, online backup, and restore-validation tools
 compose.yml  Local runtime topology and hardening
 ```
@@ -92,6 +97,6 @@ Backups contain the database, local configuration (including the application sec
 
 ## Development status
 
-This phase establishes administration, scanning, local metadata/artwork, durable jobs, health, privacy controls, and operational foundations. It does not include media playback/transcoding delivery, metadata-provider integrations, remote access, recommendations, live TV/DVR, a Google TV client, or Blue Ash portal integration. See [the complete limitations list](docs/not-implemented.md).
+Phase 2 includes assigned-library Home rails, paginated movie/search/TV views, local artwork, Owner/Administrator/Viewer management, authenticated range playback, text subtitles, explicit audio/quality changes, resume/watch history, progressive HLS remuxing, software H.264/AAC conversion, optional tested hardware encoders, and Owner stream monitoring. Image-subtitle burn-in is honestly unsupported in this build. Docker/workstation and cross-browser validation status is recorded separately from native tests; see [validation](docs/phase2-validation.md) and [limitations](docs/not-implemented.md).
 
 BlueReel is not deployed publicly by this repository.

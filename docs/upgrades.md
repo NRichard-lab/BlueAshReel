@@ -1,6 +1,13 @@
 # Upgrade foundation
 
-Phase-one upgrades are explicit and local. There is no unattended updater, remote control plane, or automatic rollback.
+Upgrades are explicit and local. There is no unattended updater, remote control plane, or automatic rollback.
+
+Phase 2 upgrades schema `773863f5a6aa` through `2a0100000001` (assignments,
+preferences, watch state, FTS5) to `2b0100000001` (playback sessions). Existing
+Owners receive access to existing libraries. New household accounts need explicit
+library assignments. Populated Phase 1 records are preserved; downgrading discards
+Phase 2 tables/history and must not substitute for a validated restore. Stop active
+playback before upgrading. Conversion output is disposable, not backed up or migrated.
 
 ## Before changing versions
 

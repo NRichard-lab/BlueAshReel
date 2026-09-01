@@ -44,6 +44,5 @@ invalidates your active playback sessions so old checkpoints cannot recreate it.
 Owner retention settings apply locally; 0 means keep indefinitely, not disable
 tracking. Backups include history until they are separately expired or deleted.
 
-The direct-play layer precedes the local conversion/process-monitoring layer;
-see the completed Phase 2 validation report for verified playback methods and
-workstation limitations.
+See [local conversion](transcoding.md) and the [Phase 2 validation report](phase2-validation.md)
+for verified methods and outstanding workstation checks.

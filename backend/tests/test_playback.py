@@ -269,7 +269,7 @@ def test_compatibility_is_conservative(owner_context: tuple[TestContext, str]) -
         assert decide(file, choice, context.config).method == "unsupported"
         choice.subtitle_index = 2
         file.subtitle_streams[0].codec = "hdmv_pgs_subtitle"
-        assert decide(file, choice, context.config).burn_subtitle
+        assert decide(file, choice, context.config).method == "unsupported"
 
 
 def test_subtitle_sanitizing_preserves_short_timing() -> None:
@@ -298,3 +298,59 @@ def test_retention_clears_both_histories(owner_context: tuple[TestContext, str])
         db.commit()
         assert db.scalar(select(WatchProgress.id)) is None
         assert db.scalar(select(PlaybackSession.id)) is None
+
+
+@pytest.mark.parametrize("relative", ["../outside.mp4", "/outside.mp4", "C:/outside.mp4", "folder/../../outside.mp4"])
+def test_playback_rejects_path_escape(owner_context: tuple[TestContext, str], relative: str) -> None:
+    context, csrf = owner_context
+    _lib, _item, fid, _source = playable(context, csrf)
+    with context.session_factory() as db:
+        db.get(MediaFile, fid).relative_path = relative
+        db.commit()
+    response = context.client.post(
+        "/api/v1/playback/sessions", headers={"X-CSRF-Token": csrf}, json={"file_id": fid, "capabilities": CAPS}
+    )
+    assert response.status_code == 404 and relative not in response.text
+
+
+def test_playback_rejects_symlink_and_malformed_id(owner_context: tuple[TestContext, str]) -> None:
+    context, csrf = owner_context
+    _lib, _item, fid, source = playable(context, csrf)
+    # Mock the platform lstat result: this runs even on Windows without the
+    # privilege needed to create a real symlink. The source is never replaced.
+    import stat
+    from types import SimpleNamespace
+
+    original = Path.lstat
+
+    def linked(path, *args, **kwargs):
+        if path == source:
+            return SimpleNamespace(st_mode=stat.S_IFLNK, st_file_attributes=0)
+        return original(path, *args, **kwargs)
+
+    with patch.object(Path, "lstat", linked):
+        response = context.client.post(
+            "/api/v1/playback/sessions", headers={"X-CSRF-Token": csrf}, json={"file_id": fid, "capabilities": CAPS}
+        )
+    assert response.status_code == 404
+
+
+def test_direct_and_catalog_privacy_fail_closed(owner_context: tuple[TestContext, str]) -> None:
+    context, csrf = owner_context
+    _lib, item, fid, source = playable(context, csrf)
+    with patch("socket.create_connection", side_effect=AssertionError("No runtime outbound calls")):
+        session = begin(context, csrf, fid)
+        response = context.client.get(session["url"], headers={"Range": "bytes=0-127"})
+        assert response.status_code == 206 and len(response.content) == 128
+        for url in (f"/api/v1/browse/media/{item}", "/api/v1/streams", "/api/v1/playback-health"):
+            result = context.client.get(url)
+            assert result.status_code == 200
+            assert str(source).replace("\\", "\\\\") not in result.text
+            assert context.config.app_secret_key not in result.text
+        assert context.client.get("/api/v1/privacy").json()["runtime_outbound_allowed"] is False
+    response = context.client.post(
+        "/api/v1/playback/sessions",
+        headers={"X-CSRF-Token": csrf},
+        json={"file_id": "../../local.mp4", "capabilities": CAPS},
+    )
+    assert response.status_code == 404

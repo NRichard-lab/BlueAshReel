@@ -1,5 +1,15 @@
 # Ubuntu/Linux installation
 
+For Phase 2, size TEMP_PATH for complete active representations; see [transcoding](transcoding.md).
+The API owns conversion supervisors and requires writable isolated temp storage,
+while source media stays read-only. Use one API process and the existing worker.
+GPU mappings/drivers are optional reviewed overrides, not a reason to enable
+privileged mode or remove the private internal network. Confirm a successful test
+encode in System Health before claiming hardware acceleration.
+
+Run the [workstation checklist](phase2-validation.md) after container builds and
+migrations. Native development tests are not a substitute for Compose validation.
+
 ## Requirements
 
 - A currently supported Ubuntu release or comparable Linux distribution

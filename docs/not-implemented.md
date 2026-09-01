@@ -1,9 +1,22 @@
-# What is not implemented yet
+# Phase 2 limitations and deferred work
 
-Phase one is an administration, catalog, scanner, privacy, and operations foundation. The following are deliberately deferred:
+Implemented: household roles/assignments, local movie/TV browsing and indexed search,
+authenticated direct playback, per-user resume/watch history, embedded text subtitles,
+explicit audio selection, progressive HLS remux, software conversion, quality limits
+and Owner active-stream controls.
 
-- browser media playback and streaming delivery;
-- transcoding orchestration, adaptive bitrate packaging, and hardware acceleration;
+Current limitations:
+
+- Image-based subtitle burn-in is unsupported; choose a text track or turn subtitles off.
+- Single selected quality, not an automatic adaptive-bitrate ladder.
+- HLS seeks create a precise local transcode from the requested position.
+- Separate sidecar-subtitle discovery is not provided; embedded text styling is stripped.
+- Chromium was tested locally; Safari/Firefox and production GPU/driver combinations need workstation validation.
+- One API process and one scan worker. Completed output is reusable while referenced, then deleted.
+- Forced browser termination may lose the final 15-second checkpoint.
+- Docker was unavailable on the development host; native tests do not establish container/network-level validation.
+
+The following remain deliberately deferred:
 - remote/public access, managed TLS, relay services, and router automation;
 - IMDb, TMDB, TVDB, or any other metadata-provider calls and matching;
 - downloading remote posters, backgrounds, subtitles, or trailers;
@@ -12,7 +25,6 @@ Phase one is an administration, catalog, scanner, privacy, and operations founda
 - Google TV or other native television/mobile applications;
 - Blue Ash portal integration or production deployment;
 - cloud storage, cloud accounts, remote backup, and hosted crash reporting;
-- Administrator/Viewer user-management UI beyond the authorization/data foundation;
 - password reset by email, invitations, federation, or external identity providers;
 - multi-node operation, PostgreSQL, Redis, Kubernetes, or a distributed queue;
 - unattended upgrades and destructive automated restore; and

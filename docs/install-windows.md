@@ -1,5 +1,16 @@
 # Windows installation
 
+Phase 2 adds local streaming. Allocate transcode space deliberately and confirm
+FFmpeg supports libx264/AAC. The reference containers remain non-root, media remains
+read-only, and only loopback Caddy is published. Native development uses Windows
+paths in MEDIA_ROOTS (semicolon-separated), not Linux container paths.
+
+After upgrade, verify assigned libraries, a direct MP4, MKV remux, incompatible-video
+conversion, pause/resume across restart, and Stop Stream cleanup. Optional QSV/NVENC/AMF
+requires real System Health test encodes; do not infer support from a GPU name.
+Follow the [dedicated-workstation checklist](phase2-validation.md). Docker was not
+available on the development host, so its runtime validation remains outstanding.
+
 ## Requirements
 
 - A supported 64-bit Windows workstation

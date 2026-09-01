@@ -3,11 +3,15 @@ from __future__ import annotations
 import logging
 import signal
 import time
+from datetime import timedelta
 from types import FrameType
+
+from sqlalchemy import select
 
 from app.config import get_config
 from app.database import SessionLocal
 from app.logging_config import configure_logging
+from app.models import PlaybackSession, utcnow
 from app.services.jobs import claim_next_job, fail_job, recover_stale_jobs
 from app.services.scanner import run_scan
 
@@ -33,6 +37,19 @@ def run_worker() -> None:
         )
     while not _stopping:
         with SessionLocal() as db:
+            # New background scans yield to household conversion sessions.
+            if db.scalar(
+                select(PlaybackSession.id)
+                .where(
+                    PlaybackSession.state == "active",
+                    PlaybackSession.method != "direct",
+                    PlaybackSession.last_seen_at
+                    > utcnow() - timedelta(seconds=config.playback_session_timeout_seconds),
+                )
+                .limit(1)
+            ):
+                time.sleep(config.worker_poll_interval)
+                continue
             job = claim_next_job(db, config)
             if job is None:
                 time.sleep(config.worker_poll_interval)

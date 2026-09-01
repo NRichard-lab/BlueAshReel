@@ -1,5 +1,28 @@
 # Troubleshooting
 
+## Phase 2 playback
+
+- **No media / 404:** check the user's library assignments, library/path enabled state,
+  and source availability. Administration privileges do not imply viewing access.
+- **Source changed:** rescan locally. A changed size/mtime invalidates old playback URLs.
+- **Stream expired:** reconnect/resume. Checkpoint inactivity, logout, revoked access,
+  source loss or server restart ends ephemeral sessions, not saved watch progress.
+- **429 / capacity reached:** stop an unused stream. Completed converted output reserves
+  storage until its last stream stops. Do not raise limits without CPU/disk headroom.
+- **Conversion failure / 507:** inspect System Health, FFmpeg support and free temp
+  space; choose a lower quality. Routine errors intentionally omit filenames/arguments.
+- **Image subtitles:** unsupported in this build. Select text subtitles or Off.
+- **Stop not confirmed:** the row stays visible and playback is denied. Retry Stop and
+  inspect storage/process health. Do not delete a directory whose supervisor holds its lock.
+- **Autoplay blocked:** press Play. Browser policy can require a gesture after navigation.
+- **No GPU shown active:** select an optional configured encoder and run its real local
+  test. Stream copy is not hardware encoding; software fallback is expected.
+- **Development hot reload interruption:** reconnect after source/dependency refresh.
+  Validate uninterrupted behavior again with the final production build.
+
+Never publish media directories, disable authorization, enable egress, or remove
+read-only mounts as a playback workaround.
+
 Start with narrow, read-only checks:
 
 ```sh

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, CircleGauge, Database, Film, HardDrive, RefreshCw, Server, TriangleAlert } from 'lucide-react';
 
 import { PageHeader } from '@/components/page-header';
+import { PlaybackHealth } from '@/components/active-streams';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -50,14 +51,15 @@ export function SystemHealth() {
           { label: 'Readiness', value: ready?.status, ok: readyOk, icon: CircleGauge, detail: 'Required local dependencies' },
           { label: 'Database', value: ready?.checks?.database, ok: ready?.checks?.database === true || ready?.checks?.database === 'ok', icon: Database, detail: 'SQLite WAL connection' },
           { label: 'FFprobe', value: ready?.checks?.ffprobe, ok: ready?.checks?.ffprobe === true || ready?.checks?.ffprobe === 'ok', icon: Film, detail: 'Local media analysis' },
-          { label: 'FFmpeg', value: ready?.checks?.ffmpeg, ok: ready?.checks?.ffmpeg === true || ready?.checks?.ffmpeg === 'ok', icon: Film, detail: 'Future local processing' },
+          { label: 'FFmpeg', value: ready?.checks?.ffmpeg, ok: ready?.checks?.ffmpeg === true || ready?.checks?.ffmpeg === 'ok', icon: Film, detail: 'Local playback processing' },
         ].map(({ label, value, ok, icon: Icon, detail }) => <Card key={label}><CardHeader><span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary"><Icon className="size-4" /></span><CardTitle className="mt-2">{label}</CardTitle><CardDescription>{detail}</CardDescription></CardHeader><CardContent>{loading ? <Skeleton className="h-6 w-20" /> : <Badge variant={ok ? 'secondary' : 'destructive'} className="capitalize">{ok ? <Check data-icon="inline-start" /> : null}{String(value ?? 'unknown')}</Badge>}</CardContent></Card>)}
       </div>
 
       <div className="mt-5 grid gap-5 xl:grid-cols-2">
         <Card><CardHeader className="border-b"><CardTitle>Application build</CardTitle><CardDescription>Version information safe for local diagnostics.</CardDescription></CardHeader><CardContent className="space-y-3"><div className="flex justify-between border-b pb-3 text-sm"><span className="text-muted-foreground">Version</span><code>{version?.version ?? '—'}</code></div><div className="flex justify-between border-b pb-3 text-sm"><span className="text-muted-foreground">API</span><code>{version?.api_version ?? 'v1'}</code></div><div className="flex justify-between text-sm"><span className="text-muted-foreground">Last checked</span><span>{checkedAt?.toLocaleTimeString() ?? '—'}</span></div></CardContent></Card>
-        <Card><CardHeader className="border-b"><CardTitle>Configured storage</CardTitle><CardDescription>Only readiness is shown here; full paths remain in authenticated Settings.</CardDescription></CardHeader><CardContent className="space-y-3">{dashboard ? Object.entries(dashboard.storage).map(([name, ok]) => <div key={name} className="flex items-center gap-3 rounded-lg border p-3"><span className="grid size-8 place-items-center rounded-lg bg-muted"><HardDrive className="size-4" /></span><span className="flex-1 text-sm capitalize">{name.replaceAll('_', ' ')}</span><Badge variant={ok ? 'secondary' : 'destructive'}>{ok ? 'Ready' : 'Check'}</Badge></div>) : [0, 1, 2].map((item) => <Skeleton key={item} className="h-14" />)}</CardContent></Card>
+        <Card><CardHeader className="border-b"><CardTitle>Configured storage</CardTitle><CardDescription>Only readiness is shown here; filesystem paths remain on the server.</CardDescription></CardHeader><CardContent className="space-y-3">{dashboard ? Object.entries(dashboard.storage).map(([name, ok]) => <div key={name} className="flex items-center gap-3 rounded-lg border p-3"><span className="grid size-8 place-items-center rounded-lg bg-muted"><HardDrive className="size-4" /></span><span className="flex-1 text-sm capitalize">{name.replaceAll('_', ' ')}</span><Badge variant={ok ? 'secondary' : 'destructive'}>{ok ? 'Ready' : 'Check'}</Badge></div>) : [0, 1, 2].map((item) => <Skeleton key={item} className="h-14" />)}</CardContent></Card>
       </div>
+      <PlaybackHealth />
     </>
   );
 }
