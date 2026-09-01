@@ -105,6 +105,39 @@ class UserPreference(Base):
     next_countdown: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
 
 
+class PlaybackSession(Base):
+    __tablename__ = "playback_sessions"
+    __table_args__ = (
+        Index("ix_playback_user_state_seen", "user_id", "state", "last_seen_at"),
+        Index("ix_playback_user_media_started", "user_id", "media_item_id", "started_at"),
+        Index("ix_playback_state_seen", "state", "last_seen_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    auth_session_id: Mapped[str | None] = mapped_column(ForeignKey("user_sessions.id", ondelete="SET NULL"))
+    media_item_id: Mapped[str] = mapped_column(ForeignKey("media_items.id", ondelete="CASCADE"), index=True)
+    media_file_id: Mapped[str] = mapped_column(ForeignKey("media_files.id", ondelete="CASCADE"))
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    audio_index: Mapped[int | None] = mapped_column(Integer)
+    subtitle_index: Mapped[int | None] = mapped_column(Integer)
+    quality: Mapped[str] = mapped_column(String(16), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    position_seconds: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    watched_seconds: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    was_playing: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    startup_ms: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(String(200))
+
+
 class WatchProgress(Base):
     __tablename__ = "watch_progress"
     __table_args__ = (

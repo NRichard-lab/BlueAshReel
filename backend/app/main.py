@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.catalog import router as catalog_router
 from app.api.household import router as household_router
+from app.api.playback import router as playback_router
 from app.api.router import router
 from app.config import get_config, get_product_config
 from app.logging_config import configure_logging
@@ -47,6 +48,7 @@ app = FastAPI(
 app.include_router(router, prefix=product.api_prefix)
 app.include_router(catalog_router, prefix=product.api_prefix)
 app.include_router(household_router, prefix=product.api_prefix)
+app.include_router(playback_router, prefix=product.api_prefix)
 
 
 @app.middleware("http")

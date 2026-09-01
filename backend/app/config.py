@@ -79,6 +79,19 @@ class AppConfig(BaseSettings):
     job_stale_minutes: int = Field(default=15, ge=1, le=1440)
     scan_extensions: str = ".mkv,.mp4,.m4v,.avi,.mov,.wmv,.webm,.ts,.m2ts,.mpg,.mpeg"
     ignored_directories: str = "$RECYCLE.BIN,System Volume Information,.Trash,.Trashes,@eaDir,sample,samples"
+    playback_session_timeout_seconds: int = Field(default=90, ge=30, le=600)
+    playback_max_streams: int = Field(default=8, ge=1, le=32)
+    playback_streams_per_user: int = Field(default=2, ge=1, le=8)
+    playback_watched_threshold: float = Field(default=90, ge=50, le=100)
+    playback_minimum_watch_seconds: int = Field(default=30, ge=5, le=300)
+    playback_history_days: int = Field(default=365, ge=0, le=3650)
+    transcode_max_processes: int = Field(default=2, ge=1, le=8)
+    transcode_threads: int = Field(default=2, ge=1, le=16)
+    transcode_max_height: int = Field(default=2160, ge=240, le=4320)
+    transcode_max_bitrate_kbps: int = Field(default=12000, ge=500, le=50000)
+    transcode_max_storage_mb: int = Field(default=4096, ge=64, le=1048576)
+    transcode_startup_timeout_seconds: int = Field(default=45, ge=5, le=180)
+    transcode_hardware: str = "software"
 
     @field_validator("app_secret_key")
     @classmethod

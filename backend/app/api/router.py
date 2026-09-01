@@ -303,6 +303,9 @@ def logout(
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> None:
+    from app.services.playback_lifecycle import end_sessions
+
+    end_sessions(db, auth_id=principal.session.id)
     principal.session.revoked_at = utcnow()
     record_audit(db, "auth.logout", actor_user_id=principal.user.id)
     db.commit()

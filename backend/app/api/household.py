@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import Principal, current_principal, require_manager, require_manager_csrf, require_user_csrf
-from app.models import Library, Role, User, UserLibrary, UserPreference, UserSession, WatchProgress, utcnow
+from app.models import Library, Role, User, UserLibrary, UserPreference, UserSession, utcnow
 from app.security import hash_password, normalize_username
 from app.services.audit import record_audit
+from app.services.playback_lifecycle import end_sessions, erase_history
 
 router = APIRouter(tags=["household"])
 
@@ -52,6 +53,9 @@ def assign_libraries(db: Session, user_id: str, ids: list[str]) -> None:
     ids = list(set(ids))
     if len(ids) != db.scalar(select(func.count(Library.id)).where(Library.id.in_(ids))):
         raise HTTPException(422, "One or more libraries no longer exist")
+    removed = [value for value in assignments(db, user_id) if value not in ids]
+    if removed:
+        end_sessions(db, user_id=user_id, removed_libraries=removed)
     db.execute(delete(UserLibrary).where(UserLibrary.user_id == user_id))
     db.add_all(UserLibrary(user_id=user_id, library_id=value) for value in ids)
 
@@ -93,6 +97,7 @@ def protect_last_owner(db: Session, user: User, removing_owner: bool) -> None:
 
 
 def revoke(db: Session, user_id: str) -> None:
+    end_sessions(db, user_id=user_id)
     db.execute(
         update(UserSession)
         .where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
@@ -208,7 +213,9 @@ def delete_user(
     guard_change(principal, user)
     protect_last_owner(db, user, True)
     if delete_history:
-        db.execute(delete(WatchProgress).where(WatchProgress.user_id == user_id))
+        erase_history(db, user_id)
+    else:
+        end_sessions(db, user_id=user_id)
     record_audit(
         db,
         "user.deleted",
@@ -248,5 +255,9 @@ def update_profile(
 
 @router.delete("/profile/history", status_code=204)
 def delete_history(principal: Principal = Depends(require_user_csrf), db: Session = Depends(get_db)) -> None:
-    db.execute(delete(WatchProgress).where(WatchProgress.user_id == principal.user.id))
+    db.rollback()
+    db.execute(text("BEGIN IMMEDIATE"))
+    if not principal.user.is_active or principal.session.revoked_at is not None:
+        raise HTTPException(401, "Authentication required")
+    erase_history(db, principal.user.id)
     db.commit()

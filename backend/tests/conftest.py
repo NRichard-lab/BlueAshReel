@@ -21,6 +21,7 @@ os.environ.setdefault(
 from app.config import AppConfig, get_config
 from app.database import create_database_engine, get_db
 from app.main import app
+from app.services.playback import playback_budget
 from app.services.rate_limit import login_rate_limiter
 
 
@@ -44,6 +45,7 @@ class TestContext:
 @pytest.fixture
 def context(tmp_path: Path) -> Generator[TestContext, None, None]:
     login_rate_limiter.clear()
+    playback_budget.clear()
     media_root = tmp_path / "media"
     media_root.mkdir()
     config = AppConfig(

@@ -18,7 +18,7 @@ from typing import Any
 ARCHIVE_FORMAT = "home-media-backup"
 MANIFEST_VERSION = 1
 PHASE1_REVISION = "773863f5a6aa"
-EXPECTED_ALEMBIC_HEAD = "2a0100000001"
+EXPECTED_ALEMBIC_HEAD = "2b0100000001"
 MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database/app.db"
 PRODUCT_CONFIG_MEMBER = "configuration/product/product.json"
@@ -57,6 +57,7 @@ PHASE1_TABLES = frozenset(
 SCHEMAS_BY_REVISION = {
     PHASE1_REVISION: PHASE1_TABLES,
     "2a0100000001": PHASE1_TABLES | {"user_libraries", "user_preferences", "watch_progress", "media_search"},
+    "2b0100000001": PHASE1_TABLES | {"user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions"},
 }
 REQUIRED_APPLICATION_TABLES = SCHEMAS_BY_REVISION[EXPECTED_ALEMBIC_HEAD]
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")

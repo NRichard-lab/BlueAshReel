@@ -29,6 +29,9 @@ importers:
       embla-carousel-react:
         specifier: 8.5.2
         version: 8.5.2(react@19.2.6)
+      hls.js:
+        specifier: 1.7.1
+        version: 1.7.1
       input-otp:
         specifier: 1.4.2
         version: 1.4.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -2414,6 +2417,9 @@ packages:
   hex-rgb@4.3.0:
     resolution: {integrity: sha512-Ox1pJVrDCyGHMG9CFg1tmrRUMRPRsAWYc/PinY0XzJU4K7y7vjNoLKIQ7BR5UJMCxNN8EM1MNDmHWA/B3aZUuw==}
     engines: {node: '>=6'}
+
+  hls.js@1.7.1:
+    resolution: {integrity: sha512-DlzIkeBAS9IIQ432k3BUf3HlwbsR0+trB1i2lDdN2gUkNkrehFurh0/48M5c1/EjlDkdGng1gwZIpwyPxvdZ/g==}
 
   hono@4.13.5:
     resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
@@ -5749,6 +5755,8 @@ snapshots:
       function-bind: 1.1.2
 
   hex-rgb@4.3.0: {}
+
+  hls.js@1.7.1: {}
 
   hono@4.13.5: {}
 

@@ -79,6 +79,8 @@ def parse_ffprobe_output(payload: dict[str, Any]) -> ProbeResult:
         disposition_value = raw.get("disposition")
         disposition: dict[str, Any] = disposition_value if isinstance(disposition_value, dict) else {}
         kind = str(raw["codec_type"])
+        if kind == "video" and disposition.get("attached_pic"):
+            continue
         common = ProbeStream(
             stream_index=_integer(raw.get("index")) or 0,
             codec=str(raw["codec_name"])[:80] if raw.get("codec_name") else None,
