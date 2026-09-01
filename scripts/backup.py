@@ -257,6 +257,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def write_private_archive(stage: Path, destination: Path) -> None:
+    """Create secret-bearing ZIP output privately from its first byte."""
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as output, zipfile.ZipFile(
+            output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
+        ) as archive:
+            for file_path in sorted(path for path in stage.rglob("*") if path.is_file()):
+                archive.write(file_path, file_path.relative_to(stage).as_posix())
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
 def main() -> int:
     arguments = build_parser().parse_args()
     script_root = Path(__file__).resolve().parent
@@ -351,17 +365,8 @@ def main() -> int:
             shutil.copy2(env_path, stage / "configuration" / ".env")
         write_manifest(stage, created_at, expected_revision)
         temporary_archive = output / f".{archive_path.name}.partial"
+        write_private_archive(stage, temporary_archive)
         try:
-            with zipfile.ZipFile(
-                temporary_archive,
-                "w",
-                compression=zipfile.ZIP_DEFLATED,
-                compresslevel=6,
-            ) as archive:
-                for file_path in sorted(
-                    path for path in stage.rglob("*") if path.is_file()
-                ):
-                    archive.write(file_path, file_path.relative_to(stage).as_posix())
             validate_archive(temporary_archive, expected_revision)
             temporary_archive.replace(archive_path)
         finally:

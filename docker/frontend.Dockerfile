@@ -1,8 +1,10 @@
-FROM node:22-alpine AS build
+# workerd requires glibc; Alpine's musl cannot execute its Linux binary.
+FROM node:22-bookworm-slim AS build
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     NEXT_TELEMETRY_DISABLED=1 \
-    WRANGLER_SEND_METRICS=false
+    WRANGLER_SEND_METRICS=false \
+    CLOUDFLARE_CF_FETCH_ENABLED=false
 
 WORKDIR /workspace/frontend
 
@@ -16,7 +18,7 @@ COPY config/product.json /workspace/config/product.json
 RUN pnpm run build
 RUN node -e "const fs=require('node:fs');const p='dist/server/wrangler.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.observability={enabled:false};if(c.dev)c.dev.enable_containers=false;fs.writeFileSync(p,JSON.stringify(c));"
 
-FROM node:22-alpine AS runtime
+FROM node:22-bookworm-slim AS runtime
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     HOST=0.0.0.0 \
@@ -24,7 +26,8 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
     WRANGLER_SEND_METRICS=false \
-    WRANGLER_WRITE_LOGS=false
+    WRANGLER_WRITE_LOGS=false \
+    CLOUDFLARE_CF_FETCH_ENABLED=false
 
 WORKDIR /app
 

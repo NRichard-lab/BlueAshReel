@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -27,6 +28,31 @@ from scripts.backup_format import (
 )
 
 Validator = Callable[[Path], object]
+
+
+def test_partial_backup_is_private_from_creation_and_never_overwrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "example.txt").write_text("synthetic configuration", encoding="utf-8")
+    destination = tmp_path / ".archive.partial"
+    original_open = os.open
+    opened: list[tuple[int, int]] = []
+
+    def checked_open(path, flags, mode=0o777):
+        opened.append((flags, mode))
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(backup.os, "open", checked_open)
+    backup.write_private_archive(stage, destination)
+    assert opened == [(os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)]
+    if os.name == "posix":
+        assert destination.stat().st_mode & 0o777 == 0o600
+    content = destination.read_bytes()
+    with pytest.raises(FileExistsError):
+        backup.write_private_archive(stage, destination)
+    assert destination.read_bytes() == content
 
 
 def test_new_backup_tool_accepts_exact_installed_phase1_schema(tmp_path: Path) -> None:

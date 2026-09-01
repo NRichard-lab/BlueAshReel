@@ -71,6 +71,10 @@ x-log-policy: &log-policy
 services:
   backend:
     <<: *service-hardening
+    stop_grace_period: 60s
+    cpus: ${BACKEND_CPUS:-4.0}
+    mem_limit: ${BACKEND_MEMORY:-2g}
+    pids_limit: 256
     image: bluereel-backend:local
     build:
       context: .
@@ -96,6 +100,10 @@ services:
 
   worker:
     <<: *service-hardening
+    stop_grace_period: 90s
+    cpus: ${WORKER_CPUS:-1.0}
+    mem_limit: ${WORKER_MEMORY:-1g}
+    pids_limit: 128
     image: bluereel-backend:local
     build:
       context: .
@@ -122,6 +130,9 @@ services:
 
   frontend:
     <<: *service-hardening
+    cpus: ${FRONTEND_CPUS:-2.0}
+    mem_limit: ${FRONTEND_MEMORY:-1g}
+    pids_limit: 256
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
@@ -131,6 +142,7 @@ services:
       PORT: "3000"
       WRANGLER_SEND_METRICS: "false"
       WRANGLER_WRITE_LOGS: "false"
+      CLOUDFLARE_CF_FETCH_ENABLED: "false"
       XDG_CACHE_HOME: /tmp/cache
       XDG_CONFIG_HOME: /tmp/config
     expose:
@@ -151,25 +163,38 @@ services:
     read_only: true
     tmpfs:
       - /app/.wrangler:size=32m,mode=0700,uid=1000,gid=1000
+      - /app/dist/server/.wrangler:size=32m,mode=0700,uid=1000,gid=1000
       - /tmp:size=64m,mode=1777
 
   proxy:
     <<: *service-hardening
-    image: caddy:2-alpine
+    # Configure only this namespace, then drop root and all capabilities before
+    # starting Caddy/tini. Port publication and firewall share one lifecycle.
+    init: false
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
+    cpus: ${PROXY_CPUS:-1.0}
+    mem_limit: ${PROXY_MEMORY:-256m}
+    pids_limit: 64
+    image: bluereel-proxy:local
+    build:
+      context: .
+      dockerfile: docker/proxy.Dockerfile
     depends_on:
       backend:
         condition: service_healthy
+        restart: true
       frontend:
         condition: service_healthy
+        restart: true
+    dns: [127.0.0.1]
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/api/v1/health/live"]
+      test: ["CMD", "/usr/local/bin/proxy-health"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
     logging: *log-policy
-    networks:
-      - private
+    networks: [private, ingress]
     ports:
       - target: 8080
         published: "${HTTP_PORT:-8080}"
@@ -177,8 +202,8 @@ services:
         protocol: tcp
     read_only: true
     tmpfs:
-      - /config:size=8m,mode=0700
-      - /data:size=8m,mode=0700
+      - /config:size=8m,mode=0700,uid=1000,gid=1000
+      - /data:size=8m,mode=0700,uid=1000,gid=1000
       - /tmp:size=16m,mode=1777
     volumes:
       - type: bind
@@ -190,6 +215,9 @@ services:
     profiles:
       - tools
     image: bluereel-backend:local
+    cpus: 2.0
+    mem_limit: 1g
+    pids_limit: 128
     pull_policy: never
     cap_drop:
       - ALL
@@ -245,3 +273,5 @@ networks:
   private:
     driver: bridge
     internal: true
+  ingress:
+    driver: bridge
