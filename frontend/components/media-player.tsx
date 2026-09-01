@@ -10,7 +10,7 @@ import { NativeSelect, NativeSelectOption as Option } from '@/components/ui/nati
 import { CatalogState } from '@/components/viewer-catalog';
 import { apiRequest, jsonBody } from '@/lib/api';
 import { MediaDetailRecord, MediaCardRecord, ProfileRecord, useViewerData, clockTime } from '@/lib/viewer';
-import { boundedPosition, browserCapabilities, methodLabel, PlaybackRecord } from '@/lib/playback';
+import { boundedPosition, browserCapabilities, disableCaptions, methodLabel, PlaybackRecord } from '@/lib/playback';
 
 type Reason = 'periodic' | 'playing' | 'pause' | 'seek' | 'exit' | 'ended' | 'restart';
 
@@ -70,9 +70,10 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
   }, []);
 
   const detach = useCallback(() => {
+    const video = videoRef.current;
+    if (video) disableCaptions(video);
     hlsRef.current?.destroy();
     hlsRef.current = null;
-    const video = videoRef.current;
     if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
   }, []);
 
@@ -216,6 +217,7 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
       <div ref={frameRef} className="overflow-hidden rounded-xl border bg-black text-white" tabIndex={0}
         role="application" aria-label="Video player. Space or K to play, arrows to seek, M to mute, F for fullscreen."
         onKeyDown={keyboard}>
+        {/* oxlint-disable-next-line jsx-a11y/media-has-caption -- The caption track below is conditional on an available selected local track. */}
         <video ref={videoRef} className="aspect-video max-h-[70vh] w-full bg-black" playsInline preload="metadata"
           aria-label={`${item.title} video`} onClick={togglePlay}
           onLoadedMetadata={() => { const v = videoRef.current; if (v && desired.current > 0) { v.currentTime = desired.current; desired.current = 0; } }}
@@ -240,10 +242,11 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
             void checkpoint('ended', true).then(() => { if (alive.current) { setWatched(null); result.reload(); } });
             setSession(null); setPlaying(false); setStatus('Playback finished');
             if (profile.data?.auto_next && next.data?.item) setCountdown(profile.data.next_countdown); }}>
-            <track key={`${session?.id}-${session?.subtitle_index}`} kind="captions" label="Selected local subtitles" srcLang={file?.subtitles.find(s => s.index === session?.subtitle_index)?.language || 'und'} default
-              src={session?.subtitle_index != null && file?.subtitles.find(s => s.index === session.subtitle_index)?.text_supported ? `/api/v1/playback/${session.id}/subtitles/${session.subtitle_index}.vtt` : undefined}
-              onLoad={event => { event.currentTarget.track.mode = 'showing'; }}
-              onError={() => setNotice('This subtitle track could not be converted locally. Choose another track or turn subtitles off.')} />
+            {session?.subtitle_index != null && file?.subtitles.find(s => s.index === session.subtitle_index)?.text_supported &&
+              <track key={`${session.id}-${session.subtitle_index}`} kind="captions" label="Selected local subtitles" srcLang={file.subtitles.find(s => s.index === session.subtitle_index)?.language || 'und'} default
+                src={`/api/v1/playback/${session.id}/subtitles/${session.subtitle_index}.vtt`}
+                onLoad={event => { event.currentTarget.track.mode = sessionRef.current?.id === session.id ? 'showing' : 'disabled'; }}
+                onError={() => { if (sessionRef.current?.id === session.id) setNotice('This subtitle track could not be converted locally. Choose another track or turn subtitles off.'); }} />}
         </video>
         <div className="space-y-4 p-4">
           <label className="block"><span className="sr-only">Seek position</span>

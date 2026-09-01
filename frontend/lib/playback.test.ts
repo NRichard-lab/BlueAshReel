@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { boundedPosition, browserCapabilities } from './playback';
+import { boundedPosition, browserCapabilities, disableCaptions } from './playback';
 describe('local playback helpers', () => {
+  it('disables old caption tracks before replacing a representation', () => {
+    const tracks = [{ mode: 'showing' }, { mode: 'hidden' }];
+    disableCaptions({ textTracks: tracks } as unknown as HTMLVideoElement);
+    expect(tracks.map(track => track.mode)).toEqual(['disabled', 'disabled']);
+  });
   it('bounds seeking without allowing nonfinite positions', () => {
     expect(boundedPosition(-20, 100)).toBe(0);
     expect(boundedPosition(120, 100)).toBe(99.9);
