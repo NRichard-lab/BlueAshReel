@@ -89,6 +89,42 @@ class UserSession(Base):
     user: Mapped[User] = relationship(back_populates="sessions")
 
 
+class UserLibrary(Base):
+    __tablename__ = "user_libraries"
+    __table_args__ = (Index("ix_user_libraries_library_user", "library_id", "user_id"),)
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    library_id: Mapped[str] = mapped_column(ForeignKey("libraries.id", ondelete="CASCADE"), primary_key=True)
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    auto_next: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    next_countdown: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+
+
+class WatchProgress(Base):
+    __tablename__ = "watch_progress"
+    __table_args__ = (
+        UniqueConstraint("user_id", "media_item_id", name="uq_progress_user_media"),
+        Index("ix_progress_user_watched_last", "user_id", "watched", "last_played_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    media_item_id: Mapped[str] = mapped_column(ForeignKey("media_items.id", ondelete="CASCADE"), index=True)
+    media_file_id: Mapped[str | None] = mapped_column(ForeignKey("media_files.id", ondelete="SET NULL"))
+    position_seconds: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    duration_seconds: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    watched_seconds: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    watched: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Library(Base, TimestampMixin):
     __tablename__ = "libraries"
     __table_args__ = (
@@ -125,6 +161,7 @@ class MediaItem(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("kind IN ('movie','series','episode','other')", name="ck_media_kind"),
         Index("ix_media_library_available_title", "library_id", "available", "sort_title"),
+        Index("ix_media_library_kind_added", "library_id", "kind", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -223,6 +260,11 @@ class VideoStream(Base):
     bitrate: Mapped[int | None] = mapped_column(Integer)
     frame_rate: Mapped[float | None] = mapped_column(Float)
     language: Mapped[str | None] = mapped_column(String(32))
+
+    profile: Mapped[str | None] = mapped_column(String(80))
+    level: Mapped[int | None] = mapped_column(Integer)
+    pixel_format: Mapped[str | None] = mapped_column(String(40))
+    bit_depth: Mapped[int | None] = mapped_column(Integer)
 
 
 class AudioStream(Base):

@@ -4,10 +4,14 @@ import os
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
+
+from alembic import command
 
 os.environ.setdefault(
     "APP_SECRET_KEY",
@@ -15,13 +19,14 @@ os.environ.setdefault(
 )
 
 from app.config import AppConfig, get_config
-from app.database import Base, create_database_engine, get_db
+from app.database import create_database_engine, get_db
 from app.main import app
 from app.services.rate_limit import login_rate_limiter
 
 
 @dataclass
 class TestContext:
+    __test__ = False
     client: TestClient
     session_factory: sessionmaker[Session]
     config: AppConfig
@@ -57,7 +62,10 @@ def context(tmp_path: Path) -> Generator[TestContext, None, None]:
     for storage_directory in (config.app_data_dir, config.temp_dir, config.artwork_dir):
         storage_directory.mkdir(parents=True, exist_ok=True)
     engine = create_database_engine(config.database_url)
-    Base.metadata.create_all(engine)
+    migration_config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    migration_config.set_main_option("script_location", str(Path(__file__).parents[1] / "alembic"))
+    with patch("app.config.get_config", return_value=config):
+        command.upgrade(migration_config, "head")
     factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
     def override_db() -> Generator[Session, None, None]:

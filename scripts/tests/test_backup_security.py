@@ -19,11 +19,28 @@ from scripts.backup_format import (
     ARCHIVE_FORMAT,
     EXPECTED_ALEMBIC_HEAD,
     MANIFEST_VERSION,
+    PHASE1_REVISION,
+    PHASE1_TABLES,
     REQUIRED_APPLICATION_TABLES,
     _head_from_migration_directory,
+    validate_database,
 )
 
 Validator = Callable[[Path], object]
+
+
+def test_new_backup_tool_accepts_exact_installed_phase1_schema(tmp_path: Path) -> None:
+    database = tmp_path / "old-installed.db"
+    with sqlite3.connect(database) as connection:
+        for table in sorted(PHASE1_TABLES):
+            if table == "alembic_version":
+                connection.execute("CREATE TABLE alembic_version (version_num TEXT PRIMARY KEY)")
+                connection.execute("INSERT INTO alembic_version VALUES (?)", (PHASE1_REVISION,))
+            else:
+                connection.execute(f'CREATE TABLE "{table}" (id INTEGER PRIMARY KEY)')
+    assert validate_database(database, PHASE1_REVISION).alembic_revision == PHASE1_REVISION
+    with pytest.raises(RuntimeError):
+        validate_database(database)
 
 
 def _database_bytes(

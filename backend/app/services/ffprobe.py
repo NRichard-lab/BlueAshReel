@@ -93,6 +93,10 @@ def parse_ffprobe_output(payload: dict[str, Any]) -> ProbeResult:
                 "channel_layout": str(raw["channel_layout"])[:80] if raw.get("channel_layout") else None,
                 "forced": bool(disposition.get("forced", 0)),
                 "hearing_impaired": bool(disposition.get("hearing_impaired", 0)),
+                "profile": str(raw["profile"])[:80] if raw.get("profile") else None,
+                "level": _integer(raw.get("level")),
+                "pixel_format": str(raw["pix_fmt"])[:40] if raw.get("pix_fmt") else None,
+                "bit_depth": _integer(raw.get("bits_per_raw_sample")),
             },
         )
         collections[kind].append(common)

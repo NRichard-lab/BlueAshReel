@@ -13,17 +13,20 @@ import {
   MonitorPlay,
   Settings,
   ShieldCheck,
+  Users,
 } from 'lucide-react';
 import Link from 'next/link';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { apiRequest } from '@/lib/api';
+import { apiRequest, CurrentUser } from '@/lib/api';
 import { productConfig } from '@/lib/product-config';
 
 const navigation = [
-  { label: 'Dashboard', href: '/', icon: House },
+  { label: 'Collection', href: '/', icon: Film },
+  { label: 'Dashboard', href: '/admin', icon: House },
+  { label: 'Household users', href: '/users', icon: Users },
   { label: 'Libraries', href: '/libraries', icon: LibraryBig },
   { label: 'Media', href: '/media', icon: MonitorPlay },
   { label: 'Background jobs', href: '/jobs', icon: BriefcaseBusiness },
@@ -51,8 +54,11 @@ export function AppShell({
   const [privacy, setPrivacy] = useState<PrivacyPosture>();
   const [logoutError, setLogoutError] = useState<string>();
   const [serverOnline, setServerOnline] = useState<boolean>();
+  const [user, setUser] = useState<CurrentUser>();
+  const [accessError, setAccessError] = useState('');
 
   useEffect(() => {
+    apiRequest<CurrentUser>('/auth/me').then(setUser).catch(() => setAccessError('Sign in to access administration.'));
     apiRequest<PrivacyPosture>('/privacy').then(setPrivacy).catch(() => undefined);
     const updatePrivacy = (event: Event) => {
       const next = (event as CustomEvent<PrivacyPosture>).detail;
@@ -71,6 +77,9 @@ export function AppShell({
   }, []);
 
   const outboundActive = Boolean(privacy && Object.values(privacy.integrations).some(Boolean));
+  const owner = user?.roles.includes('Owner');
+  const allowed = owner || user?.roles.includes('Administrator');
+  const shownSecondary = owner ? secondary : [];
 
   const logout = async () => {
     setLogoutError(undefined);
@@ -82,6 +91,8 @@ export function AppShell({
     }
   };
 
+  if (!user) return <main className="p-10"><output>{accessError || 'Checking administration access…'}</output>{accessError && <Link href="/login">Sign in</Link>}</main>;
+  if (!allowed || (!owner && ['/settings', '/privacy', '/streams'].includes(currentPath))) return <main className="p-10"><h1>Administration access required</h1><Link href="/">Return to your collection</Link></main>;
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto grid min-h-screen max-w-[1680px] lg:grid-cols-[248px_minmax(0,1fr)]">
@@ -124,7 +135,7 @@ export function AppShell({
                 Private by design
               </div>
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                {outboundActive
+                {!privacy ? 'Privacy status unavailable. Check the server connection.' : outboundActive
                   ? 'Only Owner-approved integrations may connect outward. Core media stays on this server.'
                   : privacy?.runtime_outbound_allowed
                     ? 'The runtime gate is open, but no Owner-approved integration is active.'
@@ -132,7 +143,7 @@ export function AppShell({
               </p>
             </div>
             <nav aria-label="Configuration" className="space-y-1">
-              {secondary.map(({ label, href, icon: Icon }) => {
+              {shownSecondary.map(({ label, href, icon: Icon }) => {
                 const active = currentPath.startsWith(href);
                 return (
                   <Link
@@ -167,7 +178,7 @@ export function AppShell({
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="hidden border-[var(--success-border)] bg-[var(--success-soft)] text-[var(--success-foreground)] sm:inline-flex">
-                  <LockKeyhole data-icon="inline-start" /> {outboundActive ? 'Outbound approved' : privacy?.runtime_outbound_allowed ? 'Outbound gate open' : 'Local only'}
+                  <LockKeyhole data-icon="inline-start" /> {!privacy ? 'Privacy unknown' : outboundActive ? 'Outbound approved' : privacy.runtime_outbound_allowed ? 'Outbound gate open' : 'Local only'}
                 </Badge>
                 <Button type="button" variant="ghost" size="icon" aria-label="Log out" onClick={logout}>
                   <LogOut />
@@ -175,7 +186,7 @@ export function AppShell({
               </div>
             </div>
             <nav aria-label="Mobile navigation" className="flex gap-1 overflow-x-auto px-3 pb-2 lg:hidden">
-              {[...navigation, ...secondary].map(({ label, href }) => {
+              {[...navigation, ...shownSecondary].map(({ label, href }) => {
                 const active = href === '/' ? currentPath === href : currentPath.startsWith(href);
                 return (
                   <Link

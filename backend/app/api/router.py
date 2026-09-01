@@ -11,7 +11,15 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import AppConfig, ProductConfig, get_config, get_product_config
 from app.database import database_is_ready, get_db
-from app.dependencies import Principal, current_principal, require_csrf, require_owner
+from app.dependencies import (
+    Principal,
+    current_principal,
+    require_csrf,
+    require_manager,
+    require_manager_csrf,
+    require_owner,
+    require_user_csrf,
+)
 from app.models import (
     ApplicationSetting,
     AuditEvent,
@@ -24,6 +32,7 @@ from app.models import (
     ScanJob,
     ScanLock,
     User,
+    UserLibrary,
     utcnow,
 )
 from app.schemas import (
@@ -58,6 +67,7 @@ from app.schemas import (
 )
 from app.security import create_session, hash_password, normalize_username, verify_login
 from app.services.audit import record_audit
+from app.services.catalog import permitted_library
 from app.services.ffprobe import ffmpeg_available, ffprobe_available
 from app.services.jobs import ScanAlreadyRunning, enqueue_scan, release_scan_lock
 from app.services.media_state import recompute_media_availability
@@ -216,6 +226,7 @@ def setup_owner(
             db.flush()
             for path in initial_paths:
                 db.add(LibraryPath(library_id=library.id, canonical_path=str(path)))
+            db.add(UserLibrary(user_id=user.id, library_id=library.id))
         new_session = create_session(db, user, config)
         record_audit(db, "owner.setup_completed", actor_user_id=user.id, target_type="user", target_id=user.id)
         db.commit()
@@ -288,7 +299,7 @@ def me(principal: Principal = Depends(current_principal)) -> UserPublic:
 @router.post("/auth/logout", status_code=204, tags=["authentication"])
 def logout(
     response: Response,
-    principal: Principal = Depends(require_csrf),
+    principal: Principal = Depends(require_user_csrf),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> None:
@@ -384,7 +395,7 @@ def _library_page(db: Session, page: int, page_size: int) -> LibraryList:
                 library_type=library.library_type,
                 enabled=library.enabled,
                 paths=[
-                    LibraryPathPublic(id=item.id, path=item.canonical_path, enabled=item.enabled)
+                    LibraryPathPublic(id=item.id, path=f"Media folder {item.id[:8]}", enabled=item.enabled)
                     for item in library.paths
                 ],
                 last_successful_scan_at=library.last_successful_scan_at,
@@ -417,7 +428,10 @@ def _library_by_id(db: Session, library_id: str) -> LibraryPublic | None:
         name=library.name,
         library_type=library.library_type,
         enabled=library.enabled,
-        paths=[LibraryPathPublic(id=item.id, path=item.canonical_path, enabled=item.enabled) for item in library.paths],
+        paths=[
+            LibraryPathPublic(id=item.id, path=f"Media folder {item.id[:8]}", enabled=item.enabled)
+            for item in library.paths
+        ],
         last_successful_scan_at=library.last_successful_scan_at,
         media_count=media_count,
         available_file_count=file_count,
@@ -430,7 +444,7 @@ def _library_by_id(db: Session, library_id: str) -> LibraryPublic | None:
 def list_libraries(
     page: Page = 1,
     page_size: PageSize = 25,
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> LibraryList:
     return _library_page(db, page, page_size)
@@ -439,11 +453,12 @@ def list_libraries(
 @router.post("/libraries", response_model=LibraryPublic, status_code=201, tags=["libraries"])
 def create_library(
     payload: LibraryCreate,
-    principal: Principal = Depends(require_csrf),
+    principal: Principal = Depends(require_manager_csrf),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> LibraryPublic:
     library = _create_library(db, payload, config)
+    db.add(UserLibrary(user_id=principal.user.id, library_id=library.id))
     record_audit(
         db,
         "library.created",
@@ -460,7 +475,7 @@ def create_library(
 @router.get("/libraries/{library_id}", response_model=LibraryPublic, tags=["libraries"])
 def get_library(
     library_id: str,
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> LibraryPublic:
     item = _library_by_id(db, library_id)
@@ -473,7 +488,7 @@ def get_library(
 def update_library(
     library_id: str,
     payload: LibraryUpdate,
-    principal: Principal = Depends(require_csrf),
+    principal: Principal = Depends(require_manager_csrf),
     db: Session = Depends(get_db),
 ) -> LibraryPublic:
     library = db.get(Library, library_id)
@@ -519,7 +534,7 @@ def update_library(
 def add_library_path(
     library_id: str,
     payload: LibraryPathCreate,
-    principal: Principal = Depends(require_csrf),
+    principal: Principal = Depends(require_manager_csrf),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> LibraryPathPublic:
@@ -545,14 +560,14 @@ def add_library_path(
         target_id=library_id,
     )
     db.commit()
-    return LibraryPathPublic(id=library_path.id, path=library_path.canonical_path, enabled=True)
+    return LibraryPathPublic(id=library_path.id, path=f"Media folder {library_path.id[:8]}", enabled=True)
 
 
 @router.delete("/libraries/{library_id}/paths/{path_id}", status_code=204, tags=["libraries"])
 def remove_library_path(
     library_id: str,
     path_id: str,
-    principal: Principal = Depends(require_csrf),
+    principal: Principal = Depends(require_manager_csrf),
     db: Session = Depends(get_db),
 ) -> None:
     library_path = db.scalar(select(LibraryPath).where(LibraryPath.id == path_id, LibraryPath.library_id == library_id))
@@ -581,7 +596,7 @@ def remove_library_path(
 def start_scan(
     library_id: str,
     payload: ScanRequest,
-    principal: Principal = Depends(require_csrf),
+    principal: Principal = Depends(require_manager_csrf),
     db: Session = Depends(get_db),
 ) -> JobAccepted:
     library = db.get(Library, library_id)
@@ -646,7 +661,7 @@ def list_jobs(
     page_size: PageSize = 25,
     job_status: str | None = Query(default=None, alias="status"),
     library_id: str | None = None,
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> JobList:
     filters = [BackgroundJob.status == job_status] if job_status else []
@@ -667,7 +682,7 @@ def list_jobs(
 @router.get("/jobs/{job_id}", response_model=JobPublic, tags=["jobs"])
 def get_job(
     job_id: str,
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> JobPublic:
     job = db.scalar(select(BackgroundJob).options(selectinload(BackgroundJob.scan)).where(BackgroundJob.id == job_id))
@@ -679,7 +694,7 @@ def get_job(
 @router.post("/jobs/{job_id}/cancel", response_model=JobPublic, tags=["jobs"])
 def cancel_job(
     job_id: str,
-    principal: Principal = Depends(require_csrf),
+    principal: Principal = Depends(require_manager_csrf),
     db: Session = Depends(get_db),
 ) -> JobPublic:
     job = db.scalar(select(BackgroundJob).options(selectinload(BackgroundJob.scan)).where(BackgroundJob.id == job_id))
@@ -771,10 +786,10 @@ def list_media(
     kind: str | None = None,
     available: bool | None = True,
     search: str | None = Query(default=None, max_length=200),
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> MediaList:
-    filters: list[Any] = []
+    filters: list[Any] = [permitted_library(_principal.user.id)]
     if library_id:
         filters.append(MediaItem.library_id == library_id)
     if kind:
@@ -802,7 +817,7 @@ def list_media(
 @router.get("/media/{media_id}", response_model=MediaPublic, tags=["media"])
 def get_media(
     media_id: str,
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
 ) -> MediaPublic:
     item = db.scalar(
@@ -812,7 +827,7 @@ def get_media(
             selectinload(MediaItem.files).selectinload(MediaFile.audio_streams),
             selectinload(MediaItem.files).selectinload(MediaFile.subtitle_streams),
         )
-        .where(MediaItem.id == media_id)
+        .where(MediaItem.id == media_id, permitted_library(_principal.user.id))
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Media item not found")
@@ -831,9 +846,9 @@ def get_settings(
     config: AppConfig = Depends(get_config),
 ) -> SettingsPublic:
     return SettingsPublic(
-        application_data_directory=str(_setting_value(db, "storage.application_data", config.app_data_dir)),
-        temporary_directory=str(_setting_value(db, "storage.temporary", config.temp_dir)),
-        artwork_directory=str(_setting_value(db, "storage.artwork", config.artwork_dir)),
+        application_data_directory="Managed in server configuration",
+        temporary_directory="Managed in server configuration",
+        artwork_directory="Managed in server configuration",
         scan_extensions=list(_setting_value(db, "scanner.extensions", sorted(config.supported_extensions))),
         ignored_directories=list(
             _setting_value(db, "scanner.ignored_directories", sorted(config.ignored_directory_names))
@@ -875,7 +890,7 @@ def _privacy_public(db: Session, config: AppConfig) -> PrivacyPublic:
 
 @router.get("/privacy", response_model=PrivacyPublic, tags=["privacy"])
 def get_privacy(
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> PrivacyPublic:
@@ -911,7 +926,7 @@ def update_privacy(
 
 @router.get("/dashboard", response_model=DashboardPublic, tags=["system"])
 def dashboard(
-    _principal: Principal = Depends(require_owner),
+    _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> DashboardPublic:
@@ -925,7 +940,7 @@ def dashboard(
         except OSError:
             free_bytes = None
             ready = False
-        return {"configured_path": str(resolved), "ready": ready, "free_bytes": free_bytes}
+        return {"configured_path": "Managed in server configuration", "ready": ready, "free_bytes": free_bytes}
 
     return DashboardPublic(
         server_status="ok",

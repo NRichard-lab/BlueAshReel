@@ -17,7 +17,8 @@ from typing import Any
 
 ARCHIVE_FORMAT = "home-media-backup"
 MANIFEST_VERSION = 1
-EXPECTED_ALEMBIC_HEAD = "773863f5a6aa"
+PHASE1_REVISION = "773863f5a6aa"
+EXPECTED_ALEMBIC_HEAD = "2a0100000001"
 MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database/app.db"
 PRODUCT_CONFIG_MEMBER = "configuration/product/product.json"
@@ -25,7 +26,7 @@ PRODUCT_CONFIG_MEMBER = "configuration/product/product.json"
 # A backup from this application version must contain the complete phase-one
 # schema. Alembic's exact head check guards migrations, while this set also
 # rejects unrelated SQLite files that merely copied the version table.
-REQUIRED_APPLICATION_TABLES = frozenset(
+PHASE1_TABLES = frozenset(
     {
         "alembic_version",
         "application_settings",
@@ -53,6 +54,11 @@ REQUIRED_APPLICATION_TABLES = frozenset(
         "video_streams",
     }
 )
+SCHEMAS_BY_REVISION = {
+    PHASE1_REVISION: PHASE1_TABLES,
+    "2a0100000001": PHASE1_TABLES | {"user_libraries", "user_preferences", "watch_progress", "media_search"},
+}
+REQUIRED_APPLICATION_TABLES = SCHEMAS_BY_REVISION[EXPECTED_ALEMBIC_HEAD]
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
 _REVISION_PATTERN = re.compile(r'^revision[^=]*=\s*["\']([^"\']+)["\']', re.MULTILINE)
@@ -128,8 +134,10 @@ def installed_alembic_head() -> str:
         Path(__file__).resolve().parents[1] / "backend" / "alembic" / "versions",
     )
     for directory in candidates:
-        if directory.is_dir() and (head := _head_from_migration_directory(directory)):
-            return head
+        if directory.is_dir():
+            if head := _head_from_migration_directory(directory):
+                return head
+            raise BackupFormatError("Installed migrations do not have one unambiguous head")
     return EXPECTED_ALEMBIC_HEAD
 
 
@@ -191,6 +199,9 @@ def validate_database(
 ) -> DatabaseSummary:
     """Require an intact application database at this code's exact schema head."""
 
+    if expected_revision not in SCHEMAS_BY_REVISION:
+        raise BackupFormatError("Unknown application schema revision")
+
     connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     try:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
@@ -216,7 +227,7 @@ def validate_database(
         raise BackupFormatError(f"SQLite integrity validation failed: {detail}")
     if foreign_key_error is not None:
         raise BackupFormatError("SQLite foreign-key validation failed")
-    missing_tables = sorted(REQUIRED_APPLICATION_TABLES.difference(tables))
+    missing_tables = sorted(SCHEMAS_BY_REVISION[expected_revision].difference(tables))
     if missing_tables:
         raise BackupFormatError(
             "Database is missing required application tables: "

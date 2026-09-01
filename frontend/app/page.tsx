@@ -1,10 +1,10 @@
-import { AppShell } from '@/components/app-shell';
-import { DashboardOverview } from '@/components/dashboard-overview';
+import { ViewerShell } from '@/components/viewer-shell';
+import { ViewerHome } from '@/components/viewer-home';
 
 export default function Home() {
   return (
-    <AppShell currentPath="/">
-      <DashboardOverview />
-    </AppShell>
+    <ViewerShell currentPath="/">
+      <ViewerHome />
+    </ViewerShell>
   );
 }

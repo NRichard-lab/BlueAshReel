@@ -54,7 +54,7 @@ export function LoginForm() {
         </div>
         <Card className="border-none shadow-[0_24px_80px_rgb(18_42_66/12%)]">
           <CardHeader className="text-center">
-            <CardTitle className="text-xl">Owner sign in</CardTitle>
+            <CardTitle className="text-xl">Household sign in</CardTitle>
             <CardDescription>Continue to your private home-media server.</CardDescription>
           </CardHeader>
           <CardContent>

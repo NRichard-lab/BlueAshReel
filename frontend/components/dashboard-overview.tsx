@@ -212,8 +212,8 @@ export function DashboardOverview() {
 
       <Card className="mt-5 border-none shadow-[0_8px_30px_rgb(18_42_66/5%)]">
         <CardHeader className="border-b">
-          <CardTitle>Storage paths</CardTitle>
-          <CardDescription>Authenticated container locations and currently available space. Host paths remain in Settings.</CardDescription>
+          <CardTitle>Local storage</CardTitle>
+          <CardDescription>Readiness and available space. Filesystem locations stay in server configuration.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
           {dashboard ? Object.entries(dashboard.storage_details).map(([name, detail]) => (

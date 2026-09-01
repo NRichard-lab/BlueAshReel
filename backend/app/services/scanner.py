@@ -181,6 +181,10 @@ def _replace_streams(db: Session, media_file: MediaFile, result: ProbeResult) ->
                 bitrate=stream.details["bitrate"],
                 frame_rate=stream.details["frame_rate"],
                 language=stream.language,
+                profile=stream.details.get("profile"),
+                level=stream.details.get("level"),
+                pixel_format=stream.details.get("pixel_format"),
+                bit_depth=stream.details.get("bit_depth"),
             )
         )
     for stream in result.audio:
