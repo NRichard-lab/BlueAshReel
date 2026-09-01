@@ -1,0 +1,6 @@
+{
+  "name": "BlueReel",
+  "subtitle": "A Blue Ash Application.",
+  "version": "0.1.0",
+  "api_prefix": "/api/v1"
+}
