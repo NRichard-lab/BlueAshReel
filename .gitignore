@@ -1,0 +1,36 @@
+# Local configuration and secrets
+.env
+*.local
+
+# Runtime state and user media
+runtime/
+media/
+backups/
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# JavaScript
+node_modules/
+.next/
+dist/
+coverage/
+.coverage
+.coverage.*
+.wrangler/
+*.tsbuildinfo
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

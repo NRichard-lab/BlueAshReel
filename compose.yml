@@ -1,0 +1,234 @@
+name: bluereel
+
+x-common-environment: &common-environment
+  APP_SECRET_KEY: ${APP_SECRET_KEY:?Run the bootstrap script to create .env with a secure secret}
+  APP_DATA_DIR: /data
+  ARTWORK_DIR: /artwork
+  DATABASE_URL: sqlite:////database/app.db
+  FFMPEG_PATH: ffmpeg
+  FFPROBE_PATH: ffprobe
+  FFPROBE_TIMEOUT_SECONDS: ${FFPROBE_TIMEOUT_SECONDS:-45}
+  JOB_STALE_MINUTES: ${JOB_STALE_MINUTES:-15}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  MEDIA_ROOTS: /media
+  OUTBOUND_INTEGRATIONS_ENABLED: ${OUTBOUND_INTEGRATIONS_ENABLED:-false}
+  PRODUCT_CONFIG_FILE: /app/config/product.json
+  SCAN_BATCH_SIZE: ${SCAN_BATCH_SIZE:-50}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
+  TEMP_DIR: /tmp/app
+  WORKER_POLL_INTERVAL: ${WORKER_POLL_INTERVAL:-1.0}
+
+x-app-volumes: &app-volumes
+  - type: bind
+    source: ${DATA_PATH:-./runtime/data}
+    target: /data
+  - type: bind
+    source: ${DATABASE_PATH:-./runtime/database}
+    target: /database
+  - type: bind
+    source: ${ARTWORK_PATH:-./runtime/artwork}
+    target: /artwork
+  - type: bind
+    source: ${TEMP_PATH:-./runtime/temp}
+    target: /tmp/app
+  - type: bind
+    source: ${MEDIA_PATH:?Run the bootstrap script or set an existing readable MEDIA_PATH in .env}
+    target: /media
+    read_only: true
+  - type: bind
+    source: ./config
+    target: /app/config
+    read_only: true
+
+x-service-hardening: &service-hardening
+  cap_drop:
+    - ALL
+  init: true
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+x-log-policy: &log-policy
+  driver: json-file
+  options:
+    max-file: "3"
+    max-size: 10m
+
+services:
+  backend:
+    <<: *service-hardening
+    image: bluereel-backend:local
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        APP_GID: ${PGID:-1000}
+        APP_UID: ${PUID:-1000}
+    command: ["api"]
+    environment: *common-environment
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8000/api/v1/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    logging: *log-policy
+    networks:
+      - private
+    read_only: true
+    volumes: *app-volumes
+
+  worker:
+    <<: *service-hardening
+    image: bluereel-backend:local
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        APP_GID: ${PGID:-1000}
+        APP_UID: ${PUID:-1000}
+    command: ["worker"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment: *common-environment
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *log-policy
+    networks:
+      - private
+    read_only: true
+    volumes: *app-volumes
+
+  frontend:
+    <<: *service-hardening
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      HOME: /tmp
+      PORT: "3000"
+      WRANGLER_SEND_METRICS: "false"
+      WRANGLER_WRITE_LOGS: "false"
+      XDG_CACHE_HOME: /tmp/cache
+      XDG_CONFIG_HOME: /tmp/config
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    logging: *log-policy
+    networks:
+      - private
+    read_only: true
+    tmpfs:
+      - /app/.wrangler:size=32m,mode=0700,uid=1000,gid=1000
+      - /tmp:size=64m,mode=1777
+
+  proxy:
+    <<: *service-hardening
+    image: caddy:2-alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/api/v1/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *log-policy
+    networks:
+      - private
+    ports:
+      - target: 8080
+        published: "${HTTP_PORT:-8080}"
+        host_ip: ${BIND_ADDRESS:-127.0.0.1}
+        protocol: tcp
+    read_only: true
+    tmpfs:
+      - /config:size=8m,mode=0700
+      - /data:size=8m,mode=0700
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - type: bind
+        source: ./docker/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+
+  backup:
+    profiles:
+      - tools
+    image: bluereel-backend:local
+    pull_policy: never
+    cap_drop:
+      - ALL
+    entrypoint: ["python", "/tools/backup.py"]
+    command: ["--retention-days", "${BACKUP_RETENTION_DAYS:-30}"]
+    environment:
+      APP_DATA_DIR: /data
+      ARTWORK_DIR: /artwork
+      BACKUP_CONFIG_DIR: /app/config
+      BACKUP_ENV_FILE: /workspace/.env
+      BACKUP_PATH: /backups
+      BACKUP_TEMP_DIR: /tmp/app
+      DATABASE_URL: sqlite:////database/app.db
+    logging: *log-policy
+    network_mode: none
+    read_only: true
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ${DATA_PATH:-./runtime/data}
+        target: /data
+        read_only: true
+      - type: bind
+        source: ${DATABASE_PATH:-./runtime/database}
+        target: /database
+        read_only: true
+      - type: bind
+        source: ${ARTWORK_PATH:-./runtime/artwork}
+        target: /artwork
+        read_only: true
+      - type: bind
+        source: ${TEMP_PATH:-./runtime/temp}
+        target: /tmp/app
+      - type: bind
+        source: ${BACKUP_PATH:-./backups}
+        target: /backups
+      - type: bind
+        source: ./config
+        target: /app/config
+        read_only: true
+      - type: bind
+        source: ./.env
+        target: /workspace/.env
+        read_only: true
+      - type: bind
+        source: ./scripts
+        target: /tools
+        read_only: true
+
+networks:
+  private:
+    driver: bridge
+    internal: true

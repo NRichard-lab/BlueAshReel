@@ -1,0 +1,6 @@
+* text=auto
+
+# These files execute inside Linux containers even when checked out on Windows.
+*.sh text eol=lf
+*.Dockerfile text eol=lf
+docker/Caddyfile text eol=lf
