@@ -14,7 +14,7 @@ Current limitations:
 - Chromium was tested locally; Safari/Firefox and production GPU/driver combinations need workstation validation.
 - One API process and one scan worker. Completed output is reusable while referenced, then deleted.
 - Forced browser termination may lose the final 15-second checkpoint.
-- Docker was unavailable on the development host; native tests do not establish container/network-level validation.
+- Docker Desktop/WSL2 container playback, recovery and no-egress were validated with synthetic media; see [the validation scope](container-validation.md). Long household files and other browser/GPU combinations still need operator testing.
 
 The following remain deliberately deferred:
 - remote/public access, managed TLS, relay services, and router automation;

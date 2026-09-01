@@ -1,5 +1,9 @@
 # Phase 2 validation
 
+This is the original **native Windows** validation record. The subsequent
+[Docker validation](container-validation.md) closes its container-validation gap
+and records container-specific fixes, current test counts and the local handoff.
+
 Validated on Windows with Python 3.12.13, local FFmpeg 9.0.1, SQLite WAL, and the
 desktop app's Chromium browser. The frontend and API were tested on the same
 `localhost:3000` origin. Only synthetic test-pattern/sine-wave media and disposable
@@ -86,11 +90,13 @@ not media titles, paths, usernames, request bodies or tokens. Tests fail closed 
 outbound calls and redact sensitive fields. These checks are not a packet capture of
 the entire host. Native execution does not provide Docker's network-level isolation.
 
-**Docker is unavailable on this development host.** No container build/run, GPU
-passthrough or container no-egress result is claimed. No public deployment, router
-change, remote-access feature or Blue Ash portal integration was performed.
+Docker was unavailable during this native run. Container builds, runtime no-egress,
+restart recovery and browser playback were subsequently tested on 2026-09-01; see
+[the separate container record](container-validation.md). Native AMF success above
+does **not** imply Docker GPU support. No public deployment, router change,
+remote-access feature or Blue Ash portal integration was performed.
 
-## Dedicated-workstation checklist (outstanding)
+## Dedicated-workstation checklist (for future installations)
 
 1. Back up and validate the Phase 1 installation; record its revision and directories.
 2. Run bootstrap/upgrade with Docker installed; validate resolved Compose, build all

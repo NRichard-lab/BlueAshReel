@@ -35,10 +35,16 @@ The wrapper runs the already-built local backend image as an isolated, one-shot 
 Archive filenames use a safe lowercase slug derived from `config/product.json`, in the form `PRODUCT-SLUG-backup-YYYYMMDDTHHMMSSZ.zip`; changing the configured product name changes the prefix without requiring a script edit. Retention removes only valid archives with the current product-derived prefix inside the resolved `BACKUP_PATH` that are older than the configured number of days. It never deletes the backup just created or arbitrary files. Archives created under an earlier product slug are retained until the operator reviews them. A partial or invalid archive is not promoted.
 
 Backups include `.env`, which contains the application secret, and database records can reveal household media/account information. Restrict and encrypt backup storage. Artwork can be omitted to reduce archive size because it can be regenerated from local sources where available.
+Secret-bearing partial archives are created exclusively with mode 0600 before
+writing their first byte. Windows bind-mount security also depends on the host
+directory's ACL; Unix modes do not replace appropriate Windows access controls.
 
 ## Validate a backup (restore dry run)
 
-The archive must be inside configured `BACKUP_PATH` so the tool receives read-only, narrowly scoped access.
+The archive must be inside configured `BACKUP_PATH`. The validator reuses the
+network-disabled backup tool: application mounts are read-only, while the backup
+directory and temporary workspace are writable. The validator itself only reads
+the archive and writes a temporary database copy; it never restores over live data.
 
 ```powershell
 .\scripts\restore-validate.ps1 .\backups\PRODUCT-SLUG-backup-YYYYMMDDTHHMMSSZ.zip

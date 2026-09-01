@@ -15,7 +15,27 @@ flowchart LR
     Worker --> Data
 ```
 
-All four runtime containers use the Compose `private` network, which is marked `internal`. Only Caddy publishes a host port. Caddy routes versioned API and OpenAPI requests to FastAPI and routes interface requests to the frontend. It does not enable automatic HTTPS because this phase binds locally and does not manage household certificates.
+Backend, worker and frontend use only the Compose `private` network, marked
+`internal`. On the validated Docker 29.7 engine, an internal-only namespace did not
+provide the required published host port.
+Therefore the proxy joins `private` and a dedicated ingress bridge and
+publishes the loopback port. Its startup guard installs
+default-deny IPv4/IPv6 OUTPUT and FORWARD rules, then permits only established TCP
+replies, localhost:8080 health checks, backend:8000 and frontend:3000. Runtime DNS
+is blocked after the two internal service names are resolved during initialization.
+
+Only proxy initialization has NET_ADMIN plus the capabilities needed to drop its
+identity. Before starting either Tini or Caddy it drops to UID 1000 with zero
+capabilities, including its bounding set. The health check verifies actual process
+privileges as well as HTTP. Firewall setup failure exits before Caddy listens.
+Port publication, the firewall and Caddy share one lifecycle, avoiding split
+namespaces or stale readiness after Docker restarts. The guard never receives
+host networking, a Docker socket, privileged mode or access to host firewall rules.
+A trusted Docker administrator can still create privileged exec processes; this
+is not a sandbox against a host/Docker administrator.
+
+Caddy routes versioned API and OpenAPI requests to FastAPI and interface requests
+to the frontend. Automatic HTTPS remains disabled for this local HTTP phase.
 
 ## Components and responsibilities
 
@@ -54,12 +74,18 @@ SQLite WAL permits readers while the worker writes. A future database adapter ca
 
 - Owner, Administrator and Viewer roles are active. All viewers, including Owners, need explicit library assignments. Management permissions do not bypass playback authorization.
 - Browser authentication uses server-managed, HTTP-only cookies; no long-lived credential belongs in browser local storage.
-- The reverse proxy is the only published service.
+- Only the reverse proxy publishes a port.
 - Runtime egress is blocked at the Docker network layer, and integration permission is separately denied by configuration and database settings.
 - Structured logs redact sensitive keys and values. Caddy access logging is not enabled.
 - Container logs use three 10 MiB local files per service.
 
 The decision rationale is recorded in [ADR 0001](adr/0001-local-first-foundation.md).
+
+After rebuilding/recreating either upstream, use `docker compose up --detach --build`
+for the complete project so the proxy refreshes its address allowlist.
+For a controlled restart use `docker compose restart` for the whole project.
+An isolated upstream recreation can leave old addresses unavailable; it must never
+be repaired by granting unrestricted DNS or Internet access.
 
 ## Phase 2 data and process flow
 

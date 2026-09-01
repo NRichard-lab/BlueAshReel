@@ -74,6 +74,7 @@ Health responses are intentionally narrow and do not include users, media titles
 - [Local conversion and hardware](docs/transcoding.md)
 - [API reference](docs/api.md)
 - [Phase 2 validation and workstation checklist](docs/phase2-validation.md)
+- [Docker validation and local handoff](docs/container-validation.md)
 - [Current limitations](docs/not-implemented.md)
 - [Architecture decision record](docs/adr/0001-local-first-foundation.md)
 
@@ -91,7 +92,14 @@ compose.yml  Local runtime topology and hardening
 
 ## Privacy posture
 
-Runtime services share an internal Docker network with no outbound route. Only Caddy publishes a host port, bound to loopback by default. Media is read-only; inspection and artwork handling occur locally. The project includes no analytics, advertising, remote fonts, tracking pixels, external crash reporting, or metadata-provider calls. Future outbound integrations require both an operator opt-in and an Owner-controlled setting, and are disabled by default.
+Backend, worker and frontend use an internal Docker network with no outbound route.
+Caddy's startup guard applies deny-by-default rules in its own network namespace,
+permitting only replies, local health checks and the two internal upstreams.
+Only Caddy publishes a host port, bound to loopback by default. No host
+firewall rules are changed. Media is read-only; inspection and artwork handling
+occur locally. There are no analytics, advertising, remote fonts, tracking pixels,
+external crash reporting or metadata-provider calls. Outbound integrations remain
+disabled and unavailable. See the [network boundary](docs/privacy-and-outbound.md).
 
 Backups contain the database, local configuration (including the application secret), application data, and optionally cached artwork. Treat them as sensitive household data.
 

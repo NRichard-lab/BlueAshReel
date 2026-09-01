@@ -18,8 +18,9 @@ History is stored in SQLite. Users may delete their own; deleting it invalidates
 active streams so old checkpoints cannot recreate it. Owner retention (365 days
 default, zero indefinite) runs locally at startup and once per minute. Existing
 backups must be expired separately. Live privacy badges refresh enforcement state.
-Native tests verify application-level no-outbound behavior; OS/network isolation
-must still be validated in the dedicated workstation's internal Docker network.
+Native tests verify application-level no-outbound behavior. Actual per-container
+DNS, direct-IP HTTP/HTTPS and internal-connectivity probes are recorded separately
+in [container validation](container-validation.md).
 
 BlueReel's phase-one runtime is designed to function with no Internet route. Media inspection, filename parsing, artwork discovery, account data, audit data, and job processing remain on the host.
 
@@ -39,7 +40,10 @@ Source media is mounted read-only and is never renamed, moved, deleted, or uploa
 
 Outbound permission has three separate layers:
 
-1. The Compose `private` network is `internal`, so runtime containers have no ordinary external route.
+1. Backend, worker and frontend have only an internal network. Caddy's dedicated
+   ingress namespace has default-deny outbound rules with only two internal
+   destination/port exceptions, established replies and a loopback health check.
+   External DNS, including Docker resolver forwarding, is blocked after startup.
 2. `OUTBOUND_INTEGRATIONS_ENABLED` defaults to `false` and gates every known integration category.
 3. Each known category (`metadata`, `artwork`, `portal`, and `telemetry`) also requires an explicit Owner-controlled database setting.
 
@@ -49,7 +53,12 @@ Future work that needs outbound access must add a reviewed network override, dec
 
 ## Logs and health endpoints
 
-Application logs are JSON and redact keys associated with passwords, secrets, tokens, cookies, sessions, authorization, paths, filenames, titles, and database URLs. Caddy access logging is not enabled, reducing accidental query/cookie capture. Docker retains at most three 10 MiB JSON log files for each service.
+Application logs are JSON and redact keys associated with passwords, secrets,
+tokens, cookies, sessions, authorization, paths, filenames, titles and database
+URLs. Caddy access logging is not enabled; its runtime formatter removes request
+objects, file/storage fields and error traces. Docker retains at most three 10 MiB
+JSON log files for each service. Startup and controlled-failure logs are included
+in the container privacy audit, not just successful access requests.
 
 Avoid adding raw exception payloads, FFprobe commands, request bodies, media names, or filesystem paths to routine logs. Debug logging can still reveal implementation detail and should be enabled only briefly on a trusted host.
 

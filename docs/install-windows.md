@@ -1,15 +1,17 @@
 # Windows installation
 
 Phase 2 adds local streaming. Allocate transcode space deliberately and confirm
-FFmpeg supports libx264/AAC. The reference containers remain non-root, media remains
+FFmpeg supports libx264/AAC. The application processes remain non-root, media remains
 read-only, and only loopback Caddy is published. Native development uses Windows
 paths in MEDIA_ROOTS (semicolon-separated), not Linux container paths.
 
 After upgrade, verify assigned libraries, a direct MP4, MKV remux, incompatible-video
 conversion, pause/resume across restart, and Stop Stream cleanup. Optional QSV/NVENC/AMF
 requires real System Health test encodes; do not infer support from a GPU name.
-Follow the [dedicated-workstation checklist](phase2-validation.md). Docker was not
-available on the development host, so its runtime validation remains outstanding.
+Docker Desktop/WSL2 validation is recorded in [container validation](container-validation.md).
+Caddy's initializer configures only its container firewall, then drops to UID 1000
+and zero capabilities before serving requests. GPU availability must be checked
+inside Docker independently of native Windows support.
 
 ## Requirements
 
@@ -66,6 +68,20 @@ docker compose up -d
 ```
 
 The bootstrap deliberately rejects `0.0.0.0` and public addresses. A private bind does not configure Windows Firewall; if access is blocked, create only the narrow private-profile rule your household needs after reviewing local policy. Public exposure and router port forwarding are not supported.
+
+## After a Windows reboot
+
+If Docker Desktop is not configured to start at sign-in, start it and wait for the
+Linux engine. Then, from the repository directory, run:
+
+```powershell
+.\scripts\bootstrap.ps1 -NoBuild
+```
+
+This preserves `.env`, accounts, libraries and saved progress. Compose uses project
+name `bluereel`; services have `unless-stopped` restart policies. After changing or
+rebuilding backend/frontend containers, use `docker compose up -d --build` for the
+whole project so Caddy refreshes its narrowly permitted upstream addresses.
 
 ## Stop or remove containers
 

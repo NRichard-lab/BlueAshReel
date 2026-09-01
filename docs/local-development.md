@@ -27,11 +27,12 @@ docker compose logs --follow backend worker frontend proxy
 Source directories are baked into images rather than live-mounted. Rebuild the affected service after code changes:
 
 ```sh
-docker compose up --detach --build backend worker
-docker compose up --detach --build frontend
+docker compose up --detach --build
 ```
 
 The API is reached through `http://localhost:8080/api/v1`; the API container itself is not published to the host.
+Restart/reconcile the complete project when upstream addresses change; the ingress
+guard deliberately uses a narrow address allowlist instead of runtime DNS access.
 
 ## Native backend
 

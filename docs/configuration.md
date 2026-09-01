@@ -65,6 +65,32 @@ Inside containers, storage paths are fixed (`/data`, `/database`, `/artwork`, `/
 
 ## Security and runtime settings
 
+### Container resource ceilings
+
+Compose enforces these CPU, memory and PID limits (not just deployment hints):
+
+| Service | CPU variable / default | Memory variable / default | PIDs |
+| --- | --- | --- | --- |
+| Backend | `BACKEND_CPUS=4.0` | `BACKEND_MEMORY=2g` | 256 |
+| Worker | `WORKER_CPUS=1.0` | `WORKER_MEMORY=1g` | 128 |
+| Frontend | `FRONTEND_CPUS=2.0` | `FRONTEND_MEMORY=1g` | 256 |
+| Caddy | `PROXY_CPUS=1.0` | `PROXY_MEMORY=256m` | 64 |
+| Backup tool | 2.0 | 1g | 128 |
+
+Playback's process, thread and temporary-storage limits remain separate. Inspect
+actual use with `docker compose stats --no-stream`. Backend/worker shutdown grace
+periods are 60/90 seconds so supervised media processes can terminate cleanly.
+
+The frontend uses Debian/glibc because workerd cannot run on Alpine/musl. Its
+small Wrangler scratch directories are size-limited tmpfs mounts; the root
+filesystem remains read-only. `CLOUDFLARE_CF_FETCH_ENABLED=false` prevents
+Miniflare's default remote request-metadata lookup, and Wrangler telemetry is off.
+
+The proxy image starts a short root-only firewall initializer with NET_ADMIN,
+SETUID, SETGID and SETPCAP in its own namespace. It then drops all capabilities,
+groups and root identity before executing Tini/Caddy. Docker administrators retain
+host-level authority; the application process cannot regain these privileges.
+
 | Variable | Default | Constraint / effect |
 | --- | --- | --- |
 | `APP_SECRET_KEY` | generated | At least 64 random characters in bootstrap output; never commit or log |
