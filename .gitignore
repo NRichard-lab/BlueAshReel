@@ -1,36 +1,148 @@
-# Local configuration and secrets
+# Local environments; intentionally sanitized examples remain source controlled.
 .env
+.env.*
+*.env
 *.local
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+!.env.template
+!.env.*.template
+!*.env.example
+!*.env.sample
+!*.env.template
 
-# Runtime state and user media
-runtime/
-media/
-backups/
+# Runtime state and user mounts. Anchor these names so source routes/modules
+# such as frontend/app/media are never hidden by a runtime-directory rule.
+/runtime/
+/data/
+/backend/data/
+/media/
+/backend/media/
+/mounted-media/
+/media-mounts/
+/mounts/
+/mnt/
+/volumes/
+/backups/
+/backend/backups/
+*-backup-*.zip
+
+# SQLite databases and sidecars, including rollback journals.
 *.db
-*.db-shm
 *.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
-# Python
+# Logs, disposable work, transcode output, and runtime caches.
+*.log
+*.log.*
+/logs/
+/backend/logs/
+/frontend/logs/
+*.tmp
+*.temp
+/tmp/
+/temp/
+/backend/tmp/
+/backend/temp/
+/frontend/tmp/
+/frontend/temp/
+/transcode/
+/transcodes/
+/transcode-output/
+/backend/transcode/
+/backend/transcodes/
+/cache/
+/backend/cache/
+.cache/
+
+# Generated validation output only; do not blanket-ignore tests or fixtures.
+/artifacts/
+/validation/
+/validation-tools/
+/validation-artifacts/
+/test-results/
+/playwright-report/
+/blob-report/
+/backend/tests/generated/
+/scripts/tests/generated/
+/frontend/test-results/
+/frontend/playwright-report/
+/frontend/blob-report/
+
+# Downloaded local FFmpeg tools, not source wrappers or probe-result fixtures.
+/ffmpeg
+/ffprobe
+/ffplay
+/ffmpeg-*/
+/tools/ffmpeg
+/tools/ffprobe
+/tools/ffplay
+/bin/ffmpeg
+/bin/ffprobe
+/bin/ffplay
+/vendor/ffmpeg/
+/vendor/ffprobe/
+ffmpeg.exe
+ffprobe.exe
+ffplay.exe
+ffmpeg-*.zip
+ffmpeg-*.7z
+ffmpeg-*.tar.*
+
+# Python environments, packaging output, and caches.
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.uv-cache/
 .venv/
 venv/
+/env/
+/backend/env/
+*.egg-info/
+/backend/build/
 
-# JavaScript
+# JavaScript dependencies, frontend build output, and test coverage.
 node_modules/
 .next/
+.vinext/
+.vite/
+.turbo/
+.parcel-cache/
 dist/
+/frontend/build/
+/frontend/out/
 coverage/
 .coverage
 .coverage.*
 .wrangler/
 *.tsbuildinfo
 
-# Editors and operating systems
+# Editors and operating systems.
 .idea/
 .vscode/
+.vs/
+*.suo
+*.user
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
