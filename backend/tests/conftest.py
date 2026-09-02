@@ -21,6 +21,7 @@ os.environ.setdefault(
 from app.config import AppConfig, get_config
 from app.database import create_database_engine, get_db
 from app.main import app
+from app.services.media_roots import read_only_enforced
 from app.services.playback import playback_budget
 from app.services.rate_limit import login_rate_limiter
 
@@ -33,9 +34,16 @@ class TestContext:
     config: AppConfig
     media_root: Path
 
+    def begin_setup(self) -> str:
+        response = self.client.post("/api/v1/setup/session")
+        assert response.status_code == 200, response.text
+        return response.json()["csrf_token"]
+
     def setup_owner(self) -> tuple[str, dict[str, str]]:
+        setup_csrf = self.begin_setup()
         response = self.client.post(
             "/api/v1/setup/owner",
+            headers={"X-CSRF-Token": setup_csrf},
             json={"username": "owner", "password": "correct horse battery staple"},
         )
         assert response.status_code == 201, response.text
@@ -43,18 +51,28 @@ class TestContext:
 
 
 @pytest.fixture
-def context(tmp_path: Path) -> Generator[TestContext, None, None]:
+def context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestContext, None, None]:
     login_rate_limiter.clear()
     playback_budget.clear()
     media_root = tmp_path / "media"
     media_root.mkdir()
+
+    def fixture_mount_state(path: Path) -> bool | None:
+        # Tests generate synthetic media on writable temporary storage, not a
+        # production media bind mount. Explicit RW-policy tests override this.
+        return None if path.is_relative_to(media_root) else read_only_enforced(path)
+
+    monkeypatch.setattr("app.services.media_roots.read_only_enforced", fixture_mount_state)
+    monkeypatch.setattr("app.api.media_roots.read_only_enforced", fixture_mount_state)
     config = AppConfig(
+        _env_file=None,
         database_url=f"sqlite:///{tmp_path / 'test.db'}",
         app_secret_key="test-secret-key-is-at-least-thirty-two-characters",  # noqa: S106
         app_data_dir=tmp_path / "data",
         temp_dir=tmp_path / "tmp",
         artwork_dir=tmp_path / "artwork",
         media_roots=str(media_root),
+        media_root_definitions="",
         ffprobe_path="definitely-not-installed-ffprobe",
         ffmpeg_path="definitely-not-installed-ffmpeg",
         scan_batch_size=2,

@@ -22,9 +22,11 @@ watch progress and playback-session history are removed. Otherwise they are anon
 cannot be resumed by a future account with the same name. Profile history deletion
 only affects the signed-in person.
 
-Media folder paths are write-only inputs. Browser responses show stable folder
-labels, readiness, and capacity—not full filesystem paths. View or change native
-storage locations in the server configuration.
+The folder browser exposes approved root-relative directory names only to a limited
+first-run setup session or an authorized Owner/Administrator. Normal library views
+use friendly root-relative labels, not native host paths. Owners may inspect internal
+mounted paths in Advanced settings; native host locations are changed only through
+the local bootstrap configuration, never from the web application.
 
 ## Viewer catalog
 

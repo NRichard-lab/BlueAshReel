@@ -37,10 +37,32 @@ Membership in the `docker` group is effectively root-equivalent; use it only if 
 From the repository:
 
 ```sh
-sh scripts/bootstrap.sh --media-path /srv/media
+sh scripts/bootstrap.sh
 ```
 
-The media directory must exist and be readable/traversable. Omit `--media-path` to create an empty local `media/` directory. The script writes the invoking user's numeric UID/GID to a newly created `.env`, which keeps bind-mounted state owned by that user. It preserves an existing `.env` without modification.
+An interactive terminal offers typed folder selection and an explicit Skip
+choice. Non-interactive installations can repeat `--media-path`:
+
+```sh
+sh scripts/bootstrap.sh --media-path /srv/videos --media-path /mnt/archive/videos
+```
+
+Directories must exist and be readable/traversable. Skipping creates an empty
+local `media/` directory. The script writes the invoking user's numeric UID/GID
+to a newly created `.env`, which keeps bind-mounted state owned by that user.
+It rejects filesystem roots, symbolic-link roots, nesting, duplicates, and
+overlap with writable application state.
+
+To change an existing installation, make the operation explicit. Existing
+secrets and unrelated settings remain unchanged:
+
+```sh
+sh scripts/bootstrap.sh --configure-media-roots --media-path /srv/videos --media-path /mnt/archive/videos
+```
+
+Bootstrap refuses to overwrite an unrelated `compose.override.yml`. Approved
+root changes require controlled container recreation; the normal bootstrap run
+performs it, while `--no-start` validates and records the change for a later run.
 
 The script validates state directory separation, blocks root/repository-wide state targets, rejects writable state nested in source media, renders Compose, builds the containers, starts the project, and waits for `http://localhost:8080/api/v1/health/ready`.
 
@@ -48,9 +70,12 @@ If the repository was copied without executable bits, using `sh scripts/bootstra
 
 ## Owner setup and container paths
 
-Open [http://localhost:8080](http://localhost:8080), create the initial Owner, and use paths below `/media`. For example, `/srv/media/Movies` on the host is `/media/Movies` in BlueReel.
-
-Do not use the host path in an API request; the backend validates against container-visible allowed roots. Source media is mounted read-only even if the host account can write it.
+Open [http://localhost:8080](http://localhost:8080), enter the initial Owner details,
+and use **Browse folders** in the signed 30-minute setup session to select a directory.
+**Finish secure setup** saves the Owner and optional first library together. The first root retains internal
+path `/media`; additional roots receive stable internal paths. Advanced manual
+entry accepts only those container paths, never arbitrary host paths. Source
+media is mounted read-only even if the host account can write it.
 
 ## Service management
 

@@ -69,4 +69,18 @@ describe('apiRequest', () => {
       message: 'Media path is not allowed.',
     });
   });
+
+  it('surfaces a nested FastAPI detail message without object coercion', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      detail: { message: 'The approved media folder cannot be read', state: 'permission_denied' },
+    }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+    await expect(apiRequest('/media-folders/browse')).rejects.toMatchObject({
+      status: 409,
+      message: 'The approved media folder cannot be read',
+    });
+  });
 });

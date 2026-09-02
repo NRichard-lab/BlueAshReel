@@ -3,6 +3,13 @@
 .env
 .env.*
 !.env.example
+.bluereel
+compose.override.yml
+compose.override.yaml
+# Interrupted bootstrap candidates can contain secrets or host paths.
+.compose.override.yml.tmp.*
+compose.media-roots.tmp.*.yml
+..env.tmp.*
 runtime
 media
 backups

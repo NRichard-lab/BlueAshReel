@@ -27,6 +27,22 @@ class ProductConfig(BaseModel):
         return value
 
 
+class ApprovedMediaRoot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    display_name: str = Field(min_length=1, max_length=80)
+    path: Path
+
+    @field_validator("display_name")
+    @classmethod
+    def safe_display_name(cls, value: str) -> str:
+        cleaned = "".join(character for character in value.strip() if character.isprintable())
+        if not cleaned:
+            raise ValueError("Media root display name cannot be blank")
+        return cleaned
+
+
 def _find_product_config() -> Path | None:
     explicit = os.getenv("PRODUCT_CONFIG_FILE")
     if explicit:
@@ -66,6 +82,7 @@ class AppConfig(BaseSettings):
     temp_dir: Path = Path("./data/tmp")
     artwork_dir: Path = Path("./data/artwork")
     media_roots: str = ""
+    media_root_definitions: str = ""
     outbound_integrations_enabled: bool = False
     log_level: str = "INFO"
     ffprobe_path: str = "ffprobe"
@@ -108,10 +125,44 @@ class AppConfig(BaseSettings):
         return value
 
     @property
+    def approved_media_roots(self) -> tuple[ApprovedMediaRoot, ...]:
+        if self.media_root_definitions.strip():
+            try:
+                raw = json.loads(self.media_root_definitions)
+                roots = tuple(ApprovedMediaRoot.model_validate(item) for item in raw)
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise ValueError("MEDIA_ROOT_DEFINITIONS is not valid approved-root configuration") from exc
+        else:
+            paths = [value for value in self.media_roots.split(os.pathsep) if value]
+            roots = tuple(
+                ApprovedMediaRoot(
+                    id="primary" if index == 0 else f"root_{index + 1}",
+                    display_name="Media" if index == 0 else f"Media {index + 1}",
+                    path=Path(value),
+                )
+                for index, value in enumerate(paths)
+            )
+        normalized = tuple(
+            ApprovedMediaRoot(id=root.id, display_name=root.display_name, path=root.path.expanduser().absolute())
+            for root in roots
+        )
+        if len({root.id for root in normalized}) != len(normalized):
+            raise ValueError("Approved media root identifiers must be unique")
+        canonical_paths = tuple(root.path.resolve(strict=False) for root in normalized)
+        if len({str(path) for path in canonical_paths}) != len(canonical_paths):
+            raise ValueError("Approved media root paths must be unique")
+        for index, _root in enumerate(normalized):
+            canonical = canonical_paths[index]
+            if canonical == Path(canonical.anchor):
+                raise ValueError("Approved media roots cannot be filesystem roots")
+            for other in canonical_paths[index + 1 :]:
+                if canonical in other.parents or other in canonical.parents:
+                    raise ValueError("Approved media roots cannot overlap")
+        return normalized
+
+    @property
     def allowed_media_roots(self) -> tuple[Path, ...]:
-        if not self.media_roots.strip():
-            return ()
-        return tuple(Path(value).expanduser().resolve() for value in self.media_roots.split(os.pathsep) if value)
+        return tuple(root.path.resolve(strict=False) for root in self.approved_media_roots)
 
     @property
     def supported_extensions(self) -> frozenset[str]:

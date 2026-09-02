@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { isOwnerOnlyPath } from '@/lib/admin-routes';
 import { apiRequest, CurrentUser } from '@/lib/api';
 import { productConfig } from '@/lib/product-config';
 
@@ -82,6 +83,7 @@ export function AppShell({
   const owner = user?.roles.includes('Owner');
   const allowed = owner || user?.roles.includes('Administrator');
   const shownSecondary = owner ? secondary : [];
+  const ownerOnlyPath = isOwnerOnlyPath(currentPath);
 
   const logout = async () => {
     setLogoutError(undefined);
@@ -94,7 +96,7 @@ export function AppShell({
   };
 
   if (!user) return <main className="p-10"><output>{accessError || 'Checking administration access…'}</output>{accessError && <Link href="/login">Sign in</Link>}</main>;
-  if (!allowed || (!owner && ['/settings', '/privacy', '/streams'].includes(currentPath))) return <main className="p-10"><h1>Administration access required</h1><Link href="/">Return to your collection</Link></main>;
+  if (!allowed || (!owner && ownerOnlyPath)) return <main className="p-10"><h1>Administration access required</h1><Link href="/">Return to your collection</Link></main>;
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto grid min-h-screen max-w-[1680px] lg:grid-cols-[248px_minmax(0,1fr)]">

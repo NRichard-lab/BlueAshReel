@@ -14,7 +14,7 @@ Windows PowerShell:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\bootstrap.ps1 -MediaPath "D:\Media"
+.\scripts\bootstrap.ps1
 ```
 
 Ubuntu/Linux:
@@ -23,7 +23,7 @@ Ubuntu/Linux:
 sh scripts/bootstrap.sh --media-path /srv/media
 ```
 
-Without `-MediaPath` or `--media-path`, the first run creates an empty local `media/` directory. Source media is mounted read-only. The application is available at [http://localhost:8080](http://localhost:8080), where the first browser visit begins Owner setup.
+An interactive first run offers media-root selection (a native folder dialog on Windows, with typed fallback). You can approve multiple folders or explicitly skip and configure them later; skipped/non-interactive installations retain an empty local `media/` directory. Source media is mounted read-only. The application is available at [http://localhost:8080](http://localhost:8080), where Step 3 of protected first-run setup provides a folder browser. See [approved media storage](docs/media-storage.md) for explicit path arguments and reconfiguration.
 
 The default bind is `127.0.0.1`; no firewall, router, or public-access setting is changed. For household LAN access, deliberately set `BIND_ADDRESS` in `.env` to this computer's RFC1918 address and restart. TLS and remote access are not part of this phase.
 
@@ -65,6 +65,7 @@ Health responses are intentionally narrow and do not include users, media titles
 - [Windows installation](docs/install-windows.md)
 - [Ubuntu/Linux installation](docs/install-linux.md)
 - [Configuration reference](docs/configuration.md)
+- [Approved media storage and folder browser](docs/media-storage.md)
 - [Privacy and outbound connections](docs/privacy-and-outbound.md)
 - [Backup and restore](docs/backup-and-restore.md)
 - [Upgrade procedure](docs/upgrades.md)

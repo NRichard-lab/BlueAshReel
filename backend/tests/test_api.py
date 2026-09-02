@@ -211,8 +211,11 @@ def test_privacy_defaults_and_pagination_bounds(owner_context) -> None:
 
 
 def test_whitespace_names_are_rejected(context) -> None:
+    csrf = context.begin_setup()
     response = context.client.post(
-        "/api/v1/setup/owner", json={"username": "   ", "password": "correct horse battery staple"}
+        "/api/v1/setup/owner",
+        headers={"X-CSRF-Token": csrf},
+        json={"username": "   ", "password": "correct horse battery staple"},
     )
     assert response.status_code == 422
 
@@ -225,9 +228,12 @@ def test_openapi_is_local_and_swagger_cdn_page_is_disabled(context) -> None:
 
 
 def test_concurrent_first_run_requests_create_exactly_one_owner(context) -> None:
+    csrf = context.begin_setup()
+
     def attempt(username: str) -> int:
         return context.client.post(
             "/api/v1/setup/owner",
+            headers={"X-CSRF-Token": csrf},
             json={"username": username, "password": "a secure and sufficiently varied password"},
         ).status_code
 

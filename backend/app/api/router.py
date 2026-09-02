@@ -18,6 +18,7 @@ from app.dependencies import (
     require_manager,
     require_manager_csrf,
     require_owner,
+    require_setup_csrf,
     require_user_csrf,
 )
 from app.models import (
@@ -62,6 +63,7 @@ from app.schemas import (
     SettingsPublic,
     SettingUpdate,
     SetupResponse,
+    SetupSessionResponse,
     SetupStatus,
     UserPublic,
 )
@@ -70,10 +72,19 @@ from app.services.audit import record_audit
 from app.services.catalog import permitted_library, primary_video_height, safe_text
 from app.services.ffprobe import ffmpeg_available, ffprobe_available
 from app.services.jobs import ScanAlreadyRunning, enqueue_scan, release_scan_lock
+from app.services.media_roots import (
+    FolderPermissionDenied,
+    FolderUnavailable,
+    InvalidFolderSelection,
+    friendly_path,
+    resolve_selection_id,
+    selection_from_path,
+)
 from app.services.media_state import recompute_media_availability
 from app.services.outbound import KNOWN_INTEGRATIONS, outbound_enabled
-from app.services.paths import UnsafeMediaPath, validate_media_directory
+from app.services.paths import UnsafeMediaPath
 from app.services.rate_limit import login_attempt_key, login_host_key, login_rate_limiter
+from app.services.setup_session import SETUP_SESSION_COOKIE_NAME, SETUP_SESSION_TTL_SECONDS, create_setup_session
 
 router = APIRouter()
 CSRF_COOKIE_NAME = "csrf_token"
@@ -130,10 +141,17 @@ def _safe_setup_directory(raw: str | None, configured: Path) -> Path:
     return candidate
 
 
-def _validated_paths(paths: list[str], config: AppConfig, *, disclose_reason: bool = True) -> list[Path]:
+def _validated_paths(
+    paths: list[str],
+    config: AppConfig,
+    *,
+    folder_ids: list[str] | None = None,
+    disclose_reason: bool = True,
+) -> list[Path]:
     try:
-        resolved = [validate_media_directory(item, config) for item in paths]
-    except UnsafeMediaPath as exc:
+        resolved = [resolve_selection_id(item, config).path for item in folder_ids or []]
+        resolved.extend(selection_from_path(item, config).path for item in paths)
+    except (UnsafeMediaPath, InvalidFolderSelection, FolderUnavailable, FolderPermissionDenied) as exc:
         detail = str(exc) if disclose_reason else "Initial media directory is unavailable or unsafe"
         raise HTTPException(status_code=422, detail=detail) from exc
     if len({str(item) for item in resolved}) != len(resolved):
@@ -142,7 +160,7 @@ def _validated_paths(paths: list[str], config: AppConfig, *, disclose_reason: bo
 
 
 def _create_library(db: Session, payload: LibraryCreate | InitialLibrary, config: AppConfig) -> Library:
-    resolved = _validated_paths(payload.paths, config)
+    resolved = _validated_paths(payload.paths, config, folder_ids=payload.folder_ids)
     library = Library(
         name=payload.name.strip(),
         library_type=payload.library_type,
@@ -167,10 +185,41 @@ def setup_status(db: Session = Depends(get_db), product: ProductConfig = Depends
     return SetupStatus(setup_required=not _owner_exists(db), product=_product_public(product))
 
 
+@router.post("/setup/session", response_model=SetupSessionResponse, tags=["setup"])
+def begin_setup_session(
+    response: Response,
+    db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+) -> SetupSessionResponse:
+    if _owner_exists(db):
+        raise HTTPException(status_code=409, detail="Initial setup is already complete")
+    session = create_setup_session(config)
+    response.set_cookie(
+        SETUP_SESSION_COOKIE_NAME,
+        session.token,
+        max_age=SETUP_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=config.session_cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        session.csrf_token,
+        max_age=SETUP_SESSION_TTL_SECONDS,
+        httponly=False,
+        secure=config.session_cookie_secure,
+        samesite="strict",
+        path="/",
+    )
+    return SetupSessionResponse(csrf_token=session.csrf_token, expires_in=SETUP_SESSION_TTL_SECONDS)
+
+
 @router.post("/setup/owner", response_model=SetupResponse, status_code=201, tags=["setup"])
 def setup_owner(
     payload: OwnerSetupRequest,
     response: Response,
+    _setup: None = Depends(require_setup_csrf),
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
 ) -> SetupResponse:
@@ -182,7 +231,12 @@ def setup_owner(
     temp = _safe_setup_directory(payload.temporary_directory, config.temp_dir)
     config.artwork_dir.expanduser().resolve().mkdir(parents=True, exist_ok=True)
     initial_paths = (
-        _validated_paths(payload.initial_library.paths, config, disclose_reason=False)
+        _validated_paths(
+            payload.initial_library.paths,
+            config,
+            folder_ids=payload.initial_library.folder_ids,
+            disclose_reason=False,
+        )
         if payload.initial_library
         else []
     )
@@ -235,6 +289,7 @@ def setup_owner(
         db.rollback()
         raise HTTPException(status_code=409, detail="Initial setup could not be completed") from exc
     _set_session_cookies(response, new_session.token, new_session.csrf_token, config)
+    response.delete_cookie(SETUP_SESSION_COOKIE_NAME, path="/", samesite="strict")
     return SetupResponse(
         user=_user_public(user),
         csrf_token=new_session.csrf_token,
@@ -362,7 +417,7 @@ def _ensure_no_active_scans(db: Session) -> None:
         )
 
 
-def _library_page(db: Session, page: int, page_size: int) -> LibraryList:
+def _library_page(db: Session, page: int, page_size: int, config: AppConfig) -> LibraryList:
     total = db.scalar(select(func.count()).select_from(Library)) or 0
     libraries = db.scalars(
         select(Library)
@@ -398,7 +453,7 @@ def _library_page(db: Session, page: int, page_size: int) -> LibraryList:
                 library_type=library.library_type,
                 enabled=library.enabled,
                 paths=[
-                    LibraryPathPublic(id=item.id, path=f"Media folder {item.id[:8]}", enabled=item.enabled)
+                    LibraryPathPublic(id=item.id, path=friendly_path(item.canonical_path, config), enabled=item.enabled)
                     for item in library.paths
                 ],
                 last_successful_scan_at=library.last_successful_scan_at,
@@ -411,7 +466,7 @@ def _library_page(db: Session, page: int, page_size: int) -> LibraryList:
     return LibraryList(items=items, total=total, page=page, page_size=page_size)
 
 
-def _library_by_id(db: Session, library_id: str) -> LibraryPublic | None:
+def _library_by_id(db: Session, library_id: str, config: AppConfig) -> LibraryPublic | None:
     library = db.scalar(select(Library).options(selectinload(Library.paths)).where(Library.id == library_id))
     if library is None:
         return None
@@ -432,7 +487,7 @@ def _library_by_id(db: Session, library_id: str) -> LibraryPublic | None:
         library_type=library.library_type,
         enabled=library.enabled,
         paths=[
-            LibraryPathPublic(id=item.id, path=f"Media folder {item.id[:8]}", enabled=item.enabled)
+            LibraryPathPublic(id=item.id, path=friendly_path(item.canonical_path, config), enabled=item.enabled)
             for item in library.paths
         ],
         last_successful_scan_at=library.last_successful_scan_at,
@@ -449,8 +504,9 @@ def list_libraries(
     page_size: PageSize = 25,
     _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_config),
 ) -> LibraryList:
-    return _library_page(db, page, page_size)
+    return _library_page(db, page, page_size, config)
 
 
 @router.post("/libraries", response_model=LibraryPublic, status_code=201, tags=["libraries"])
@@ -470,7 +526,7 @@ def create_library(
         target_id=library.id,
     )
     db.commit()
-    result = _library_by_id(db, library.id)
+    result = _library_by_id(db, library.id, config)
     assert result is not None
     return result
 
@@ -480,8 +536,9 @@ def get_library(
     library_id: str,
     _principal: Principal = Depends(require_manager),
     db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_config),
 ) -> LibraryPublic:
-    item = _library_by_id(db, library_id)
+    item = _library_by_id(db, library_id, config)
     if item is None:
         raise HTTPException(status_code=404, detail="Library not found")
     return item
@@ -493,6 +550,7 @@ def update_library(
     payload: LibraryUpdate,
     principal: Principal = Depends(require_manager_csrf),
     db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_config),
 ) -> LibraryPublic:
     library = db.get(Library, library_id)
     if library is None:
@@ -528,7 +586,7 @@ def update_library(
         target_id=library.id,
     )
     db.commit()
-    result = _library_by_id(db, library.id)
+    result = _library_by_id(db, library.id, config)
     assert result is not None
     return result
 
@@ -544,7 +602,11 @@ def add_library_path(
     if db.get(Library, library_id) is None:
         raise HTTPException(status_code=404, detail="Library not found")
     _ensure_library_not_scanning(db, library_id)
-    path = _validated_paths([payload.path], config)[0]
+    path = _validated_paths(
+        [payload.path] if payload.path is not None else [],
+        config,
+        folder_ids=[payload.folder_id] if payload.folder_id is not None else [],
+    )[0]
     existing = db.scalar(
         select(LibraryPath).where(LibraryPath.library_id == library_id, LibraryPath.canonical_path == str(path))
     )
@@ -563,7 +625,7 @@ def add_library_path(
         target_id=library_id,
     )
     db.commit()
-    return LibraryPathPublic(id=library_path.id, path=f"Media folder {library_path.id[:8]}", enabled=True)
+    return LibraryPathPublic(id=library_path.id, path=friendly_path(path, config), enabled=True)
 
 
 @router.delete("/libraries/{library_id}/paths/{path_id}", status_code=204, tags=["libraries"])

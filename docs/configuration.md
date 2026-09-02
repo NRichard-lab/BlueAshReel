@@ -39,7 +39,7 @@ Run a bootstrap script to generate `.env`; do not copy the placeholder secret in
 | `version` | Application version returned by the version API |
 | `api_prefix` | Versioned REST base path; fixed at `/api/v1` for phase-one compatibility |
 
-The backend reads this file at runtime from the read-only mount, while the frontend imports it at image build time. After changing product identity, run `docker compose up --detach --build backend worker frontend` so the browser bundle and backend agree; a container restart alone does not rebuild frontend branding. Renaming should be done here and through components that consume this configuration, never by a repository-wide hard-coded string replacement. Keep `api_prefix` at `/api/v1` throughout phase one because proxy health and compatibility contracts use the required versioned path.
+The backend reads this file at runtime from the read-only mount, while the frontend imports it at image build time. After changing product identity, run `docker compose up --detach --build --force-recreate backend worker frontend proxy` so the browser bundle and backend agree and Caddy refreshes its private address allowlist; a container restart alone does not rebuild frontend branding. Renaming should be done here and through components that consume this configuration, never by a repository-wide hard-coded string replacement. Keep `api_prefix` at `/api/v1` throughout phase one because proxy health and compatibility contracts use the required versioned path.
 
 Backup archive prefixes also derive from `name` after conversion to a safe lowercase filesystem slug. The backup manifest format and temporary-directory labels are deliberately product-neutral so identity changes do not alter the restore contract.
 
@@ -56,12 +56,17 @@ The Compose project name (`bluereel`), local backend image tag (`bluereel-backen
 | `ARTWORK_PATH` | `./runtime/artwork` | Persistent local artwork/cache |
 | `TEMP_PATH` | `./runtime/temp` | Disposable local analysis/transcode workspace |
 | `MEDIA_PATH` | `./media` | Source media root, mounted read-only at `/media` |
+| `MEDIA_ROOTS` | `/media` | Bootstrap-managed `:`-separated container paths for all approved roots |
+| `MEDIA_ROOT_DEFINITIONS` | primary `Media` root | Bootstrap-managed JSON containing stable IDs, display names, and container paths only |
 | `BACKUP_PATH` | `./backups` | Validated backup archive destination |
 | `PUID` / `PGID` | `1000` | Numeric identity used by app containers for bind-mount ownership |
 
 Relative host paths resolve from the repository directory. State paths must be writable, distinct, narrower than a filesystem/repository root, and isolated from `MEDIA_PATH`. On Windows, use forward slashes or a quoted path when editing manually; the PowerShell bootstrap normalizes an explicit media path.
 
-Inside containers, storage paths are fixed (`/data`, `/database`, `/artwork`, `/tmp/app`, `/media`). Library paths are container paths below `/media`, not host paths.
+Inside containers, writable storage paths are fixed (`/data`, `/database`,
+`/artwork`, `/tmp/app`). The primary source root remains `/media`; additional
+roots use stable `/media-roots/<id>` targets. The normal interface uses opaque
+folder selections and friendly names rather than host or container paths.
 
 ## Security and runtime settings
 
@@ -106,13 +111,26 @@ host-level authority; the application process cannot regain these privileges.
 
 Bootstrap rejects any equal or ancestor/descendant overlap among data, database, artwork, temporary, and backup directories. It also rejects overlap between those writable paths and source media. This prevents a live database, WAL file, temporary work, or backup archive from being copied recursively through another configured directory.
 
-The Compose file sets `DATABASE_URL=sqlite:////database/app.db`, `APP_DATA_DIR=/data`, `ARTWORK_DIR=/artwork`, `TEMP_DIR=/tmp/app`, `MEDIA_ROOTS=/media`, `FFMPEG_PATH=ffmpeg`, `FFPROBE_PATH=ffprobe`, and `PRODUCT_CONFIG_FILE=/app/config/product.json`. Changing these container-internal values is an advanced topology change and normally unnecessary.
+The Compose file sets `DATABASE_URL=sqlite:////database/app.db`, `APP_DATA_DIR=/data`, `ARTWORK_DIR=/artwork`, `TEMP_DIR=/tmp/app`, `MEDIA_ROOTS=/media` by default, `FFMPEG_PATH=ffmpeg`, `FFPROBE_PATH=ffprobe`, and `PRODUCT_CONFIG_FILE=/app/config/product.json`. Bootstrap manages approved-root overrides; changing these container-internal values by hand is an advanced topology change and normally unnecessary.
 
 The backend also supports comma-separated `SCAN_EXTENSIONS` and `IGNORED_DIRECTORIES` values. Defaults cover common video suffixes and operating-system/sample directories. Extensions must include or normalize to a leading dot. Changes affect later scans; they do not mutate source media.
 
 ## Multiple media roots
 
-The reference deployment mounts one common read-only root. Register any number of library subdirectories below `/media`. Hosts with media on unrelated filesystems can create a reviewed Compose override that adds read-only mounts such as `/media/disk2` and sets Linux-container `MEDIA_ROOTS` to an `os.pathsep` (`:`)-separated list. Never add a writable source-media mount.
+Bootstrap supports multiple unrelated host directories without granting access to
+their parent filesystems. It keeps the first root at `/media`, assigns stable IDs
+and `/media-roots/<id>` targets to later roots, writes host-specific details only
+to ignored `.bluereel/media-roots.tsv` and `compose.override.yml`, and mounts the
+same roots read-only into backend and worker. Frontend and Caddy receive no media
+mounts. `MEDIA_ROOT_DEFINITIONS` contains only IDs, friendly names, and internal
+paths; it never contains host paths.
+
+Use `-ConfigureMediaRoots` on Windows or `--configure-media-roots` on Linux.
+Never hand a web process Docker socket access or add writable source-media
+mounts. Root changes become effective only after controlled container recreation.
+Spaces, `#`, and apostrophes are safely quoted in generated local configuration;
+bootstrap rejects `$` in a root path or display name because Compose treats it as
+interpolation syntax.
 
 ## Binding and cookies
 

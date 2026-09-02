@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Check, FolderPlus, LoaderCircle, Play, RefreshCw, Save, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 
+import { MediaFolderField } from '@/components/media-folder-picker';
 import { PageHeader } from '@/components/page-header';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +15,8 @@ import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { ApiError, apiRequest, jsonBody, type JobRecord, type LibraryRecord, type PageResult } from '@/lib/api';
+import { ApiError, apiRequest, jsonBody, type JobRecord, type LibraryRecord, type MediaFolderSelection, type PageResult } from '@/lib/api';
+import { libraryFolderAddBody } from '@/lib/media-folders';
 
 function percent(job?: JobRecord): number {
   if (!job?.progress_total) return 0;
@@ -31,7 +33,7 @@ export function LibraryDetail({ libraryId }: { libraryId: string }) {
   const [job, setJob] = useState<JobRecord>();
   const [name, setName] = useState('');
   const [enabled, setEnabled] = useState(true);
-  const [newPath, setNewPath] = useState('');
+  const [newFolder, setNewFolder] = useState<MediaFolderSelection>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
@@ -84,10 +86,15 @@ export function LibraryDetail({ libraryId }: { libraryId: string }) {
   };
 
   const addPath = async (event: React.SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault(); setSaving(true); setError(undefined); setNotice(undefined);
+    event.preventDefault();
+    if (!newFolder) {
+      setError('Choose a readable media folder before adding it.');
+      return;
+    }
+    setSaving(true); setError(undefined); setNotice(undefined);
     try {
-      await apiRequest(`/libraries/${libraryId}/paths`, { method: 'POST', body: jsonBody({ path: newPath.trim() }) });
-      setNewPath(''); setNotice('Media path added.'); await load();
+      await apiRequest(`/libraries/${libraryId}/paths`, { method: 'POST', body: jsonBody(libraryFolderAddBody(newFolder)) });
+      setNewFolder(undefined); setNotice('Media folder added.'); await load();
     } catch (caught: unknown) { setError(caught instanceof Error ? caught.message : 'The media path was not added.'); }
     finally { setSaving(false); }
   };
@@ -156,9 +163,9 @@ export function LibraryDetail({ libraryId }: { libraryId: string }) {
                   <Button size="icon-sm" variant="ghost" aria-label="Remove media path" onClick={() => removePath(path.id)}><Trash2 /></Button>
                 </div>
               ))}
-              <form onSubmit={addPath} className="flex flex-col gap-2 sm:flex-row">
-                <Input required value={newPath} onChange={(event) => setNewPath(event.target.value)} placeholder="/media/additional" aria-label="New mounted media directory" />
-                <Button type="submit" disabled={saving}><FolderPlus data-icon="inline-start" /> Add path</Button>
+              <form onSubmit={addPath} className="space-y-3 border-t pt-4">
+                <MediaFolderField id="additional-library-folder" selection={newFolder} onSelectionChange={setNewFolder} />
+                <div className="flex justify-end"><Button type="submit" disabled={saving}><FolderPlus data-icon="inline-start" /> Add folder</Button></div>
               </form>
             </CardContent>
           </Card>

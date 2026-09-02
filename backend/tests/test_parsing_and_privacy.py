@@ -79,14 +79,32 @@ def test_structured_logs_and_audit_redaction_hide_secrets() -> None:
     assert "[REDACTED]" in output
 
 
+def test_folder_browse_fields_are_redacted_from_structured_logs() -> None:
+    sensitive = {
+        "folder": "Private Movies",
+        "directory_name": "Family Videos",
+        "selection_id": "mf1.signed-folder-token",
+        "count": 3,
+    }
+    redacted = redact(sensitive)
+    assert redacted == {
+        "folder": "[REDACTED]",
+        "directory_name": "[REDACTED]",
+        "selection_id": "[REDACTED]",
+        "count": 3,
+    }
+
+
 def test_path_validation_fails_closed_without_configured_media_roots(tmp_path: Path) -> None:
     media = tmp_path / "media"
     media.mkdir()
     config = AppConfig(
+        _env_file=None,
         app_data_dir=tmp_path / "data",
         temp_dir=tmp_path / "tmp",
         artwork_dir=tmp_path / "artwork",
         media_roots="",
+        media_root_definitions="",
     )
     with pytest.raises(UnsafeMediaPath, match="No media roots"):
         validate_media_directory(str(media), config)

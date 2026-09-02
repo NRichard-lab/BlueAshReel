@@ -41,7 +41,7 @@ On Linux, verify Docker Engine, the Compose v2 plugin, daemon status, and curren
 
 ## Existing `.env` is rejected
 
-Bootstrap never overwrites it. Compare keys with `.env.example`. Generate a new random secret only when intentionally creating a fresh deployment; changing the secret can invalidate sessions. Validate `BIND_ADDRESS`, port range, directory uniqueness, and media/state separation.
+Bootstrap preserves existing values by default. Explicit `-ConfigureMediaRoots` or `--configure-media-roots` updates only the three managed media-root keys after validation; it preserves the secret and unrelated settings. Compare keys with `.env.example`. Generate a new random secret only when intentionally creating a fresh deployment; changing the secret can invalidate sessions. Validate `BIND_ADDRESS`, port range, directory uniqueness, and media/state separation.
 
 If `.env` came from a different host, update host paths, `PUID`/`PGID`, bind address, and cookie settings deliberately. Keep a reviewed backup before changes.
 
@@ -71,7 +71,11 @@ Readiness can report FFprobe unavailable without disclosing its host path. Scann
 
 ## Media path is missing or denied
 
-Confirm the host `MEDIA_PATH` exists and is readable. On Docker Desktop, confirm the drive/directory is shared. In the application, use the container path (`/media/Movies`), not `D:\Media\Movies` or `/srv/media/Movies`.
+Open **Settings → Media Storage** as the Owner and check availability, readability,
+read-only enforcement, and last validation. Confirm the configured host folder
+exists and is readable. On Docker Desktop, confirm Docker can access that drive.
+Use **Browse folders** for normal library setup; do not type a Windows/Linux host
+path into the advanced internal-path field.
 
 Inspect the read-only mount without modifying it:
 
@@ -80,6 +84,21 @@ docker compose run --rm --no-deps --entrypoint sh backend -c 'test -r /media && 
 ```
 
 Do not change the Compose mount to read/write. Fix host sharing/permissions or select a different root.
+
+To add or replace approved host roots, use the explicit local workflow and allow
+it to perform the required controlled container recreation:
+
+```powershell
+.\scripts\bootstrap.ps1 -ConfigureMediaRoots -MediaPath "E:\Family Media" -MediaLabel "Family Media"
+```
+
+```sh
+sh scripts/bootstrap.sh --configure-media-roots --media-path /srv/family-media
+```
+
+The browser cannot create Docker bind mounts. A message that a Windows folder must
+first be configured as an approved root is a safety check, not a path-format bug.
+See [approved media storage](media-storage.md).
 
 ## Worker or scan appears stuck
 

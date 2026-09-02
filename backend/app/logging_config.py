@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 _SENSITIVE_KEY = re.compile(
-    r"(?:password|passwd|secret|token|authorization|cookie|session|csrf|path|filename|title|database_url)",
+    r"(?:password|passwd|secret|token|authorization|cookie|session|csrf|path|directory|folder|selection|filename|title|database_url)",
     re.IGNORECASE,
 )
 _SENSITIVE_VALUE = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*|(?:(?:password|token|secret)=)[^\s&]+")

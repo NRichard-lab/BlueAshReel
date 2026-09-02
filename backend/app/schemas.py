@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 
 class ApiModel(BaseModel):
@@ -29,10 +29,16 @@ class SetupStatus(ApiModel):
     product: ProductPublic
 
 
+class SetupSessionResponse(ApiModel):
+    csrf_token: str
+    expires_in: int
+
+
 class InitialLibrary(ApiModel):
     name: str = Field(min_length=1, max_length=120)
     library_type: Literal["movies", "tv", "other"]
     paths: list[str] = Field(default_factory=list, max_length=20)
+    folder_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("name")
     @classmethod
@@ -40,6 +46,12 @@ class InitialLibrary(ApiModel):
         if not value.strip():
             raise ValueError("Library name cannot be blank")
         return value
+
+    @model_validator(mode="after")
+    def bounded_folder_count(self) -> InitialLibrary:
+        if len(self.paths) + len(self.folder_ids) > 20:
+            raise ValueError("A library may contain at most 20 media folders")
+        return self
 
 
 class OwnerSetupRequest(ApiModel):
@@ -85,7 +97,14 @@ class SetupResponse(AuthResponse):
 
 
 class LibraryPathCreate(ApiModel):
-    path: str = Field(min_length=1, max_length=4096)
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+    folder_id: str | None = Field(default=None, min_length=1, max_length=8192)
+
+    @model_validator(mode="after")
+    def exactly_one_folder_reference(self) -> LibraryPathCreate:
+        if (self.path is None) == (self.folder_id is None):
+            raise ValueError("Provide exactly one validated folder selection or manual path")
+        return self
 
 
 class LibraryPathPublic(ApiModel):
@@ -99,6 +118,7 @@ class LibraryCreate(ApiModel):
     library_type: Literal["movies", "tv", "other"]
     enabled: bool = True
     paths: list[str] = Field(default_factory=list, max_length=20)
+    folder_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("name")
     @classmethod
@@ -106,6 +126,66 @@ class LibraryCreate(ApiModel):
         if not value.strip():
             raise ValueError("Library name cannot be blank")
         return value
+
+    @model_validator(mode="after")
+    def bounded_folder_count(self) -> LibraryCreate:
+        if len(self.paths) + len(self.folder_ids) > 20:
+            raise ValueError("A library may contain at most 20 media folders")
+        return self
+
+
+class MediaRootLibraryPublic(ApiModel):
+    id: str
+    name: str
+
+
+class MediaRootPublic(ApiModel):
+    id: str
+    display_name: str
+    selection_id: str
+    available: bool
+    readable: bool
+    read_only: Literal[True] = True
+    read_only_enforced: bool | None = None
+    status: Literal["available", "unavailable", "permission_denied"]
+    internal_path: str | None = None
+    last_validated_at: datetime
+    libraries: list[MediaRootLibraryPublic] = Field(default_factory=list)
+
+
+class MediaRootList(ApiModel):
+    items: list[MediaRootPublic]
+
+
+class MediaFolderSelectionPublic(ApiModel):
+    selection_id: str
+    root_id: str
+    name: str
+    display_path: str
+    internal_path: str | None = None
+    available: bool
+    readable: bool
+    status: Literal["available", "unavailable", "permission_denied"]
+    read_only: Literal[True] = True
+
+
+class MediaFolderBrowseRequest(ApiModel):
+    selection_id: str = Field(min_length=1, max_length=8192)
+    cursor: str | None = Field(default=None, min_length=1, max_length=1024)
+    page_size: int = Field(default=50, ge=1, le=100)
+
+
+class MediaFolderPage(ApiModel):
+    root: MediaRootPublic
+    current: MediaFolderSelectionPublic
+    breadcrumbs: list[MediaFolderSelectionPublic]
+    items: list[MediaFolderSelectionPublic]
+    next_cursor: str | None = None
+    total: int | None = None
+
+
+class MediaFolderManualRequest(ApiModel):
+    path: str = Field(min_length=1, max_length=4096)
 
 
 class LibraryUpdate(ApiModel):

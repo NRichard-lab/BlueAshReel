@@ -54,7 +54,9 @@ export async function apiRequest<T>(
   if (!response.ok) {
     const message =
       typeof payload === 'object' && payload && 'detail' in payload
-        ? String(payload.detail)
+        ? typeof payload.detail === 'object' && payload.detail && 'message' in payload.detail
+          ? String(payload.detail.message)
+          : String(payload.detail)
         : typeof payload === 'object' && payload && 'error' in payload &&
             typeof payload.error === 'object' && payload.error && 'message' in payload.error
           ? String(payload.error.message)
@@ -87,6 +89,41 @@ export interface LibraryPath {
   id: string;
   path: string;
   enabled: boolean;
+}
+
+export interface MediaRootSummary {
+  id: string;
+  display_name: string;
+  selection_id: string;
+  available: boolean;
+  readable: boolean;
+  read_only: true;
+  read_only_enforced?: boolean | null;
+  status: 'available' | 'unavailable' | 'permission_denied';
+  internal_path?: string | null;
+  last_validated_at: string;
+  libraries: Array<{ id: string; name: string }>;
+}
+
+export interface MediaFolderSelection {
+  selection_id: string;
+  root_id: string;
+  name: string;
+  display_path: string;
+  internal_path?: string | null;
+  available: boolean;
+  readable: boolean;
+  read_only: true;
+  status?: 'available' | 'unavailable' | 'permission_denied';
+}
+
+export interface MediaFolderPage {
+  root: MediaRootSummary;
+  current: MediaFolderSelection;
+  breadcrumbs: MediaFolderSelection[];
+  items: MediaFolderSelection[];
+  next_cursor?: string | null;
+  total?: number | null;
 }
 
 export interface LibraryRecord {

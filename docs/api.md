@@ -1,8 +1,8 @@
 # Phase 2 API
 
 Paths are relative to /api/v1. The local OpenAPI schema is /api/v1/openapi.json.
-Mutations require the same-origin session cookie and X-CSRF-Token; login/setup retain
-bootstrap protections. Errors use the Phase 1 envelope: unavailable resources 404,
+Mutations require the same-origin session cookie and X-CSRF-Token. Login and
+initial setup-session issuance are the bootstrap exceptions. Errors use the Phase 1 envelope: unavailable resources 404,
 expired streams 410, incompatible selections 422, admission/rate limits 429.
 
 | Endpoint | Purpose / access |
@@ -31,6 +31,25 @@ expired streams 410, incompatible selections 422, admission/rate limits 429.
 | GET /streams; POST /streams/{id}/stop | Owner monitoring/confirmed stop |
 | GET/PATCH /playback-policy | Owner watched threshold/retention |
 | GET /playback-health; POST /playback-health/detect | Owner capacity and real hardware tests |
+| POST /setup/session | Issue a limited 30-minute setup cookie and CSRF token only while no Owner exists |
+| POST /setup/owner | Setup session + CSRF; atomically create Owner and optional browsed first library |
+| GET /media-roots | Setup session or Owner/Administrator; approved-root status and signed root selections |
+| POST /media-folders/browse | Setup session or Owner/Administrator + CSRF; bounded directory-only navigation |
+| POST /media-folders/validate | Setup session or Owner/Administrator + CSRF; advanced internal-path validation |
+| GET /media-storage | Owner-only root enforcement state and library associations |
+
+Folder browsing never accepts a host path or returns media files. Browse requests
+carry a signed selection identifier and optional cursor; responses contain a safe
+root-relative display path, breadcrumbs, directories, and the next cursor. Library
+creation consumes `folder_ids`, while adding a path consumes `folder_id`. The
+backend canonicalizes and revalidates the folder immediately before storing it.
+During first run, `/setup/session` issues an HttpOnly, SameSite-strict signed
+capability and a separate CSRF token. It authorizes only approved-folder browsing
+and setup completion, not libraries, playback, or administration. The public
+setup-status check cannot enumerate directory names. `/setup/owner` accepts
+`initial_library.folder_ids`, creates the account and library together, and
+replaces the setup capability with the normal Owner session. All setup browsing
+capabilities become unusable as soon as an Owner exists; no scan is started.
 
 Progress includes position_seconds, playing, reason and increasing sequence. Server
 derives user, duration, method and fingerprint. Clients cannot nominate paths. Track/

@@ -10,7 +10,10 @@ x-common-environment: &common-environment
   FFPROBE_TIMEOUT_SECONDS: ${FFPROBE_TIMEOUT_SECONDS:-45}
   JOB_STALE_MINUTES: ${JOB_STALE_MINUTES:-15}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
-  MEDIA_ROOTS: /media
+  # Host-specific bootstrap configuration may add approved read-only roots.
+  # The primary /media path remains the compatibility default.
+  MEDIA_ROOTS: ${MEDIA_ROOTS:-/media}
+  MEDIA_ROOT_DEFINITIONS: ${MEDIA_ROOT_DEFINITIONS:-}
   OUTBOUND_INTEGRATIONS_ENABLED: ${OUTBOUND_INTEGRATIONS_ENABLED:-false}
   PRODUCT_CONFIG_FILE: /app/config/product.json
   SCAN_BATCH_SIZE: ${SCAN_BATCH_SIZE:-50}

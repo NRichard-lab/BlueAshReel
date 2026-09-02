@@ -24,14 +24,14 @@ def lock_file(path: Path) -> BinaryIO:
             handle.write(b"0")
             handle.flush()
         handle.seek(0)
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
 
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return handle
     except OSError:
         handle.close()
@@ -39,7 +39,7 @@ def lock_file(path: Path) -> BinaryIO:
 
 
 def unlock_file(handle: BinaryIO) -> None:
-    if os.name == "nt":
+    if sys.platform == "win32":
         import msvcrt
 
         handle.seek(0)

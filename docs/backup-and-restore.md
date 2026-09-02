@@ -12,7 +12,9 @@ Restored active sessions are expired on API startup; durable watch checkpoints
 remain resumable after login. Downgrading Phase 2 discards its new history/grants;
 use a verified pre-upgrade backup if that loss is unacceptable.
 
-BlueReel backs up a running SQLite database through SQLite's online backup API. It never copies an active `app.db` file directly. The resulting timestamped ZIP includes a standalone validated database, application data, product/deployment configuration, and cached artwork unless excluded.
+BlueReel backs up a running SQLite database through SQLite's online backup API. It never copies an active `app.db` file directly. The resulting timestamped ZIP includes a standalone validated database, application data, product configuration and `.env`, and cached artwork unless excluded.
+
+The local media-root registry (`.bluereel/media-roots.tsv`) and generated `compose.override.yml` are not yet included in these archives. Privately preserve reviewed copies alongside a backup before changing roots or moving the installation. They contain host paths; do not commit or publish them. `.env` alone does not retain secondary host locations. Preserve the stable root IDs/container targets when restoring these mappings so existing libraries keep pointing to the intended folders.
 
 ## Create a backup
 
@@ -65,7 +67,7 @@ Restoring replaces household state and is therefore manual. Read all steps first
 3. Stop BlueReel cleanly with `docker compose down`. Do not use `--volumes`.
 4. Resolve `DATABASE_PATH`, `DATA_PATH`, `ARTWORK_PATH`, and `BACKUP_PATH` from `.env`. Confirm each absolute path before moving anything.
 5. Extract the selected ZIP into a new, empty staging directory outside all configured runtime and media paths. Use `Expand-Archive` on Windows or `unzip` on Linux. Do not extract directly over live directories.
-6. Inspect `manifest.json` and compare the archived `configuration/.env` with the current `.env`. Host paths, bind address, UID/GID, port, and secure-cookie settings may need to remain host-specific. Do not blindly replace the current `.env`.
+6. Inspect `manifest.json` and compare the archived `configuration/.env` with the current `.env`. Host paths, bind address, UID/GID, port, and secure-cookie settings may need to remain host-specific. Do not blindly replace the current `.env`. Separately review/preserve the local media-root registry and generated override; restore matching private copies or explicitly reconstruct the approved host mappings while retaining the IDs/container targets from `MEDIA_ROOT_DEFINITIONS` before starting containers.
 7. Move the current database directory, application-data directory, and artwork directory to uniquely timestamped `pre-restore` sibling names. This is the recovery point; do not delete it yet.
 8. Create fresh configured target directories. Copy staged `database/app.db` to `DATABASE_PATH/app.db`. Do not copy old `app.db-wal` or `app.db-shm` files. Copy staged `application-data` and `artwork` contents to their respective targets. Preserve the invoking user's ownership/permissions.
 9. If deliberately restoring product identity, copy staged `configuration/product/product.json` to `config/product.json` after reviewing the diff.
@@ -79,6 +81,6 @@ If startup fails, stop the stack, move the failed restored targets aside, put th
 
 ## What is not backed up
 
-Source media is never copied. The disposable `TEMP_PATH` is excluded. Container images and logs are excluded. Recreate images from source, and preserve logs separately only when needed for a privacy-reviewed diagnosis.
+Source media is never copied. The disposable `TEMP_PATH` is excluded. Container images, logs, the media-root registry, and generated Compose override are excluded. Recreate images from source, preserve the local root mappings as described above, and preserve logs separately only when needed for a privacy-reviewed diagnosis.
 
 The backup is application-consistent, not a substitute for independent encrypted/off-site resilience chosen by the operator.

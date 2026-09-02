@@ -13,6 +13,15 @@
 !*.env.sample
 !*.env.template
 
+# Host-specific approved-media registry and generated Compose mounts.
+/.bluereel/
+/compose.override.yml
+/compose.override.yaml
+# Interrupted bootstrap candidates can contain secrets or host paths.
+/.compose.override.yml.tmp.*
+/compose.media-roots.tmp.*.yml
+/..env.tmp.*
+
 # Runtime state and user mounts. Anchor these names so source routes/modules
 # such as frontend/app/media are never hidden by a runtime-directory rule.
 /runtime/

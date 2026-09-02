@@ -44,6 +44,8 @@ def test_compose_has_private_read_only_runtime_foundation() -> None:
     assert compose["networks"]["private"]["internal"] is True
     assert "${BIND_ADDRESS:-127.0.0.1}" in raw
     assert "${MEDIA_PATH:?" in raw
+    assert compose["x-common-environment"]["MEDIA_ROOTS"] == "${MEDIA_ROOTS:-/media}"
+    assert compose["x-common-environment"]["MEDIA_ROOT_DEFINITIONS"] == "${MEDIA_ROOT_DEFINITIONS:-}"
     assert "OUTBOUND_INTEGRATIONS_ENABLED: ${OUTBOUND_INTEGRATIONS_ENABLED:-false}" in raw
     assert "PRODUCT_CONFIG_FILE: /app/config/product.json" in raw
     assert "WORKER_POLL_INTERVAL:" in raw
@@ -75,7 +77,8 @@ def test_docker_context_excludes_native_state_and_nested_secrets() -> None:
     root = Path(__file__).parents[2]
     patterns = set((root / ".dockerignore").read_text(encoding="utf-8").splitlines())
     assert {
-        "backend/data", "runtime", "media", "backups", "**/.env", "**/.env.*", "**/*.env",
+        "backend/data", "runtime", "media", "backups", ".bluereel", "compose.override.yml",
+        "compose.override.yaml", "**/.env", "**/.env.*", "**/*.env",
         "**/*.db", "**/*.db-*", "**/*.sqlite", "**/*.sqlite-*", "**/*.sqlite3", "**/*.sqlite3-*",
         "**/*.log", "**/.coverage", "**/node_modules", "**/dist", "**/ffmpeg.exe",
     } <= patterns

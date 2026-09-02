@@ -4,17 +4,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Film, FolderPlus, LibraryBig, LoaderCircle, Plus, Tv, Video } from 'lucide-react';
 import Link from 'next/link';
 
+import { MediaFolderField } from '@/components/media-folder-picker';
 import { PageHeader } from '@/components/page-header';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ApiError, apiRequest, jsonBody, type LibraryRecord, type PageResult } from '@/lib/api';
+import { ApiError, apiRequest, jsonBody, type LibraryRecord, type MediaFolderSelection, type PageResult } from '@/lib/api';
+import { libraryFolderCreateBody } from '@/lib/media-folders';
 
 type LibraryType = 'movies' | 'tv' | 'other';
 
@@ -38,7 +40,7 @@ export function LibrariesManager() {
   const [success, setSuccess] = useState<string>();
   const [name, setName] = useState('');
   const [libraryType, setLibraryType] = useState<LibraryType>('movies');
-  const [path, setPath] = useState('');
+  const [folder, setFolder] = useState<MediaFolderSelection>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,16 +63,20 @@ export function LibrariesManager() {
 
   const create = async (event: React.SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!folder) {
+      setError('Choose a readable media folder before creating the library.');
+      return;
+    }
     setSaving(true);
     setError(undefined);
     setSuccess(undefined);
     try {
       await apiRequest<LibraryRecord>('/libraries', {
         method: 'POST',
-        body: jsonBody({ name: name.trim(), library_type: libraryType, enabled: true, paths: [path.trim()] }),
+        body: jsonBody(libraryFolderCreateBody(name, libraryType, folder)),
       });
       setName('');
-      setPath('');
+      setFolder(undefined);
       setShowForm(false);
       setSuccess('Library created. Start its first scan when you are ready.');
       if (page === 1) await load();
@@ -96,7 +102,7 @@ export function LibrariesManager() {
 
       {showForm ? (
         <Card className="mt-6 border-none shadow-[0_8px_30px_rgb(18_42_66/6%)]">
-          <CardHeader className="border-b"><CardTitle>Add a media library</CardTitle><CardDescription>The server validates the path without exposing a filesystem browser.</CardDescription></CardHeader>
+          <CardHeader className="border-b"><CardTitle>Add a media library</CardTitle><CardDescription>Choose a folder from storage explicitly approved on this computer.</CardDescription></CardHeader>
           <CardContent>
             <form onSubmit={create}>
               <FieldGroup>
@@ -110,7 +116,7 @@ export function LibrariesManager() {
                     </Select>
                   </Field>
                 </div>
-                <Field><FieldLabel htmlFor="library-path">Mounted media directory</FieldLabel><Input id="library-path" required value={path} onChange={(event) => setPath(event.target.value)} placeholder="/media/documentaries" /><FieldDescription>The directory must be inside an explicitly allowed media root and readable by the server.</FieldDescription></Field>
+                <MediaFolderField id="library-folder" selection={folder} onSelectionChange={setFolder} />
                 <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button><Button type="submit" disabled={saving}>{saving ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <FolderPlus data-icon="inline-start" />} Create library</Button></div>
               </FieldGroup>
             </form>

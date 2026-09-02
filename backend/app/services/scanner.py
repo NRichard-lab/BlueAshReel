@@ -34,7 +34,7 @@ from app.services.ffprobe import FFprobeError, ProbeResult, run_ffprobe
 from app.services.filename_parser import ParsedFilename, parse_filename
 from app.services.jobs import release_scan_lock
 from app.services.media_state import recompute_media_availability
-from app.services.paths import UnsafeMediaPath, safe_discovered_file, validate_media_directory
+from app.services.paths import UnsafeMediaPath, is_link_or_reparse, safe_discovered_file, validate_media_directory
 
 
 class ScanCancelled(RuntimeError):
@@ -58,13 +58,16 @@ def discover_media_files(root: Path, config: AppConfig) -> Iterator[tuple[Path, 
         names[:] = [
             name
             for name in names
-            if name.casefold() not in config.ignored_directory_names and not (Path(directory) / name).is_symlink()
+            if name.casefold() not in config.ignored_directory_names
+            and not is_link_or_reparse(Path(directory) / name)
         ]
         current = Path(directory)
         for filename in files:
             if Path(filename).suffix.casefold() not in config.supported_extensions:
                 continue
             candidate = current / filename
+            if is_link_or_reparse(candidate):
+                continue
             try:
                 safe_path = candidate.resolve(strict=True)
                 safe_path.relative_to(root)

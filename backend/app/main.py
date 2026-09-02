@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.api.catalog import router as catalog_router
 from app.api.household import router as household_router
+from app.api.media_roots import router as media_roots_router
 from app.api.playback import router as playback_router
 from app.api.router import router
 from app.config import get_config, get_product_config
@@ -60,6 +61,7 @@ app = FastAPI(
 app.include_router(router, prefix=product.api_prefix)
 app.include_router(catalog_router, prefix=product.api_prefix)
 app.include_router(household_router, prefix=product.api_prefix)
+app.include_router(media_roots_router, prefix=product.api_prefix)
 app.include_router(playback_router, prefix=product.api_prefix)
 
 

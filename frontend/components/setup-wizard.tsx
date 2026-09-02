@@ -21,7 +21,9 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ApiError, apiRequest, jsonBody } from '@/lib/api';
+import type { MediaFolderSelection } from '@/lib/api';
 import { productConfig } from '@/lib/product-config';
+import { MediaFolderField } from '@/components/media-folder-picker';
 
 type LibraryType = 'movies' | 'tv' | 'other';
 
@@ -49,12 +51,21 @@ export function SetupWizard() {
   const [createLibrary, setCreateLibrary] = useState(true);
   const [libraryName, setLibraryName] = useState('Movies');
   const [libraryType, setLibraryType] = useState<LibraryType>('movies');
-  const [mediaPath, setMediaPath] = useState('');
+  const [mediaFolder, setMediaFolder] = useState<MediaFolderSelection>();
 
   useEffect(() => {
     apiRequest<{ setup_required: boolean }>('/setup/status')
-      .then((status) => {
-        if (!status.setup_required) window.location.replace('/login');
+      .then(async (status) => {
+        if (!status.setup_required) {
+          try {
+            await apiRequest('/auth/me');
+            window.location.replace('/libraries');
+          } catch {
+            window.location.replace('/login');
+          }
+        } else {
+          await apiRequest('/setup/session', { method: 'POST' });
+        }
       })
       .catch((caught: unknown) => {
         setError(caught instanceof Error ? caught.message : 'Could not reach the local server.');
@@ -69,37 +80,49 @@ export function SetupWizard() {
 
   const next = () => {
     setError(undefined);
-    if (step === 1 && !accountValid) {
-      setError('Use a username of at least 3 characters and matching passwords of at least 12 characters.');
-      return;
-    }
-    if (step === 2 && createLibrary && (!libraryName.trim() || !mediaPath.trim())) {
-      setError('Provide a library name and a readable media directory, or skip the first library for now.');
-      return;
-    }
     setStep((current) => Math.min(steps.length - 1, current + 1));
   };
 
-  const submit = async () => {
+  const continueToLibrary = () => {
+    if (!accountValid) {
+      setError('Use a username of at least 3 characters and matching passwords of at least 12 characters.');
+      return;
+    }
+    setError(undefined);
+    setStep(2);
+  };
+
+  const finishSetup = async () => {
+    if (!accountValid) {
+      setError('Return to Owner & storage and provide matching passwords of at least 12 characters.');
+      return;
+    }
+    if (createLibrary && (!libraryName.trim() || !mediaFolder)) {
+      setError('Provide a library name and choose a readable media folder, or skip the first library for now.');
+      return;
+    }
     setSubmitting(true);
     setError(undefined);
     try {
       const result = await apiRequest<{ health: SetupHealth }>('/setup/owner', {
         method: 'POST',
         body: jsonBody({
-          username: username.trim(),
-          password,
+          username: username.trim(), password,
           application_data_directory: dataDirectory.trim() || null,
           temporary_directory: temporaryDirectory.trim() || null,
-          initial_library: createLibrary
-            ? { name: libraryName.trim(), library_type: libraryType, paths: [mediaPath.trim()] }
-            : null,
+          initial_library: createLibrary && mediaFolder ? {
+            name: libraryName.trim(),
+            library_type: libraryType,
+            folder_ids: [mediaFolder.selection_id],
+          } : null,
         }),
       });
       setHealth(result.health);
+      setPassword('');
+      setConfirmPassword('');
       setStep(3);
     } catch (caught: unknown) {
-      setError(caught instanceof ApiError || caught instanceof Error ? caught.message : 'Setup did not complete.');
+      setError(caught instanceof ApiError || caught instanceof Error ? caught.message : 'Setup could not be completed.');
     } finally {
       setSubmitting(false);
     }
@@ -223,6 +246,7 @@ export function SetupWizard() {
 
               {step === 2 ? (
                 <FieldGroup className="max-w-2xl">
+                  <Alert><ShieldCheck /><AlertTitle>Protected first-run session</AlertTitle><AlertDescription>Folder browsing is limited to approved media storage. Your Owner account and first library are saved together when you finish.</AlertDescription></Alert>
                   <Field orientation="horizontal">
                     <Checkbox id="create-library" checked={createLibrary} onCheckedChange={(checked) => setCreateLibrary(Boolean(checked))} />
                     <FieldLabel htmlFor="create-library">Create the first media library now</FieldLabel>
@@ -246,17 +270,11 @@ export function SetupWizard() {
                           </Select>
                         </Field>
                       </div>
-                      <Field>
-                        <FieldLabel htmlFor="media-path">Mounted media directory</FieldLabel>
-                        <Input id="media-path" value={mediaPath} onChange={(event) => setMediaPath(event.target.value)} placeholder="/media/movies" />
-                        <FieldDescription>
-                          Enter a server path that already exists and is readable. Setup never exposes a server filesystem browser.
-                        </FieldDescription>
-                      </Field>
+                      <MediaFolderField id="media-folder" selection={mediaFolder} onSelectionChange={setMediaFolder} />
                       <Alert>
                         <FolderCheck />
                         <AlertTitle>Source files stay untouched</AlertTitle>
-                        <AlertDescription>The server validates and scans this location as read-only media.</AlertDescription>
+                        <AlertDescription>The server validates this read-only location. A scan starts only when you request one.</AlertDescription>
                       </Alert>
                     </>
                   ) : (
@@ -295,10 +313,12 @@ export function SetupWizard() {
                     <ChevronLeft data-icon="inline-start" /> Back
                   </Button>
                   {step === 2 ? (
-                    <Button disabled={submitting} onClick={submit}>
+                    <Button disabled={submitting} onClick={finishSetup}>
                       {submitting ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <ShieldCheck data-icon="inline-start" />}
                       Finish secure setup
                     </Button>
+                  ) : step === 1 ? (
+                    <Button disabled={submitting} onClick={continueToLibrary}>Continue <ChevronRight data-icon="inline-end" /></Button>
                   ) : (
                     <Button onClick={next}>Continue <ChevronRight data-icon="inline-end" /></Button>
                   )}

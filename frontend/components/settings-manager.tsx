@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, FileClock, LoaderCircle, Save } from 'lucide-react';
+import { ArrowRight, Check, FileClock, HardDrive, LoaderCircle, Save } from 'lucide-react';
+import Link from 'next/link';
 
 import { PageHeader } from '@/components/page-header';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -98,6 +99,7 @@ export function SettingsManager() {
             {loading ? [0, 1, 2].map((item) => <Skeleton key={item} className="h-14" />) : [
               ['Application data', settings?.application_data_directory], ['Temporary files', settings?.temporary_directory], ['Artwork cache', settings?.artwork_directory],
             ].map(([label, value]) => <div key={label} className="rounded-lg border bg-muted/20 p-3"><p className="text-xs font-medium">{label}</p><code className="mt-1 block truncate text-[11px] text-muted-foreground" title={value}>{value}</code></div>)}
+            {!loading ? <Button variant="outline" className="w-full" render={<Link href="/settings/media-storage" />}><HardDrive /> Media Storage <ArrowRight className="ml-auto" /></Button> : null}
           </CardContent>
         </Card>
       </div>

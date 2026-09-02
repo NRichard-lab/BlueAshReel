@@ -35,25 +35,50 @@ Open PowerShell in the repository directory. A process-scoped execution-policy c
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\bootstrap.ps1 -MediaPath "D:\Media"
+.\scripts\bootstrap.ps1
 ```
 
-The selected media directory must already exist. Omit `-MediaPath` to create an empty repository-local `media` directory. Paths containing spaces are supported when quoted.
+On a new interactive desktop installation, bootstrap offers a native folder
+dialog and a typed-path fallback. You may choose more than one folder or skip
+the choice and keep the empty repository-local `media` directory. A fully
+scripted installation can supply one or more paths explicitly:
+
+```powershell
+.\scripts\bootstrap.ps1 -MediaPath @("E:\Videos", "F:\Family recordings")
+```
+
+The selected directories must already exist. Paths containing spaces are
+supported. Bootstrap rejects whole-drive roots, links/reparse points, duplicate
+or nested roots, and overlap with writable application state.
 
 On first run the script:
 
 1. checks Docker, Compose, engine availability, and WSL status;
 2. creates `.env` only if it does not exist and generates a cryptographic secret;
 3. validates a loopback/private bind, port, read access, write access, distinct state paths, and media/state separation;
-4. renders the Compose configuration;
+4. records approved roots locally and renders identical read-only mounts for backend and worker;
 5. builds and starts only this Compose project; and
 6. waits for readiness and prints the local URL.
 
-Existing `.env` files are never overwritten. If a partial first run created one that you do not want, rename it for review rather than deleting it blindly, then rerun.
+Existing `.env` values and secrets are preserved. Root changes require the
+explicit `-ConfigureMediaRoots` switch; bootstrap updates only the three managed
+media-root values and its ignored generated registry/override after Compose
+validation succeeds:
+
+```powershell
+.\scripts\bootstrap.ps1 -ConfigureMediaRoots -MediaPath @("E:\Videos", "F:\Family recordings")
+```
+
+An unrelated `compose.override.yml` is never overwritten. Move or merge such an
+override deliberately before using managed multi-root configuration.
 
 ## Owner setup
 
-Open [http://localhost:8080](http://localhost:8080). Create the initial Owner and register a library below `/media` (the container view of the selected `MEDIA_PATH`). A host path such as `D:\Media\Movies` appears to the application as `/media/Movies`.
+Open [http://localhost:8080](http://localhost:8080). Enter the initial Owner details,
+then use **Browse folders** in the signed 30-minute setup session to choose a directory below an approved root.
+**Finish secure setup** saves the Owner and optional first library together. The normal
+interface does not require Windows or container paths. The first configured root
+retains internal path `/media`; additional roots receive stable internal IDs.
 
 After the Owner exists, the first-run endpoint no longer permits another account. Store the Owner password in a password manager; it is hashed and cannot be recovered from the database.
 

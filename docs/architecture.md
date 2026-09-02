@@ -59,10 +59,17 @@ The container paths are stable even when host directories change:
 | `/data` | Application-controlled persistent files | Read/write |
 | `/artwork` | Local artwork/cache | Read/write |
 | `/tmp/app` | Disposable analysis/transcode workspace | Read/write |
-| `/media` | Operator-selected source media root | Read-only |
+| `/media` | Primary operator-approved source root | Read-only |
+| `/media-roots/<id>` | Additional operator-approved source roots | Read-only |
 | `/app/config/product.json` | Central product identity | Read-only |
 
-Library paths submitted to the API must resolve beneath an allowed media root. The UI never offers unauthenticated filesystem browsing. Scanner code treats source media as immutable and stores availability/history in the database.
+Library paths must resolve beneath an approved media root. Normal clients submit
+HMAC-signed root-relative selections, not paths. The backend rejects traversal,
+absolute host paths, symlinks/reparse points, and similar-prefix escapes, then
+revalidates canonical containment before storing or scanning. The authenticated
+folder browser lists directories only and never exposes a drive to frontend or
+proxy containers. Scanner code treats source media as immutable and stores
+availability/history in the database.
 
 ## Scale and performance posture
 
