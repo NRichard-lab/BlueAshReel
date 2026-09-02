@@ -1,5 +1,15 @@
 # Backup and restore
 
+Native Windows uses this same archive format and validator without Docker. Use
+its Start Menu backup/validation actions; see [native recovery](native-windows.md#backup-repair-and-upgrade).
+Native archives additionally include `configuration/native/installation.json`
+and `configuration/native/Caddyfile`, alongside `configuration/.env` and product
+configuration. Both native files are required together. The validator checks
+their structure without applying paths, binding addresses, services or firewall
+rules. Restore them only after explicitly reviewing the target instance and
+recreating OS security with the trusted installer. The commands below are the
+Docker wrappers unless stated otherwise.
+
 Phase 2 backups include household grants, preferences, playback sessions and per-user
 watch history. Treat archives as sensitive. Deleting current viewing history does
 not rewrite existing backups; expire them according to household policy. Temporary

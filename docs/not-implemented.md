@@ -7,6 +7,20 @@ and Owner active-stream controls.
 
 Current limitations:
 
+- The native Windows installer is unsigned and development-only. Windows 11 was
+  exercised on this workstation; Windows 10, a second clean Windows machine,
+  reboot/sign-out, and other GPU/driver combinations need separate validation.
+- Native upgrade creates and validates a backup and retains prior program/config
+  files. Automatic rollback is not implemented; recovery is explicitly manual.
+- Native hardware acceleration covers verified H.264 encoding. Decode, AAC audio
+  and text subtitle conversion remain on the CPU. No hardware result is inferred
+  from a GPU name alone.
+- Caddy's administration API is disabled. Native API, worker and web stop
+  cooperatively; the stateless proxy is terminated, not gracefully drained.
+- Network shares are an advanced case requiring service-account access and a
+  reviewed network policy; the strict-local native profile does not enable them.
+- Bundled dependency provenance, notice gaps and the WinSW/log4net development
+  risk are recorded in [native packaging](native-windows.md#components-and-licenses).
 - Image-based subtitle burn-in is unsupported; choose a text track or turn subtitles off.
 - Single selected quality, not an automatic adaptive-bitrate ladder.
 - HLS seeks create a precise local transcode from the requested position.

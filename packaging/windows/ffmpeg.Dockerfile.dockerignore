@@ -1,0 +1,9 @@
+**
+!packaging/
+!packaging/windows/
+!packaging/windows/build-ffmpeg.sh
+!packaging/windows/mingw-toolchain.cmake
+!artifacts/
+!artifacts/native-dev/
+!artifacts/native-dev/ffmpeg-sources/
+!artifacts/native-dev/ffmpeg-sources/*.tar.gz

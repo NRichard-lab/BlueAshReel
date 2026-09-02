@@ -1,5 +1,19 @@
 # Windows installation
 
+There are two deployment options sharing the same application:
+
+- [Native Windows development installer](native-windows.md): self-contained,
+  delayed-start Windows services, no Docker/WSL requirement. The development
+  identity uses port 18080 and separate storage so Docker remains untouched.
+- Docker Desktop: the advanced/development path documented below, using port
+  8080 by default. Its prerequisites apply only to this path.
+
+See [native validation](native-windows-validation.md) for actual installer tests
+and remaining development limitations. The unsigned installer is not a public
+release or the end of application development.
+
+## Docker Desktop deployment
+
 Phase 2 adds local streaming. Allocate transcode space deliberately and confirm
 FFmpeg supports libx264/AAC. The application processes remain non-root, media remains
 read-only, and only loopback Caddy is published. Native development uses Windows

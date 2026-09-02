@@ -1,0 +1,29 @@
+BlueReel Development — unsigned native Windows installer
+
+This is an installation-testing build, not a final public release. Windows may
+show an unknown-publisher or SmartScreen warning because it is not code-signed.
+Do not disable Windows security protections to install it.
+
+The development identity uses a separate Program Files directory, separate
+ProgramData directory, port 18080, services, secrets, database and firewall rules.
+It does not migrate, replace or reconfigure an existing Docker installation.
+
+All required application runtimes are bundled. Supported systems are 64-bit
+Windows 10 22H2 and Windows 11; their inbox .NET Framework runs the service host.
+No Docker, WSL, Python, Node.js, FFmpeg, Caddy or developer tools are prerequisites.
+Administrator elevation is required to install services and app-specific rules.
+
+Localhost only is the default. Private-LAN access is optional and never changes
+router settings. Strict-local outbound blocking applies only to BlueReel's
+installed executables, without changing global Windows Firewall policy.
+
+Source media is never modified. LocalService needs read access to approved media
+folders; this installer does not automatically change their permissions.
+
+Repair and upgrades preserve persistent data. Upgrades first create and validate
+a backup and retain the previous application for manual recovery. Automatic
+rollback is not implemented. Uninstall preserves user data unless you separately
+and explicitly choose permanent removal.
+
+Included third-party components and their redistribution notices are available
+in included-components.json, OPEN-SOURCE-NOTICES.txt, licenses and source.

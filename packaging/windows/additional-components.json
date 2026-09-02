@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "scope": "Caddy Windows AMD64 v2.11.4 and WinSW.NET461 v2.12.0 dependency attribution",
+  "artifacts": [
+    {
+      "id": "caddy_windows_sbom", "name": "Caddy upstream Windows AMD64 CycloneDX SBOM", "version": "2.11.4",
+      "filename": "caddy_2.11.4_windows_amd64.sbom",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_windows_amd64.sbom",
+      "sha256": "ecc0c7270380760e6ab62521dcc6baee8a4e7324319bfdaf0874cd5ec74f7e88",
+      "role": "sbom", "license": "Apache-2.0", "distribution": "notice"
+    },
+    {
+      "id": "caddy_buildable_source", "name": "Caddy complete upstream buildable source and vendored Go modules", "version": "2.11.4",
+      "filename": "caddy_2.11.4_buildable-artifact.tar.gz",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_buildable-artifact.tar.gz",
+      "sha256": "33777097f666d60d78bfb74df06978c933f32aa5a0d4ce0b0c5d028489984187",
+      "role": "source", "license": "Apache-2.0 and vendored module licenses", "distribution": "source_and_notices"
+    },
+    {
+      "id": "go_source", "name": "Go standard library corresponding source and third-party notices", "version": "1.26.3",
+      "filename": "go1.26.3.src.tar.gz", "url": "https://go.dev/dl/go1.26.3.src.tar.gz",
+      "sha256": "1c646875d0aa8799133184ed57cf79ff24bdefe8c8820470602a9d3d6d9192b8",
+      "role": "source", "license": "BSD-3-Clause and included third-party notices", "distribution": "source_and_notices",
+      "checksum_source": "https://go.dev/dl/?mode=json&include=all"
+    },
+    {
+      "id": "winsw_source", "name": "WinSW build and merged-dependency source evidence", "version": "2.12.0",
+      "filename": "WinSW-v2.12.0-source.tar.gz", "url": "https://codeload.github.com/winsw/winsw/tar.gz/refs/tags/v2.12.0",
+      "sha256": "b33dfcd7c32b7b541a8a609f0e95d3c9c56112e03979d2632a74f069a79fcc87",
+      "role": "source", "license": "MIT", "distribution": "source_and_notices"
+    },
+    {
+      "id": "log4net_nuget", "name": "Apache log4net merged into WinSW.NET461", "version": "2.0.12",
+      "filename": "log4net.2.0.12.nupkg", "url": "https://api.nuget.org/v3-flatcontainer/log4net/2.0.12/log4net.2.0.12.nupkg",
+      "sha256": "81c260098e2ed7a669aa46177d8788928dcbadfc2a8cb72bfcfa5b39c5851861",
+      "role": "license_evidence", "license": "Apache-2.0", "distribution": "metadata"
+    },
+    {
+      "id": "log4net_source", "name": "Apache log4net official source, license, and NOTICE", "version": "2.0.12",
+      "filename": "apache-log4net-source-2.0.12.zip", "url": "https://archive.apache.org/dist/logging/log4net/source/apache-log4net-source-2.0.12.zip",
+      "sha256": "6179f7b541f84f1c25d30ed9f6b2a5128bc3edb2444e88a252b7cad0ff22153d",
+      "role": "source", "license": "Apache-2.0", "distribution": "source_and_notices",
+      "upstream_sha512": "180cfdf2994c79699c7d91c74e71646c127663a8589371a8559e055b653e0b972370fc972b62d12ae799955dd474c44425586c460a6c19fe2486f40c5071d8cf",
+      "checksum_source": "https://archive.apache.org/dist/logging/log4net/source/apache-log4net-source-2.0.12.zip.sha512"
+    },
+    {
+      "id": "yamldotnet_nuget", "name": "YamlDotNet merged into WinSW.NET461", "version": "8.1.2",
+      "filename": "yamldotnet.8.1.2.nupkg", "url": "https://api.nuget.org/v3-flatcontainer/yamldotnet/8.1.2/yamldotnet.8.1.2.nupkg",
+      "sha256": "0b1dfb8c530958f4f72ef916c2267592c2b0699c693f343d52c700c25b2db1d2",
+      "role": "license_evidence", "license": "MIT", "distribution": "notices_and_metadata"
+    }
+  ],
+  "winsw_merged_components": [
+    {"name":"WinSW.Core", "version":"2.12.0", "license":"MIT", "source_artifact":"winsw_source"},
+    {"name":"WinSW.Plugins", "version":"2.12.0", "license":"MIT", "source_artifact":"winsw_source"},
+    {"name":"log4net", "version":"2.0.12", "license":"Apache-2.0", "source_artifact":"log4net_source", "package_artifact":"log4net_nuget"},
+    {"name":"YamlDotNet", "version":"8.1.2", "license":"MIT", "source_artifact":"yamldotnet_nuget", "package_artifact":"yamldotnet_nuget"}
+  ],
+  "winsw_build_only_not_redistributed": ["ILMerge 3.0.41", "Microsoft.NETFramework.ReferenceAssemblies 1.0.0", "StyleCop.Analyzers"],
+  "winsw_excluded_target_dependencies": ["SharpZipLib (only NET2/NET4 targets)", "System.Security.AccessControl NuGet package (only NET6 target)", "System.ServiceProcess.ServiceController NuGet package (only NET6 target)"],
+  "security_review": {
+    "log4net_2_0_12": {
+      "advisory": "https://logging.apache.org/security.html#CVE-2026-40021",
+      "finding": "Affected version includes XmlLayout/XmlLayoutSchemaLog4J log-loss defect; WinSW 2.12.0 Program.cs configures PatternLayout, not either affected XML layout.",
+      "scope": "Dependency inventory disclosure, not a claim that all upstream vulnerabilities are absent."
+    }
+  }
+}

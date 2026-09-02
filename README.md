@@ -2,11 +2,23 @@
 
 **A Blue Ash Application.**
 
-BlueReel is a private, local-first home-media streaming website. Phase 2 adds household library permissions, movie/TV browsing, a first-party browser player, durable per-user progress, and local FFmpeg remuxing/transcoding to the Phase 1 FastAPI, React/TypeScript, SQLite WAL, scanner, and localhost-only Docker foundations.
+BlueReel is a private, local-first home-media streaming website. Native Windows and Docker share one FastAPI backend, React/TypeScript frontend, SQLite schema, scanner, playback engine, household permissions, and backup format. The first unsigned Windows development installer is an installation-test build, not a public release.
 
-The product name, subtitle, version, and API prefix live in one place: [`config/product.json`](config/product.json). Do not duplicate branding in source or deployment secrets.
+The base product name, subtitle, application version, and API prefix live in [`config/product.json`](config/product.json). The Windows component lock additionally identifies its development package/build number. Do not duplicate branding in deployment secrets.
 
 ## Quick start
+
+### Native Windows development installer
+
+See [native Windows installation and builds](docs/native-windows.md) and the
+[installation test report](docs/native-windows-validation.md). The self-contained
+development package uses **BlueReel Development**, port **18080**, and separate
+Program Files/ProgramData, services, secrets, and firewall rules. It does not
+require Docker, WSL, Python, Node, FFmpeg, or development tools on the target PC.
+An administrator installs the services; normal use is through the local browser.
+The unsigned development installer is built locally, not published as a release.
+
+### Docker Compose
 
 Prerequisites are Docker Desktop on Windows or Docker Engine with Compose v2 on Linux. The bootstrap scripts detect missing prerequisites, preserve existing configuration, generate a secure application secret, validate all bind-mounted paths, start the stack, and wait for readiness.
 
@@ -27,7 +39,7 @@ An interactive first run offers media-root selection (a native folder dialog on 
 
 The default bind is `127.0.0.1`; no firewall, router, or public-access setting is changed. For household LAN access, deliberately set `BIND_ADDRESS` in `.env` to this computer's RFC1918 address and restart. TLS and remote access are not part of this phase.
 
-## Common operations
+## Docker operations
 
 ```sh
 # Status and privacy-safe local logs
@@ -63,6 +75,9 @@ Health responses are intentionally narrow and do not include users, media titles
 - [Architecture overview](docs/architecture.md)
 - [Local development](docs/local-development.md)
 - [Windows installation](docs/install-windows.md)
+- [Native Windows architecture, installer and recovery](docs/native-windows.md)
+- [Native Windows installation test report](docs/native-windows-validation.md)
+- [Native Windows security boundary](docs/native-runtime-security.md)
 - [Ubuntu/Linux installation](docs/install-linux.md)
 - [Configuration reference](docs/configuration.md)
 - [Approved media storage and folder browser](docs/media-storage.md)
@@ -73,6 +88,7 @@ Health responses are intentionally narrow and do not include users, media titles
 - [Household users and permissions](docs/household-users.md)
 - [Playback and history](docs/playback.md)
 - [Local conversion and hardware](docs/transcoding.md)
+- [Playback modes and transcoding controls](docs/transcoding-settings.md)
 - [API reference](docs/api.md)
 - [Phase 2 validation and workstation checklist](docs/phase2-validation.md)
 - [Docker validation and local handoff](docs/container-validation.md)
@@ -87,17 +103,24 @@ config/      Central product identity
 docker/      Production-style container images and Caddy configuration
 docs/        Architecture, operations, privacy, and recovery guidance
 frontend/    React and TypeScript streaming website and administration
+packaging/   Windows installer, pinned components, build and acceptance tools
 scripts/     Bootstrap, online backup, and restore-validation tools
 compose.yml  Local runtime topology and hardening
 ```
 
 ## Privacy posture
 
-Backend, worker and frontend use an internal Docker network with no outbound route.
+In Docker, backend, worker and frontend use an internal network with no outbound route.
 Caddy's startup guard applies deny-by-default rules in its own network namespace,
 permitting only replies, local health checks and the two internal upstreams.
 Only Caddy publishes a host port, bound to loopback by default. No host
-firewall rules are changed. Media is read-only; inspection and artwork handling
+firewall rules are changed by Docker deployment. Native Windows installs five
+application-specific outbound block rules plus pre-DNS Python/Node guards. It
+does not alter global firewall policy. Its optional LAN rule is limited to the
+chosen private address, port, Private profile and local subnet. The Privacy page
+checks effective Windows rules rather than trusting a saved preference.
+Native media access is application-read-only, not a claim of read-only NTFS ACLs;
+Docker media mounts enforce read-only access. Inspection and artwork handling
 occur locally. There are no analytics, advertising, remote fonts, tracking pixels,
 external crash reporting or metadata-provider calls. Outbound integrations remain
 disabled and unavailable. See the [network boundary](docs/privacy-and-outbound.md).

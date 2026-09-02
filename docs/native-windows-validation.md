@@ -1,0 +1,190 @@
+# Native Windows development installer validation
+
+Installation-testing phase, September 1–2, 2026. This is an unsigned development
+build, not a public GitHub Release or a production-readiness certification.
+
+## Baseline and isolation
+
+The initial clean `main`, fetched `origin/main`, and GitHub default branch all
+matched `395c1dcf145abf78c94a90599fbaa7a603b595f4` before changes. Git history was
+preserved. Only the development product identity was installed: separate Program
+Files, ProgramData, database, secrets, services, temporary data, backups, rules
+and port 18080. The original Docker deployment retained port 8080 and its own
+configuration/media mappings. Native tests used generated noncopyrighted fixtures
+under a newly created disposable test-media directory, never household media.
+
+Host: x64 Windows 11 Pro, build 26200. GPU inventory included an AMD Radeon RX
+7900 XTX and AMD integrated graphics. Windows Sandbox was not already installed;
+no major Windows feature was enabled. No reboot was performed. The development
+workstation contains build tools, so independence is demonstrated by the isolated
+installed executables, process/configuration checks, and running with Docker
+Desktop and WSL processes stopped—not by claiming a second clean-machine pass.
+
+## Test methods
+
+Evidence is separated deliberately:
+
+- Unit/integration tests exercise shared backend, paths, privacy, migrations,
+  transcoding policy, backup format, installer definitions and service adapters.
+- Native API acceptance uses the actual installed services and exact bundled
+  FFmpeg, verifies real HLS segments with FFprobe, and records redacted JSON.
+- In-app browser checks use the actual website, player and Owner administration.
+  A playing label alone is not accepted as decoding proof: the player reports
+  its decoded-frame callback and the video element exposes valid dimensions and
+  advancing time.
+- Elevated acceptance reads actual SCM identities/restart actions, Windows ACLs,
+  effective firewall rules, installed backup tools and actual Inno executables.
+  Test helpers are fixed to the disposable development identity and opt-in only.
+- Docker regression uses an independently named project, unique image tags,
+  loopback port 28080, fresh secrets/state and copied synthetic media.
+
+Ignored local evidence lives under `artifacts/native-dev`; raw logs, private
+configuration, test passwords, databases and backups are not committed. The
+tracked report contains outcomes and reproducible source/test locations only.
+
+## Initial prototype failures and corrections
+
+The first `0.1.0-dev.1` EXE clean-installed, created four LocalService services,
+opened a healthy loopback site and passed the native API playback matrix. Its
+actual lifecycle tests exposed two defects not found by the initial smoke test:
+
+1. The pinned embedded CPython normalized terminal `../..` in its `_pth` file to
+   the wrong directory. Backend imports worked, but shared backup modules did
+   not. The build now uses explicit `../../.` and smoke-imports both backup and
+   restore validation from an isolated, relocated embedded runtime.
+2. WinSW 2.12 concatenates common arguments to start/stop arguments. Repeating the
+   full Python module command broke its stop CLI and left the wrapper waiting.
+   XML now splits common role/data arguments from `-I -B -m` start/stop commands,
+   with an exact-concatenation regression test. PowerShell requests stop without
+   an unbounded implicit wait, then applies an explicit deadline.
+
+The dev.1 path file received an explicit checksum-gated prototype repair, with
+its original and ACL retained privately. Backup then passed. Cooperative stop
+signals ended the prototype's application processes; the original failed restart
+evidence is retained and is not counted as a successful unassisted restart.
+Two wrapper processes remained orphaned in SCM after their application children
+had exited. An explicit prototype-only recovery verified their exact identities,
+corrected XML, stop markers and absence of children before terminating only those
+two wrappers. No database or media process was forcibly terminated. The next
+ordinary four-service restart completed in nine seconds, healthy, with configuration,
+secret and persistent database counts unchanged.
+Prototype-specific repair tools are not automatic rollback support. Final-package
+clean-install/lifecycle results are recorded separately below.
+
+Additional review hardened elevated maintenance against service-writable metadata
+redirecting program/database paths; native configuration is service-readable, not
+service-writable. Private ACL repair rejects hardlinks/reparse points before
+changes and uses verified file handles. It also closed reverse-DNS and CPython
+socket hostname-resolution gaps before resolver entry. Backup now includes the
+native installation/network configuration in the existing v1 archive format.
+
+One initial acceptance failure was a **test assumption**, not an application
+failure: resume progress requires two seconds of actual watch credit before a
+seek. The corrected harness verifies that behavior and exact eight-second resume.
+
+## Playback and Owner workflow evidence
+
+The initial browser Owner wizard completed all four steps, selected an approved
+Windows subfolder, created a library and scanned eight initial files with zero
+errors. The native browser showed Windows approved roots, not `/media` paths.
+Movies and television catalogs were also populated by the API acceptance scan.
+
+Native API acceptance completed all nine groups:
+
+| Group | Verified outcome |
+| --- | --- |
+| Native identity | Separate Windows deployment and exact installed FFmpeg hash |
+| Scan/catalog | Generated movies/TV/private libraries, successful worker/FFprobe analysis |
+| Direct playback | HEAD, ordinary/suffix ranges, 416 for invalid multi-range, 410 after stop |
+| Local conversions | MKV stream-copy remux; CPU MPEG-4→H.264 video; CPU AC3→AAC audio; real probed segments |
+| Five modes | Direct-first behavior; verified AMF; explicit CPU fallback; Required fails without CPU; Direct/Remux Only rejects conversion |
+| Track/seek | Second audio track, embedded text→WebVTT, precise HLS seek |
+| Progress/permissions | Exact resume after logout/login, separate Viewer progress, private/cross-user denial, next episode |
+| Source loss | Fails closed while an owned test file is unavailable; restores identical source bytes |
+| Cleanup | Zero active streams/conversions/temporary bytes, original settings restored, test Viewer disabled |
+
+The browser separately confirmed Direct Play with valid video dimensions and
+advancing playback; MKV remux decoded locally at 640×360. Seeking the MKV created
+a precise hardware representation in Automatic mode and again decoded locally.
+Active Streams showed `Hardware Transcode`, `h264_amf`, Automatic, and no fallback.
+After selecting Software Only, MPEG-4 video decoded locally at 320×240 and Active
+Streams showed `Software Transcode`, `libx264`, Software Only, and no fallback.
+Owner Stop Stream reported process/temp cleanup and the player displayed the
+expected ended-session message.
+
+The browser also decoded the AC3 audio-conversion fixture at 640×360 under
+Software Only. This is stream/decoder evidence, not a claim of hearing physical
+audio output. Selecting the second Spanish AAC track and embedded SubRip subtitle
+produced a decoded 320×240 remux and a loaded local subtitle track (ready state 2).
+The episode-one details link opened episode two, which Direct Played with decoded
+frames and advancing time. Playback settings were restored to Automatic and Active
+Streams returned to zero before installer lifecycle testing.
+
+AMF short test encodes passed with the exact installed FFmpeg under the actual
+LocalService identity. QSV and NVENC failed honestly on this hardware; neither was
+presented as available. Automatic and Hardware Required produced real AMF HLS.
+Preferred with unavailable QSV used a reported CPU fallback; Required with QSV
+failed without CPU fallback. An already-active stream retained its policy when
+the Owner changed settings. Interactive numeric AMD device 0/1 test encodes also
+passed; that is distinct from the service-account automatic-device test.
+
+Hardware acceleration is H.264 **encoding** only. Decode/audio/subtitles remain
+CPU work; there is no claim of hardware decoding, 4K load qualification or
+cross-vendor driver certification.
+
+## OS security and lifecycle evidence
+
+Actual inventory verified four delayed-automatic LocalService services with
+service SIDs, two restart attempts (10/30 seconds), then no action, with one-day
+reset and no reboot/command recovery action. Protected private ACLs had no
+unexpected principals. Loopback remained available.
+
+The effective-firewall test found five exact per-binary outbound rules and three
+enabled profiles. An **unguarded installed Python** direct-IP socket received
+Windows error **10013 (access denied)**, not a timeout presented as proof.
+Python/Node guarded name lookup failed before DNS, and guarded Node numeric and
+named localhost HTTP succeeded. No global policy change or unrelated rule was
+required. The Privacy page displayed actual enforcement and a check timestamp.
+
+The first successfully repaired installed backup passed checksum/schema/integrity
+validation and a non-writing restore dry run. Final repair/upgrade/uninstall and
+LAN rule lifecycle outcomes are appended after their actual executable tests.
+
+## Independent Docker regression
+
+Passed production builds, all four healthy services, 28 same-origin API checks,
+scanning, Direct Play/ranges, MKV remux, CPU video/audio conversion, all five
+settings modes and truthful unavailable hardware. Backend/worker source writes
+failed EROFS and all fixture hashes were unchanged. Each service was tested for
+name/direct-IP egress denial; the proxy had UID 1000, no capabilities and
+NoNewPrivs. Shared backup and dry validation passed at Alembic
+`2b0100000001` (33 tables). Privacy-reviewed logs contained no fixture credential,
+secret, source-name/path or host fixture-path matches.
+
+The isolated Linux test run passed **261 tests, seven platform-specific skips**.
+Its four containers and two networks were removed. Before the deliberate
+Docker-Desktop-stop test, original Docker container/image IDs and start times
+were unchanged. Original deployment restoration is checked at the end of native
+testing; it is not rebuilt or reconfigured using this task's changes.
+
+## Automated checks and artifact record
+
+The latest frontend checks passed **58 tests**, TypeScript, lint and the native
+production build. The large HLS client chunk warning is a build-size warning,
+not a build failure. Frozen shared backend/operations checks passed **327 tests,
+four platform-specific skips**, including real bundled FFmpeg/FFprobe and Caddy.
+Branch-enabled aggregate coverage is **80.60%** (statement coverage **83.79%**,
+branch coverage **68.67%**) over backend application and shared scripts, excluding
+test files and packaging. Ruff and strict mypy passed (43 shared source files).
+Packaging count, installer identity and source-control verification are recorded
+after the final build and lifecycle pass.
+
+## Limits of this evidence
+
+Unsigned development artifact; no public release. No reboot, second Windows
+machine/Sandbox, Windows 10 execution, long household-media load, other browser
+families or other GPU vendors were exercised. Automatic rollback/destructive
+restore is not implemented. Configuration/backup recovery is explicit and
+offline. The stateless proxy is terminated at shutdown, not gracefully drained.
+Network shares, image-subtitle burn-in, hardware decoding and external metadata
+remain deferred. See [component provenance and development dependency risks](native-windows.md#components-and-licenses).
