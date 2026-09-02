@@ -93,7 +93,7 @@ export function LibrariesManager() {
       <PageHeader
         eyebrow="Read-only sources"
         title="Libraries"
-        description="Organize mounted media directories and run local scans without changing source files."
+        description="Organize approved media directories and run local scans without changing source files."
         actions={<Button onClick={() => setShowForm((visible) => !visible)}><Plus data-icon="inline-start" /> {showForm ? 'Close form' : 'Add library'}</Button>}
       />
 

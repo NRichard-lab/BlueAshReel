@@ -154,7 +154,7 @@ export function LibraryDetail({ libraryId }: { libraryId: string }) {
           ) : null}
 
           <Card>
-            <CardHeader className="border-b"><CardTitle>Media directories</CardTitle><CardDescription>Mounted sources are validated and treated as read-only.</CardDescription></CardHeader>
+            <CardHeader className="border-b"><CardTitle>Media directories</CardTitle><CardDescription>Approved sources are validated and treated as read-only.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
               {library?.paths.map((path) => (
                 <div key={path.id} className="flex items-center gap-3 rounded-lg border bg-muted/20 p-3">

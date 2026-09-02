@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -569,3 +570,109 @@ def test_maintenance_continues_after_one_stop_failure(owner_context: tuple[TestC
         assert manager.maintenance_error
     finally:
         manager.jobs.clear()
+
+
+def test_real_software_only_and_mode_switch_keep_existing_encoder(
+    owner_context: tuple[TestContext, str], ffmpeg: str
+) -> None:
+    context, csrf = owner_context
+    fid, _source, _library = conversion_file(context, csrf, ffmpeg, codec="mpeg4", audio="ac3")
+    policy = context.client.get("/api/v1/transcoding-policy").json()
+    changed = context.client.patch(
+        "/api/v1/transcoding-policy",
+        headers={"X-CSRF-Token": csrf},
+        json={**policy, "mode": "software_only", "cpu_preset": "fast"},
+    )
+    assert changed.status_code == 200
+    manager: PlaybackManager = context.client.app.state.playback_manager
+    with patch.object(manager, "detect_hardware", side_effect=AssertionError("Software Only must never test a GPU")):
+        session = begin(context, csrf, fid)
+    job = manager.for_session(session["id"])
+    assert job.encoder == "libx264" and job.audio_encoder == "aac (CPU)"
+    assert job.process.wait(timeout=15) == 0
+    changed = context.client.patch(
+        "/api/v1/transcoding-policy",
+        headers={"X-CSRF-Token": csrf},
+        json={**policy, "mode": "hardware_required", "preferred_hardware": "qsv"},
+    )
+    assert changed.status_code == 200
+    active = context.client.get("/api/v1/streams").json()["items"][0]
+    assert active["selected_mode"] == "software_only" and active["method_label"] == "Software Transcode"
+    assert active["encoder"] == "libx264" and not active["fallback"]
+    rejected = context.client.post(
+        "/api/v1/playback/sessions", headers={"X-CSRF-Token": csrf}, json={"file_id": fid, "capabilities": CAPS}
+    )
+    assert rejected.status_code == 422 and "Hardware Required" in rejected.text
+    assert context.client.get(session["url"]).status_code == 200
+    probe, _elapsed = run_ffprobe(
+        str(Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")),
+        job.directory / "segment-000000.ts",
+        10,
+    )
+    assert probe.video[0].codec == "h264" and probe.audio[0].codec == "aac"
+
+
+def test_real_amf_auto_and_explicit_devices_report_only_verified_encodes(
+    owner_context: tuple[TestContext, str], ffmpeg: str
+) -> None:
+    context, csrf = owner_context
+    fid, _source, _library = conversion_file(context, csrf, ffmpeg, codec="mpeg4")
+    manager: PlaybackManager = context.client.app.state.playback_manager
+    policy = context.client.get("/api/v1/transcoding-policy").json()
+    reports = []
+    devices = ["auto", "0", "1"] if os.name == "nt" else ["auto"]
+    for device in devices:
+        selected = {**policy, "mode": "automatic", "preferred_hardware": "amf", "hardware_device": device}
+        changed = context.client.patch("/api/v1/transcoding-policy", headers={"X-CSRF-Token": csrf}, json=selected)
+        assert changed.status_code == 200
+        detected = context.client.post("/api/v1/playback-health/detect", headers={"X-CSRF-Token": csrf})
+        assert detected.status_code == 200
+        health = context.client.get("/api/v1/playback-health").json()
+        with Path(ffmpeg).open("rb") as binary:
+            expected_sha256 = hashlib.file_digest(binary, "sha256").hexdigest()
+        assert health["tested_ffmpeg_sha256"] == expected_sha256
+        amf = next(row for row in health["hardware_tests"] if row["encoder"] == "amf")
+        available = amf["test_status"] == "passed"
+        assert amf["device"] == device and amf["last_test_at"]
+        assert amf["available_codecs"] == (["h264"] if available else [])
+        changed = context.client.patch(
+            "/api/v1/transcoding-policy",
+            headers={"X-CSRF-Token": csrf},
+            json={**selected, "mode": "hardware_required" if available else "hardware_preferred"},
+        )
+        assert changed.status_code == 200
+        session = begin(context, csrf, fid)
+        job = manager.for_session(session["id"])
+        assert job.encoder == ("h264_amf" if available else "libx264")
+        assert job.process.wait(timeout=15) == 0
+        active = context.client.get("/api/v1/streams").json()["items"][0]
+        assert active["method_label"] == ("Hardware Transcode" if available else "Hardware-to-software fallback")
+        probe, _elapsed = run_ffprobe(
+            str(Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")),
+            job.directory / "segment-000000.ts",
+            10,
+        )
+        assert probe.video[0].codec == "h264" and probe.audio[0].codec == "aac"
+        reports.append(
+            {
+                "device": device,
+                "detected_gpus": health["detected_gpus"],
+                "hardware_tests": health["hardware_tests"],
+                "ffmpeg_sha256": health["tested_ffmpeg_sha256"],
+                "actual_video_encoder": job.encoder,
+                "actual_audio_encoder": job.audio_encoder,
+                "output_video_codec": probe.video[0].codec,
+                "output_audio_codec": probe.audio[0].codec,
+                "method_label": active["method_label"],
+                "fallback": active["fallback"],
+                "service_identity": "interactive test process, not installed LocalService",
+            }
+        )
+        assert (
+            context.client.post(f"/api/v1/playback/{session['id']}/stop", headers={"X-CSRF-Token": csrf}).status_code
+            == 204
+        )
+        assert not job.directory.exists() and not manager.jobs
+    report = os.getenv("TEST_HARDWARE_REPORT")
+    if report:
+        Path(report).write_text(json.dumps(reports, indent=2) + "\n", encoding="utf-8")

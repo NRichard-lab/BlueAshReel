@@ -32,6 +32,31 @@ export interface PlaybackRecord {
   subtitle_index: number | null;
   audio_index: number | null;
   quality: string;
+  method_label?: string;
+  selected_mode?: string;
+  fallback?: boolean;
+  fallback_reason?: string | null;
 }
 
 export const methodLabel = { direct: 'Direct Play', remux: 'Local Remux', transcode: 'Local Transcode' };
+
+/** A single server-authorized hardware recovery per media playback, never a retry loop. */
+export class HardwareRecoveryGate {
+  private pending: string | null = null;
+  private attempted = false;
+
+  request(sessionId: string): 'check' | 'pending' | 'exhausted' {
+    if (this.pending) return 'pending';
+    if (this.attempted) return 'exhausted';
+    this.pending = sessionId;
+    return 'check';
+  }
+
+  resolve(sessionId: string, recoverable: boolean): boolean {
+    if (this.pending !== sessionId) return false;
+    this.pending = null;
+    if (!recoverable || this.attempted) return false;
+    this.attempted = true;
+    return true;
+  }
+}

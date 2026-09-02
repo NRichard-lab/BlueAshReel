@@ -6,7 +6,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import AppConfig, get_config
@@ -15,11 +15,18 @@ from app.dependencies import Principal, current_principal, require_csrf, require
 from app.models import ApplicationSetting, MediaFile, PlaybackSession, User, WatchProgress, utcnow
 from app.security import _as_utc
 from app.services.catalog import authorized_file
-from app.services.compatibility import TEXT_SUBTITLES, Decision, PlaybackChoice, decide
+from app.services.compatibility import TEXT_SUBTITLES, Capabilities, Decision, PlaybackChoice, decide
 from app.services.playback import byte_range, file_chunks, load_playback, playback_budget, save_progress, setting
 from app.services.process_supervisor import owned_size
 from app.services.subtitles import extract_subtitles, retime_vtt
 from app.services.transcoding import SEGMENT_NAME, PlaybackManager, no_links
+from app.services.transcoding_policy import (
+    TranscodingPolicy,
+    public_policy,
+    read_policy,
+    session_policy,
+    validate_temp_directory,
+)
 
 router = APIRouter(tags=["playback"])
 
@@ -50,7 +57,7 @@ def decision(
 ) -> Decision:
     playback_budget.check(f"decision:{principal.user.id}", 60)
     file, _source = authorized_file(db, principal.user.id, payload.file_id, config)
-    return decide(file, payload, config)
+    return decide(file, payload, config, read_policy(db, config))
 
 
 @router.post("/playback/sessions", status_code=201)
@@ -67,16 +74,43 @@ def create_playback(
     db.execute(text("BEGIN IMMEDIATE"))
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
+    recovery: PlaybackSession | None = None
+    if payload.recovery_from:
+        recovery = db.get(PlaybackSession, payload.recovery_from)
+        if (
+            recovery is None
+            or recovery.user_id != principal.user.id
+            or recovery.auth_session_id != principal.session.id
+            or recovery.media_file_id != payload.file_id
+        ):
+            raise HTTPException(404, "Playback session not found")
+        if not manager.can_recover(recovery):
+            raise HTTPException(409, "This stream is not eligible for another hardware-to-software recovery")
+        payload = payload.model_copy(
+            update={
+                "audio_index": recovery.audio_index,
+                "subtitle_index": recovery.subtitle_index,
+                "quality": recovery.quality,
+                "capabilities": Capabilities.model_validate(recovery.capabilities),
+            }
+        )
     file, source = authorized_file(db, principal.user.id, payload.file_id, config)
-    choice = decide(file, payload, config)
+    if recovery and recovery.fingerprint != file.fingerprint:
+        raise HTTPException(409, "Source changed. Start a new playback session after rescanning.")
+    policy = session_policy(recovery, config) if recovery else read_policy(db, config)
+    if recovery:
+        recovery.state, recovery.ended_at, recovery.was_playing = "failed", utcnow(), False
+        recovery.error = "Hardware conversion failed during playback. A software recovery was requested."
+        recovery.decision = {**recovery.decision, "recovery_used": True}
+    choice = decide(file, payload, config, policy)
     if choice.method == "unsupported":
         raise HTTPException(422, choice.reason)
-    cutoff = utcnow() - timedelta(seconds=config.playback_session_timeout_seconds)
-    db.execute(
-        update(PlaybackSession)
-        .where(PlaybackSession.state == "active", PlaybackSession.last_seen_at < cutoff)
-        .values(state="expired", ended_at=utcnow())
-    )
+    for old in db.scalars(select(PlaybackSession).where(PlaybackSession.state == "active")):
+        if _as_utc(old.last_seen_at) < utcnow() - timedelta(
+            seconds=session_policy(old, config).inactive_session_seconds
+        ):
+            old.state, old.ended_at = "expired", utcnow()
+    db.flush()
     total = db.scalar(select(func.count(PlaybackSession.id)).where(PlaybackSession.state == "active")) or 0
     own = (
         db.scalar(
@@ -98,6 +132,14 @@ def create_playback(
         position = min(payload.position_seconds, max(0, (file.duration_seconds or 0) - 0.1))
     offset = position if choice.method != "direct" else 0
     if offset:
+        if policy.mode == "direct_only":
+            raise HTTPException(
+                422, "Precise seeking in remuxed media requires conversion. Direct Play and Remux Only is enabled."
+            )
+        if any((video.height or 0) >= 2160 for video in file.video_streams) and not policy.allow_4k:
+            raise HTTPException(
+                422, "Precise seeking in this remuxed 4K source requires conversion; 4K transcoding is disabled."
+            )
         choice = choice.model_copy(
             update={
                 "method": "transcode",
@@ -113,7 +155,7 @@ def create_playback(
         media_file_id=file.id,
         fingerprint=file.fingerprint,
         method=choice.method,
-        decision=choice.model_dump(),
+        decision={**choice.model_dump(), "settings": policy.model_dump()},
         capabilities=payload.capabilities.model_dump(),
         audio_index=payload.audio_index
         if payload.audio_index is not None
@@ -129,7 +171,20 @@ def create_playback(
     if choice.method != "direct":
         # Do not hold SQLite's writer lock during process admission/readiness.
         try:
-            manager.create(file, source, playback, choice, offset)
+            if recovery:
+                manager.invalidate_encoder(
+                    str(recovery.decision.get("active_encoder")), "Hardware failed during playback. Retest hardware."
+                )
+                manager.stop(recovery.id)
+            manager.create(
+                file,
+                source,
+                playback,
+                choice,
+                offset,
+                software_fallback="Hardware failed during playback; resumed with software." if recovery else None,
+            )
+            db.commit()  # Persist actual encoder/fallback only after bounded process admission.
             url = f"/api/v1/playback/{playback.id}/hls/index.m3u8"
             db.expire_all()
             load_playback(db, principal, playback.id, config)
@@ -148,6 +203,10 @@ def create_playback(
         "audio_index": playback.audio_index,
         "subtitle_index": playback.subtitle_index,
         "quality": playback.quality,
+        "method_label": stream_method(playback, playback.decision.get("active_encoder")),
+        "fallback": bool(playback.decision.get("fallback")),
+        "fallback_reason": playback.decision.get("fallback_reason"),
+        "selected_mode": policy.mode,
     }
 
 
@@ -201,6 +260,23 @@ def playback_state(
     }
 
 
+@router.get("/playback/{session_id}/recovery")
+def playback_recovery(
+    session_id: str,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+    manager: PlaybackManager = Depends(get_playback_manager),
+) -> dict[str, Any]:
+    row = db.get(PlaybackSession, session_id)
+    if row is None or row.user_id != principal.user.id or row.auth_session_id != principal.session.id:
+        raise HTTPException(404, "Playback session not found")
+    recoverable = manager.can_recover(row)
+    return {
+        "recoverable": recoverable,
+        "reason": "Hardware failed. One software reconnect is available." if recoverable else row.error,
+    }
+
+
 @router.post("/playback/{session_id}/progress")
 def progress(
     session_id: str,
@@ -230,7 +306,8 @@ def stop(
     playback = db.get(PlaybackSession, session_id)
     if playback is None or playback.user_id != principal.user.id or playback.auth_session_id != principal.session.id:
         raise HTTPException(404, "Playback session not found")
-    playback.state = "stopping"
+    was_failed = playback.state == "failed"
+    playback.state = "failed" if was_failed else "stopping"
     playback.ended_at = utcnow()
     db.commit()
     try:
@@ -239,7 +316,7 @@ def stop(
         playback.state, playback.error = "stop_failed", "Local process stop or cleanup needs attention"
         db.commit()
         raise
-    playback.state, playback.was_playing = "stopped", False
+    playback.state, playback.was_playing = "failed" if was_failed else "stopped", False
     db.commit()
 
 
@@ -346,14 +423,57 @@ def streams(
                 "bitrate_kbps": row.decision.get("bitrate_kbps"),
                 "observed_bitrate_kbps": job.metrics.get("output_bitrate_kbps") if job else None,
                 "speed": job.metrics.get("speed") if job else None,
-                "encoder": job.encoder if job else "none (direct)",
+                "encoder": job.encoder
+                if job
+                else row.decision.get("active_encoder", "none" if row.method == "direct" else "unavailable"),
+                "method_label": stream_method(row, job.encoder if job else row.decision.get("active_encoder")),
+                "audio_encoder": job.audio_encoder if job else row.decision.get("audio_encoder", "none"),
+                "selected_mode": row.decision.get("settings", {}).get("mode", "automatic"),
+                "fallback": job.fallback if job else bool(row.decision.get("fallback")),
+                "fallback_reason": job.fallback_reason if job else row.decision.get("fallback_reason"),
                 "elapsed_seconds": max(0, (utcnow() - _as_utc(row.started_at)).total_seconds()),
                 "startup_ms": row.startup_ms,
                 "temp_bytes": owned_size(job.directory) if job else 0,
                 "error": row.error,
             }
         )
-    return {"items": items, "total": len(items), "health": manager.health()}
+    failures = db.execute(
+        select(PlaybackSession, User.username)
+        .join(User, PlaybackSession.user_id == User.id)
+        .where(PlaybackSession.state == "failed")
+        .order_by(PlaybackSession.ended_at.desc())
+        .limit(8)
+    ).all()
+    return {
+        "items": items,
+        "total": len(items),
+        "health": manager.health(),
+        "failures": [
+            {
+                "id": row.id,
+                "username": username,
+                "error": row.error,
+                "method_label": stream_method(row, row.decision.get("active_encoder")),
+                "selected_mode": row.decision.get("settings", {}).get("mode", "automatic"),
+                "ended_at": row.ended_at,
+            }
+            for row, username in failures
+        ],
+    }
+
+
+def stream_method(row: PlaybackSession, encoder: str | None) -> str:
+    if row.method == "direct":
+        return "Direct Play"
+    if row.method == "remux":
+        return "Remux"
+    if not encoder:
+        return "Failed Transcode" if row.state == "failed" else "Starting Transcode"
+    if row.decision.get("fallback"):
+        return "Hardware-to-software fallback"
+    if encoder and encoder not in ("copy", "libx264"):
+        return "Hardware Transcode"
+    return "Software Transcode"
 
 
 @router.post("/streams/{session_id}/stop", status_code=204)
@@ -390,6 +510,31 @@ def detect_hardware(
     _principal: Principal = Depends(require_csrf), manager: PlaybackManager = Depends(get_playback_manager)
 ) -> dict[str, str]:
     return manager.detect_hardware()
+
+
+@router.get("/transcoding-policy")
+def transcoding_policy(
+    _principal: Principal = Depends(require_owner),
+    db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+) -> dict[str, Any]:
+    return public_policy(read_policy(db, config))
+
+
+@router.patch("/transcoding-policy")
+def update_transcoding_policy(
+    payload: TranscodingPolicy,
+    _principal: Principal = Depends(require_csrf),
+    db: Session = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+    manager: PlaybackManager = Depends(get_playback_manager),
+) -> dict[str, Any]:
+    canonical = validate_temp_directory(payload.temp_directory, config)
+    payload = payload.model_copy(update={"temp_directory": str(canonical)})
+    manager.storage_root(payload)
+    db.merge(ApplicationSetting(key="transcoding.policy", value=payload.model_dump()))
+    db.commit()
+    return public_policy(payload)
 
 
 @router.get("/playback-policy")

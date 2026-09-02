@@ -1,0 +1,9 @@
+[run]
+branch = True
+source = backend/app,scripts,packaging/windows
+omit = */tests/*
+
+[report]
+show_missing = True
+skip_empty = True
+omit = */tests/*

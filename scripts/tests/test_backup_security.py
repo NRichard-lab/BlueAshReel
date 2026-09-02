@@ -7,11 +7,14 @@ import json
 import os
 import re
 import sqlite3
+import stat
+import subprocess
 import sys
 import warnings
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,14 +23,87 @@ from scripts.backup_format import (
     ARCHIVE_FORMAT,
     EXPECTED_ALEMBIC_HEAD,
     MANIFEST_VERSION,
+    NATIVE_CONFIG_MEMBERS,
     PHASE1_REVISION,
     PHASE1_TABLES,
     REQUIRED_APPLICATION_TABLES,
+    BackupFormatError,
     _head_from_migration_directory,
     validate_database,
 )
 
 Validator = Callable[[Path], object]
+
+
+@pytest.mark.parametrize("name", ["state with spaces.db", "state #fragment.db", "state %20 literal.db", "state ?query.db"])
+def test_sqlite_backup_and_validation_escape_uri_metacharacters(tmp_path: Path, name: str) -> None:
+    if os.name == "nt" and "?" in name:
+        pytest.skip("Question marks are illegal Windows filename characters")
+    source = tmp_path / name
+    source.write_bytes(_database_bytes(tmp_path))
+    destination = tmp_path / ("backup # escaped " + name)
+    original = source.read_bytes()
+    assert validate_database(source).alembic_revision == EXPECTED_ALEMBIC_HEAD
+    backup.online_sqlite_backup(source, destination, EXPECTED_ALEMBIC_HEAD)
+    assert validate_database(destination).alembic_revision == EXPECTED_ALEMBIC_HEAD
+    assert source.read_bytes() == original
+    assert "%23" in (tmp_path / "#").resolve().as_uri()
+
+
+def test_backup_tree_rejects_reparse_attribute_before_copying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, destination = tmp_path / "source", tmp_path / "copied"
+    source.mkdir()
+    hidden_link = source / "linked-child"
+    hidden_link.mkdir()
+    original_lstat = Path.lstat
+
+    def attributes(path: Path, *args, **kwargs):
+        if path == hidden_link:
+            return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", attributes)
+    with pytest.raises(backup.BackupError, match="reparse"):
+        backup.copy_tree(source, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows junction regression")
+def test_backup_refuses_junction_source_children_and_ancestors_without_source_changes(tmp_path: Path) -> None:
+    source, target, destination = tmp_path / "source", tmp_path / "external-test-data", tmp_path / "output"
+    source.mkdir()
+    (target / "nested").mkdir(parents=True)
+    sentinel = target / "nested/private.txt"
+    sentinel.write_bytes(b"synthetic external data must not be copied or modified")
+    linked = source / "junction"
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(linked), str(target)],
+        capture_output=True, timeout=10, check=False,
+    )
+    if result.returncode:
+        pytest.skip("This Windows host cannot create test junctions")
+    for selected in (source, linked, linked / "nested"):
+        with pytest.raises(backup.BackupError, match="reparse"):
+            backup.copy_tree(selected, destination)
+        assert not destination.exists()
+    database = target / "nested/database.db"
+    database.write_bytes(_database_bytes(tmp_path))
+    with pytest.raises(BackupFormatError, match="reparse"):
+        validate_database(linked / "nested/database.db")
+    with pytest.raises(backup.BackupError, match="reparse"):
+        backup.resolve_setting(str(linked / "nested"), "UNUSED_TEST_SETTING", {}, "", tmp_path)
+    assert sentinel.read_bytes() == b"synthetic external data must not be copied or modified"
+
+
+def test_backup_copies_regular_local_tree_without_changing_sources(tmp_path: Path) -> None:
+    source, destination = tmp_path / "source", tmp_path / "copy"
+    (source / "nested").mkdir(parents=True)
+    original = source / "nested/state.txt"
+    original.write_bytes(b"local state")
+    backup.copy_tree(source, destination)
+    assert (destination / "nested/state.txt").read_bytes() == original.read_bytes() == b"local state"
 
 
 def test_partial_backup_is_private_from_creation_and_never_overwrites(
@@ -339,3 +415,131 @@ def test_both_bootstrap_variants_contain_nested_path_guards() -> None:
     assert "$rightPath.StartsWith($leftPrefix" in powershell
     assert 'case "$resolved/" in "$existing_path/"*' in posix
     assert 'case "$existing_path/" in "$resolved/"*' in posix
+
+
+def _native_metadata() -> dict[str, object]:
+    return {
+        "schema_version": 1, "instance": "development", "service_prefix": "BlueReelDevelopment",
+        "program_dir": "C:/Program Files/BlueReel Development", "data_dir": "C:/ProgramData/BlueReel-Development",
+        "bind_address": "192.168.50.10", "port": 18080, "api_port": 18081, "web_port": 18082,
+    }
+
+
+@pytest.mark.parametrize("include_native", [False, True])
+def test_shared_backup_native_extension_is_opt_in_and_dry_validation_is_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], include_native: bool,
+) -> None:
+    product, database, native, output = [tmp_path / name for name in ("product", "database", "configuration", "backups")]
+    for directory in (product, database, native, tmp_path / "data", tmp_path / "artwork", tmp_path / "temporary"):
+        directory.mkdir()
+    original_database = _database_bytes(tmp_path)
+    (database / "app.db").write_bytes(original_database)
+    (product / "product.json").write_text('{"name":"Test Product"}')
+    environment = b"APP_SECRET_KEY=private-synthetic-secret-not-for-output\n"
+    (native / ".env").write_bytes(environment)
+    metadata = json.dumps(_native_metadata()).encode()
+    proxy = b"http://127.0.0.1:18080 {\n reverse_proxy 127.0.0.1:18081\n}\n"
+    (native / "installation.json").write_bytes(metadata)
+    (native / "Caddyfile").write_bytes(proxy)
+    (native / "diagnostic.log").write_text("not recovery configuration")
+    (native / "runtime-state").mkdir()
+    (native / "runtime-state/should-not-copy.txt").write_text("temporary state excluded")
+    arguments = [
+        "backup", "--env-file", str(native / ".env"), "--database", str(database / "app.db"),
+        "--data", str(tmp_path / "data"), "--artwork", str(tmp_path / "artwork"),
+        "--temporary", str(tmp_path / "temporary"), "--config", str(product), "--output", str(output),
+    ]
+    if include_native:
+        arguments.extend(["--native-config", str(native)])
+    monkeypatch.setattr(sys, "argv", arguments)
+    assert backup.main() == 0
+    archive_path = next(output.glob("*.zip"))
+    before = archive_path.read_bytes()
+    summary = restore_validate.validate(archive_path)
+    backup.validate_archive(archive_path)
+    with zipfile.ZipFile(archive_path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["format"] == ARCHIVE_FORMAT and manifest["format_version"] == 1
+        assert archive.read("configuration/.env") == environment
+        if include_native:
+            assert archive.read(NATIVE_CONFIG_MEMBERS[0]) == metadata
+            assert archive.read(NATIVE_CONFIG_MEMBERS[1]) == proxy
+            assert summary["native_configuration"]["complete"] is True
+            assert summary["native_configuration"]["restore_mode"] == "manual_offline_only"
+        else:
+            assert not any(name.startswith("configuration/native/") for name in archive.namelist())
+            assert "native_configuration" not in summary
+        assert not any("diagnostic" in name or "runtime-state" in name for name in archive.namelist())
+    assert archive_path.read_bytes() == before
+    assert (database / "app.db").read_bytes() == original_database
+    assert (native / ".env").read_bytes() == environment
+    assert (native / "installation.json").read_bytes() == metadata
+    assert (native / "Caddyfile").read_bytes() == proxy
+    assert "private-synthetic-secret" not in capsys.readouterr().out
+    assert "192.168.50.10" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize("missing", ["installation.json", "Caddyfile"])
+def test_native_configuration_copy_fails_closed_on_missing_recovery_file(tmp_path: Path, missing: str) -> None:
+    native = tmp_path / "configuration"
+    native.mkdir()
+    for name in ("installation.json", "Caddyfile"):
+        if name != missing:
+            (native / name).write_text("synthetic fixture")
+    stage = tmp_path / "stage"
+    with pytest.raises(FileNotFoundError):
+        backup.copy_native_configuration(native, stage)
+    assert not stage.exists()
+
+
+def test_native_configuration_copy_rejects_hardlinks_before_copying(tmp_path: Path) -> None:
+    native = tmp_path / "configuration"
+    native.mkdir()
+    original = native / "installation.json"
+    original.write_text("synthetic shared metadata")
+    os.link(original, tmp_path / "external-metadata.json")
+    (native / "Caddyfile").write_text("synthetic proxy config")
+    with pytest.raises(backup.BackupError, match="unlinked"):
+        backup.copy_native_configuration(native, tmp_path / "stage")
+    assert not (tmp_path / "stage").exists()
+
+
+@pytest.mark.parametrize("members", [
+    [NATIVE_CONFIG_MEMBERS[0], "configuration/.env"],
+    [NATIVE_CONFIG_MEMBERS[1], "configuration/.env"],
+    list(NATIVE_CONFIG_MEMBERS),
+])
+def test_native_optional_extension_requires_both_files_and_environment(tmp_path: Path, members: list[str]) -> None:
+    path = tmp_path / "partial-native.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in members:
+            archive.writestr(name, "synthetic configuration")
+    with zipfile.ZipFile(path) as archive, pytest.raises(BackupFormatError, match="must include"):
+        backup_format_validate_native(archive, set(members))
+
+
+def backup_format_validate_native(archive: zipfile.ZipFile, members: set[str]) -> None:
+    from scripts.backup_format import validate_native_configuration
+
+    validate_native_configuration(archive, members)
+
+
+@pytest.mark.parametrize("metadata", [b"not JSON", b"[]", b'{"schema_version": 1}', b'{"schema_version": 2}'])
+def test_native_extension_rejects_invalid_metadata_without_exposing_it(tmp_path: Path, metadata: bytes) -> None:
+    path = tmp_path / "invalid-native.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(NATIVE_CONFIG_MEMBERS[0], metadata)
+        archive.writestr(NATIVE_CONFIG_MEMBERS[1], b"proxy config")
+        archive.writestr("configuration/.env", b"secret")
+    with zipfile.ZipFile(path) as archive, pytest.raises(BackupFormatError):
+        backup_format_validate_native(archive, set(archive.namelist()))
+
+
+def test_native_option_cannot_accidentally_read_default_docker_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("BACKUP_ENV_FILE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["backup", "--native-config", str(tmp_path)])
+    monkeypatch.setattr(backup, "parse_dotenv", lambda _: pytest.fail("Must reject before reading default environment"))
+    with pytest.raises(backup.BackupError, match="matching explicit environment"):
+        backup.main()

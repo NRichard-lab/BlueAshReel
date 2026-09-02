@@ -9,8 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import AppConfig
 from app.models import MediaFile
+from app.services.transcoding_policy import TranscodingPolicy, default_policy
 
-RULES_VERSION = 1
+RULES_VERSION = 2
 TEXT_SUBTITLES = frozenset({"subrip", "srt", "webvtt", "ass", "ssa", "mov_text"})
 IMAGE_SUBTITLES = frozenset({"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle"})
 
@@ -34,6 +35,7 @@ class PlaybackChoice(BaseModel):
     quality: Literal["original", "1080p", "720p", "480p"] = "original"
     restart: bool = False
     position_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    recovery_from: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class Decision(BaseModel):
@@ -48,7 +50,11 @@ class Decision(BaseModel):
     mime: str = "video/mp4"
 
 
-def decide(file: MediaFile, choice: PlaybackChoice, config: AppConfig) -> Decision:
+def decide(
+    file: MediaFile, choice: PlaybackChoice, config: AppConfig, policy: TranscodingPolicy | None = None
+) -> Decision:
+    policy = policy or default_policy(config)
+
     def unsupported(reason: str) -> Decision:
         return Decision(method="unsupported", reason=reason)
 
@@ -71,14 +77,14 @@ def decide(file: MediaFile, choice: PlaybackChoice, config: AppConfig) -> Decisi
         )
     caps = choice.capabilities
     quality_height, quality_bitrate = {
-        "original": (config.transcode_max_height, config.transcode_max_bitrate_kbps),
+        "original": (policy.max_height, policy.max_bitrate_kbps),
         "1080p": (1080, 6000),
         "720p": (720, 3000),
         "480p": (480, 1200),
     }[choice.quality]
-    height = min(video.height or 1080, quality_height, caps.max_height, config.transcode_max_height)
+    height = min(video.height or 1080, quality_height, caps.max_height, policy.max_height)
     height = max(2, height // 2 * 2)
-    bitrate = min(quality_bitrate, config.transcode_max_bitrate_kbps)
+    bitrate = min(quality_bitrate, policy.max_bitrate_kbps)
     reduce = (video.height or 0) > height or bool(file.bitrate and file.bitrate > bitrate * 1000)
     burn = bool(subtitle and subtitle.codec in IMAGE_SUBTITLES)
     h264 = (
@@ -129,6 +135,12 @@ def decide(file: MediaFile, choice: PlaybackChoice, config: AppConfig) -> Decisi
         return unsupported("This browser cannot play the source or the local H.264/AAC streaming output.")
     video_copy = h264 and not reduce and not burn
     method = "remux" if video_copy and aac else "transcode"
+    if method == "transcode" and policy.mode == "direct_only":
+        return unsupported("Direct Play and Remux Only is enabled. This selection requires transcoding.")
+    if method == "transcode" and (video.height or 0) >= 2160 and not policy.allow_4k:
+        return unsupported(
+            "4K transcoding is disabled by the Owner. Direct Play compatible 4K media or change settings."
+        )
     return Decision(
         method=method,
         reason="Local container/audio-track remapping."

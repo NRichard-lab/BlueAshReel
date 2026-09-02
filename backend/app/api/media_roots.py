@@ -127,12 +127,15 @@ def _folder_error(exc: Exception) -> HTTPException:
     if isinstance(exc, FolderPermissionDenied):
         return HTTPException(
             status_code=409,
-            detail={"message": "The approved media folder cannot be read", "state": "permission_denied"},
+            detail={
+                "message": "The service account cannot read the approved folder; check folder permissions",
+                "state": "permission_denied",
+            },
         )
     if isinstance(exc, FolderUnavailable):
         return HTTPException(
             status_code=409,
-            detail={"message": str(exc), "state": "unavailable"},
+            detail={"message": f"{exc}; check that the drive or share is connected", "state": "unavailable"},
         )
     return HTTPException(status_code=422, detail=str(exc))
 
@@ -144,6 +147,7 @@ def list_media_roots(
 ) -> MediaRootList:
     include_internal = _owner(access.principal)
     return MediaRootList(
+        platform="windows" if config.deployment_mode == "native_windows" else "docker",
         items=[
             _root_public(root, config, include_internal=include_internal)
             for root in config.approved_media_roots
@@ -159,6 +163,7 @@ def media_storage(
 ) -> MediaRootList:
     usage = _library_usage(db, config)
     return MediaRootList(
+        platform="windows" if config.deployment_mode == "native_windows" else "docker",
         items=[
             _root_public(root, config, include_internal=True, libraries=usage[root.id])
             for root in config.approved_media_roots
@@ -190,6 +195,7 @@ def browse_media_folders(
         for index in range(len(current.relative_parts) + 1)
     ]
     return MediaFolderPage(
+        platform="windows" if config.deployment_mode == "native_windows" else "docker",
         root=_root_public(current.root, config, include_internal=include_internal),
         current=_selection_public(current, config, include_internal=include_internal),
         breadcrumbs=[

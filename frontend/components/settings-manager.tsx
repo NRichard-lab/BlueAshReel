@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowRight, Check, FileClock, HardDrive, LoaderCircle, Save } from 'lucide-react';
+import { ArrowRight, Check, Cpu, FileClock, HardDrive, LoaderCircle, Save } from 'lucide-react';
 import Link from 'next/link';
 
 import { PageHeader } from '@/components/page-header';
@@ -79,7 +79,8 @@ export function SettingsManager() {
 
   return (
     <>
-      <PageHeader eyebrow="Local configuration" title="Settings" description="Tune scanner behavior and inspect important Owner actions recorded locally." />
+      <PageHeader eyebrow="Local configuration" title="Settings" description="Tune local playback and scanning, review storage, and inspect important Owner actions." />
+      <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><Cpu className="size-4" /> Playback & Transcoding</CardTitle><CardDescription>Choose Automatic, hardware, software, or Direct Play/remux-only behavior. Verify hardware and set safe resource limits.</CardDescription></CardHeader><CardContent><Button variant="outline" render={<Link href="/settings/playback" />}>Playback & Transcoding <ArrowRight className="ml-auto" /></Button></CardContent></Card>
       {error ? <Alert variant="destructive" className="mt-6"><AlertTitle>Settings action failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {notice ? <Alert className="mt-6 border-[var(--success-border)] bg-[var(--success-soft)]"><Check /><AlertTitle>Saved</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert> : null}
       <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,.65fr)]">

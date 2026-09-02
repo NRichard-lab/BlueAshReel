@@ -4,7 +4,8 @@
 
 Compose forwards the following host .env values explicitly. Native execution uses
 the same names through AppConfig. Owner playback-policy settings override the
-three history defaults in SQLite; change process/storage limits through configuration.
+history defaults in SQLite. Owner Playback & Transcoding settings override the
+conversion defaults for new streams; existing streams retain their snapshots.
 
 | Variable | Default | Bounds / meaning |
 | --- | --- | --- |
@@ -20,9 +21,14 @@ three history defaults in SQLite; change process/storage limits through configur
 | TRANSCODE_MAX_BITRATE_KBPS | 12000 | 500–50000 kbps |
 | TRANSCODE_MAX_STORAGE_MB | 4096 | 64–1048576 MiB, split among slots |
 | TRANSCODE_STARTUP_TIMEOUT_SECONDS | 45 | 5–180 seconds |
+| TRANSCODE_MODE | automatic | automatic/hardware_preferred/software_only/direct_only/hardware_required |
+| TRANSCODE_CPU_PRESET | veryfast | ultrafast/superfast/veryfast/faster/fast/medium/slow |
+| TRANSCODE_ALLOW_4K | false | Explicit permission to transcode 4K sources; direct/remux remain available |
+| TRANSCODE_DEVICE | auto | auto or adapter index 0–99; actual test required for this device |
 | TRANSCODE_HARDWARE | software | software/qsv/nvenc/amf; successful test required |
 
-See [temporary sizing and hardware](transcoding.md). Keep one API process per
+See [Playback & Transcoding policy](transcoding-settings.md) and
+[temporary sizing and hardware](transcoding.md). Keep one API process per
 database/temp root. A second manager fails its ownership lock instead of racing
 cleanup. CPU-only operation is the default; base Compose exposes no GPU devices.
 

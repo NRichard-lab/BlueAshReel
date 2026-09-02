@@ -45,6 +45,7 @@ ignore = ["B008", "S101", "S603"]
 
 [tool.mypy]
 python_version = "3.12"
+mypy_path = "$MYPY_CONFIG_FILE_DIR/.."
 plugins = ["pydantic.mypy"]
 strict = true
 warn_unreachable = true

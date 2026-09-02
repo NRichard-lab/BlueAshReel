@@ -22,6 +22,10 @@ EXPECTED_ALEMBIC_HEAD = "2b0100000001"
 MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database/app.db"
 PRODUCT_CONFIG_MEMBER = "configuration/product/product.json"
+NATIVE_CONFIG_MEMBERS = (
+    "configuration/native/installation.json",
+    "configuration/native/Caddyfile",
+)
 
 # A backup from this application version must contain the complete phase-one
 # schema. Alembic's exact head check guards migrations, while this set also
@@ -57,7 +61,9 @@ PHASE1_TABLES = frozenset(
 SCHEMAS_BY_REVISION = {
     PHASE1_REVISION: PHASE1_TABLES,
     "2a0100000001": PHASE1_TABLES | {"user_libraries", "user_preferences", "watch_progress", "media_search"},
-    "2b0100000001": PHASE1_TABLES | {"user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions"},
+    "2b0100000001": PHASE1_TABLES | {
+        "user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions",
+    },
 }
 REQUIRED_APPLICATION_TABLES = SCHEMAS_BY_REVISION[EXPECTED_ALEMBIC_HEAD]
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
@@ -203,7 +209,8 @@ def validate_database(
     if expected_revision not in SCHEMAS_BY_REVISION:
         raise BackupFormatError("Unknown application schema revision")
 
-    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    assert_no_link_components(path)
+    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     try:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
         foreign_key_error = connection.execute("PRAGMA foreign_key_check").fetchone()
@@ -245,6 +252,54 @@ def validate_database(
         tables=tables,
         alembic_revision=expected_revision,
     )
+
+
+def assert_no_link_components(path: Path, *, allow_missing: bool = False) -> None:
+    """Refuse symlinks and every Windows reparse type, including ancestor junctions."""
+    absolute = path.absolute()
+    for component in (*reversed(absolute.parents), absolute):
+        try:
+            information = component.lstat()
+        except FileNotFoundError:
+            if allow_missing:
+                continue
+            raise
+        if stat.S_ISLNK(information.st_mode) or getattr(information, "st_file_attributes", 0) & 0x400:
+            raise BackupFormatError("Backup sources and destinations cannot contain symbolic links or reparse points")
+
+
+def validate_native_configuration(archive: zipfile.ZipFile, members: set[str]) -> None:
+    """Validate the optional v1 native extension as data, never as executable configuration.
+
+    Original v1 archives, including Docker backups, have no native members and
+    retain their existing validation behavior. Complete native snapshots remain
+    ordinary checksum-manifested configuration files in that same shared format.
+    """
+    present = set(NATIVE_CONFIG_MEMBERS).intersection(members)
+    if not present:
+        return
+    if present != set(NATIVE_CONFIG_MEMBERS) or "configuration/.env" not in members:
+        raise BackupFormatError(
+            "Native recovery configuration must include installation metadata, Caddyfile and environment"
+        )
+    metadata_name, proxy_name = NATIVE_CONFIG_MEMBERS
+    if not 0 < archive.getinfo(metadata_name).file_size <= 65536:
+        raise BackupFormatError("Native installation metadata has an invalid size")
+    if not 0 < archive.getinfo(proxy_name).file_size <= 262144:
+        raise BackupFormatError("Native proxy configuration has an invalid size")
+    try:
+        metadata = json.loads(archive.read(metadata_name), object_pairs_hook=_strict_object)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BackupFormatError("Native installation metadata is invalid JSON") from error
+    if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
+        raise BackupFormatError("Native installation metadata has an unsupported schema")
+    text_fields = ("instance", "service_prefix", "program_dir", "data_dir", "bind_address")
+    if any(not isinstance(metadata.get(key), str) or not metadata[key].strip() for key in text_fields):
+        raise BackupFormatError("Native installation metadata is missing recovery identity or paths")
+    for key in ("port", "api_port", "web_port"):
+        value = metadata.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+            raise BackupFormatError("Native installation metadata has invalid recovery ports")
 
 
 def validate_backup_archive(
@@ -352,6 +407,8 @@ def validate_backup_archive(
                 raise BackupFormatError(f"Size validation failed for {member}")
             if actual_hash != expected_hash:
                 raise BackupFormatError(f"Checksum validation failed for {member}")
+
+        validate_native_configuration(archive, recorded_names)
 
         with tempfile.TemporaryDirectory(
             prefix="application-backup-check-"

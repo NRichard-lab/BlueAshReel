@@ -155,6 +155,7 @@ class MediaRootPublic(ApiModel):
 
 class MediaRootList(ApiModel):
     items: list[MediaRootPublic]
+    platform: Literal["windows", "docker"] = "docker"
 
 
 class MediaFolderSelectionPublic(ApiModel):
@@ -176,6 +177,7 @@ class MediaFolderBrowseRequest(ApiModel):
 
 
 class MediaFolderPage(ApiModel):
+    platform: Literal["windows", "docker"] = "docker"
     root: MediaRootPublic
     current: MediaFolderSelectionPublic
     breadcrumbs: list[MediaFolderSelectionPublic]
@@ -303,11 +305,19 @@ class PrivacyUpdate(ApiModel):
     integrations: dict[str, bool]
 
 
+class NetworkEnforcementPublic(ApiModel):
+    platform: Literal["windows", "docker"]
+    status: Literal["enforced", "not_enforced", "unknown", "not_managed"]
+    checked_at: datetime | None = None
+    detail: str
+
+
 class PrivacyPublic(ApiModel):
     local_only: bool = True
     telemetry_enabled: bool = False
     runtime_outbound_allowed: bool
     integrations: dict[str, bool]
+    network_enforcement: NetworkEnforcementPublic
 
 
 class DashboardPublic(ApiModel):

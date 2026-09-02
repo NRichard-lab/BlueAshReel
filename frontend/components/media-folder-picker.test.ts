@@ -17,6 +17,18 @@ describe('manual media path validation', () => {
     expect(manualMediaPathProblem('')).toMatch(/enter an internal/i);
     expect(manualMediaPathProblem('/media/Movies')).toBeUndefined();
   });
+  it.each(['D:\\Media', 'd:/Media/Movies', '\\\\server\\share\\Movies'])('accepts native Windows path %s for server validation', (path) => {
+    expect(manualMediaPathProblem(path, 'windows')).toBeUndefined();
+  });
+
+  it.each(['../Media', '/media/Movies', 'D:Movies', '\\\\?\\C:\\Media', '\\\\.\\C:\\Media'])('does not translate or accept ambiguous native path %s', (path) => {
+    expect(manualMediaPathProblem(path, 'windows')).toBeTruthy();
+  });
+
+  it('keeps empty native guidance platform-specific', () => {
+    expect(manualMediaPathProblem('', 'windows')).toMatch(/Windows/);
+    expect(manualMediaPathProblem('', 'windows')).not.toMatch(/mounted|container|\/media/);
+  });
 });
 
 describe('folder-list keyboard navigation', () => {

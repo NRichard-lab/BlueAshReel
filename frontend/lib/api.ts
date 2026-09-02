@@ -33,7 +33,10 @@ export async function apiRequest<T>(
   }
 
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
-    const csrf = cookieValue('csrf_token');
+    // Cookies are not port-scoped. Native instances use a port-namespaced CSRF
+    // cookie so installation testing cannot overwrite the Docker session.
+    const port = typeof window === 'undefined' ? '' : window.location.port || '80';
+    const csrf = (port ? cookieValue(`csrf_token_${port}`) : undefined) ?? cookieValue('csrf_token');
     if (csrf) headers.set('X-CSRF-Token', decodeURIComponent(csrf));
   }
 
@@ -91,6 +94,13 @@ export interface LibraryPath {
   enabled: boolean;
 }
 
+export type MediaPlatform = 'windows' | 'docker';
+
+export interface MediaRootList {
+  items: MediaRootSummary[];
+  platform?: MediaPlatform;
+}
+
 export interface MediaRootSummary {
   id: string;
   display_name: string;
@@ -118,6 +128,7 @@ export interface MediaFolderSelection {
 }
 
 export interface MediaFolderPage {
+  platform?: MediaPlatform;
   root: MediaRootSummary;
   current: MediaFolderSelection;
   breadcrumbs: MediaFolderSelection[];

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 from pathlib import Path
 
@@ -39,6 +39,10 @@ from app.services.paths import UnsafeMediaPath, is_link_or_reparse, safe_discove
 
 class ScanCancelled(RuntimeError):
     pass
+
+
+class ScanInterrupted(RuntimeError):
+    """A service stop preserves the last committed batch for restart."""
 
 
 class ScanFailed(RuntimeError):
@@ -300,7 +304,9 @@ def _check_cancelled(db: Session, job: BackgroundJob) -> None:
         raise ScanCancelled("Scan cancellation requested")
 
 
-def run_scan(db: Session, job: BackgroundJob, config: AppConfig) -> None:
+def run_scan(
+    db: Session, job: BackgroundJob, config: AppConfig, stop_requested: Callable[[], bool] | None = None,
+) -> None:
     scan = db.scalar(select(ScanJob).where(ScanJob.job_id == job.id))
     if scan is None:
         raise ScanFailed("Scan job details are missing")
@@ -366,6 +372,8 @@ def run_scan(db: Session, job: BackgroundJob, config: AppConfig) -> None:
     )
     try:
         for library_path in list(library.paths):
+            if stop_requested is not None and stop_requested():
+                raise ScanInterrupted("The local worker is stopping")
             if not library_path.enabled:
                 continue
             try:
@@ -374,6 +382,8 @@ def run_scan(db: Session, job: BackgroundJob, config: AppConfig) -> None:
                 raise ScanFailed("A configured library directory is unavailable or unsafe") from exc
             scanned_path_ids.append(library_path.id)
             for source, relative, info in discover_media_files(root, effective_config):
+                if stop_requested is not None and stop_requested():
+                    raise ScanInterrupted("The local worker is stopping")
                 _check_cancelled(db, job)
                 scan.discovered_files += 1
                 digest = fingerprint(relative, info.st_size, info.st_mtime_ns)
@@ -465,6 +475,8 @@ def run_scan(db: Session, job: BackgroundJob, config: AppConfig) -> None:
                         "processed": scan.discovered_files,
                     }
                     db.commit()
+        if stop_requested is not None and stop_requested():
+            raise ScanInterrupted("The local worker is stopping")
         completed_traversal = True
         _check_cancelled(db, job)
 

@@ -5,10 +5,12 @@ import { productConfig } from '@/lib/product-config';
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
+const originalWindow = globalThis.window;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
   Object.defineProperty(globalThis, 'document', { configurable: true, value: originalDocument });
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });
 });
 
 describe('central product configuration', () => {
@@ -68,6 +70,32 @@ describe('apiRequest', () => {
       status: 422,
       message: 'Media path is not allowed.',
     });
+  });
+
+  it('uses native port-namespaced CSRF without overwriting the Docker session', async () => {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { port: '18080' } } });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { cookie: 'csrf_token=docker-token; csrf_token_18080=native-token; csrf_token_8080=other-token' },
+    });
+    globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('native-token');
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    await apiRequest('/auth/logout', { method: 'POST' });
+    expect(document.cookie).toContain('csrf_token=docker-token');
+  });
+
+  it('keeps the existing Docker CSRF cookie when no native cookie matches the port', async () => {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { port: '8080' } } });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true, value: { cookie: 'csrf_token=docker-token; csrf_token_18080=native-token' },
+    });
+    globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('docker-token');
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    await apiRequest('/auth/logout', { method: 'POST' });
   });
 
   it('surfaces a nested FastAPI detail message without object coercion', async () => {

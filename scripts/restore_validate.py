@@ -12,11 +12,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from scripts.backup_format import BackupFormatError, validate_backup_archive
+    from scripts.backup_format import (
+        NATIVE_CONFIG_MEMBERS,
+        BackupFormatError,
+        validate_backup_archive,
+    )
 elif __package__:
-    from .backup_format import BackupFormatError, validate_backup_archive
+    from .backup_format import (
+        NATIVE_CONFIG_MEMBERS,
+        BackupFormatError,
+        validate_backup_archive,
+    )
 else:
-    from backup_format import BackupFormatError, validate_backup_archive
+    from backup_format import (
+        NATIVE_CONFIG_MEMBERS,
+        BackupFormatError,
+        validate_backup_archive,
+    )
 
 
 class ValidationError(RuntimeError):
@@ -41,7 +53,7 @@ def validate(archive_path: Path) -> dict[str, object]:
             product_name = "Application"
         if not isinstance(product_name, str) or not product_name.strip():
             product_name = "Application"
-        return {
+        summary: dict[str, object] = {
             "archive": archive_path.name,
             "created_at": manifest.get("created_at"),
             "database_bytes": validated.database.bytes,
@@ -56,6 +68,20 @@ def validate(archive_path: Path) -> dict[str, object]:
             "product_name": product_name,
             "table_count": len(validated.database.tables),
         }
+        if set(NATIVE_CONFIG_MEMBERS).issubset(names):
+            summary["native_configuration"] = {
+                "complete": True,
+                "restore_mode": "manual_offline_only",
+                "members": ["configuration/.env", *NATIVE_CONFIG_MEMBERS],
+                "destination": "The selected native instance's protected configuration directory",
+                "review_required": (
+                    "Stop the selected instance's services. Reconcile program/data/media paths, ports, "
+                    "LAN address and instance identity before restoring. Use the trusted installer to "
+                    "recreate the instance marker, service definitions, ACLs and firewall rules. "
+                    "The archive and this validator do not restore or certify OS security enforcement."
+                ),
+            }
+        return summary
 
 
 def main() -> int:
@@ -77,6 +103,11 @@ def main() -> int:
         )
         print(f"Database schema: exact Alembic head {summary['database_revision']}")
         print(f"Manifest checksums: ok ({summary['file_count']} files)")
+        if "native_configuration" in summary:
+            print(
+                "Native recovery configuration: complete. Manual offline recovery requires reviewing paths, "
+                "ports, LAN address and instance identity; recreate OS security using the trusted installer."
+            )
         print(
             "Dry run only: no configuration, database, artwork, or application data was changed."
         )

@@ -81,6 +81,10 @@ class AppConfig(BaseSettings):
     app_data_dir: Path = Path("./data")
     temp_dir: Path = Path("./data/tmp")
     artwork_dir: Path = Path("./data/artwork")
+    deployment_mode: Literal["container", "native_windows"] = "container"
+    windows_service_prefix: str = ""
+    native_program_dir: Path | None = None
+    native_data_dir: Path | None = None
     media_roots: str = ""
     media_root_definitions: str = ""
     outbound_integrations_enabled: bool = False
@@ -88,6 +92,8 @@ class AppConfig(BaseSettings):
     ffprobe_path: str = "ffprobe"
     ffmpeg_path: str = "ffmpeg"
     session_cookie_name: str = "media_session"
+    csrf_cookie_name: str = "csrf_token"
+    setup_cookie_name: str = "bluereel_setup"
     session_ttl_hours: int = Field(default=24, ge=1, le=24 * 30)
     session_cookie_secure: bool = False
     scan_batch_size: int = Field(default=50, ge=1, le=1000)
@@ -109,6 +115,12 @@ class AppConfig(BaseSettings):
     transcode_max_storage_mb: int = Field(default=4096, ge=64, le=1048576)
     transcode_startup_timeout_seconds: int = Field(default=45, ge=5, le=180)
     transcode_hardware: Literal["software", "qsv", "nvenc", "amf"] = "software"
+    transcode_mode: Literal["automatic", "hardware_preferred", "software_only", "direct_only", "hardware_required"] = (
+        "automatic"
+    )
+    transcode_cpu_preset: Literal["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"] = "veryfast"
+    transcode_allow_4k: bool = False
+    transcode_device: str = Field(default="auto", pattern=r"^(auto|[0-9]{1,2})$")
 
     @field_validator("app_secret_key")
     @classmethod

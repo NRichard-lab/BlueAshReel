@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import sys
 import tempfile
 import zipfile
@@ -21,8 +22,10 @@ if TYPE_CHECKING:
     from scripts.backup_format import (
         ARCHIVE_FORMAT,
         MANIFEST_VERSION,
+        NATIVE_CONFIG_MEMBERS,
         BackupFormatError,
         archive_prefix_from_name,
+        assert_no_link_components,
         installed_alembic_head,
         validate_backup_archive,
         validate_database,
@@ -31,8 +34,10 @@ elif __package__:
     from .backup_format import (
         ARCHIVE_FORMAT,
         MANIFEST_VERSION,
+        NATIVE_CONFIG_MEMBERS,
         BackupFormatError,
         archive_prefix_from_name,
+        assert_no_link_components,
         installed_alembic_head,
         validate_backup_archive,
         validate_database,
@@ -41,8 +46,10 @@ else:
     from backup_format import (
         ARCHIVE_FORMAT,
         MANIFEST_VERSION,
+        NATIVE_CONFIG_MEMBERS,
         BackupFormatError,
         archive_prefix_from_name,
+        assert_no_link_components,
         installed_alembic_head,
         validate_backup_archive,
         validate_database,
@@ -53,10 +60,18 @@ class BackupError(RuntimeError):
     """A safe, user-facing backup failure."""
 
 
+def check_source_path(path: Path, *, allow_missing: bool = False) -> None:
+    try:
+        assert_no_link_components(path, allow_missing=allow_missing)
+    except BackupFormatError as error:
+        raise BackupError(str(error)) from error
+
+
 def parse_dotenv(path: Path | None) -> dict[str, str]:
     values: dict[str, str] = {}
     if path is None or not path.is_file():
         return values
+    check_source_path(path)
     for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -86,6 +101,7 @@ def resolve_setting(
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = base / path
+    check_source_path(path, allow_missing=True)
     return path.resolve()
 
 
@@ -117,10 +133,12 @@ def sqlite_check(path: Path, expected_revision: str) -> None:
 def online_sqlite_backup(
     source: Path, destination: Path, expected_revision: str
 ) -> None:
+    check_source_path(source)
+    check_source_path(destination, allow_missing=True)
     if not source.is_file():
         raise BackupError(f"SQLite database does not exist: {source}")
     source_connection = sqlite3.connect(
-        f"file:{source.as_posix()}?mode=ro", uri=True, timeout=30
+        source.resolve().as_uri() + "?mode=ro", uri=True, timeout=30
     )
     destination_connection = sqlite3.connect(destination)
     try:
@@ -132,15 +150,47 @@ def online_sqlite_backup(
 
 
 def copy_tree(source: Path, destination: Path) -> None:
-    if source.is_symlink():
-        raise BackupError(f"Refusing to follow a symlink backup source: {source}")
+    check_source_path(source, allow_missing=True)
+    check_source_path(destination, allow_missing=True)
     if source.is_dir():
-        symlink = next((path for path in source.rglob("*") if path.is_symlink()), None)
-        if symlink is not None:
-            raise BackupError(
-                f"Refusing to follow a symlink in backup source: {symlink}"
-            )
-        shutil.copytree(source, destination, symlinks=False)
+        # Inspect directories before descending: rglob/walk may follow Windows
+        # junctions even with ordinary symbolic-link following disabled.
+        pending = [source]
+        while pending:
+            directory = pending.pop()
+            check_source_path(directory)
+            for entry in directory.iterdir():
+                check_source_path(entry)
+                information = entry.lstat()
+                if stat.S_ISDIR(information.st_mode):
+                    pending.append(entry)
+                elif not stat.S_ISREG(information.st_mode):
+                    raise BackupError("Backup sources must contain only ordinary local files and directories")
+
+        def checked_copy(source_name: str, destination_name: str) -> str:
+            check_source_path(Path(source_name))
+            return shutil.copy2(source_name, destination_name)
+
+        shutil.copytree(source, destination, symlinks=True, copy_function=checked_copy)
+        # A late link is copied as a link, never followed; reject it before the
+        # manifest/archive stage reads anything from the private staging tree.
+        for entry in destination.rglob("*"):
+            check_source_path(entry)
+
+
+def copy_native_configuration(source: Path, stage: Path) -> None:
+    """Copy only explicitly named native recovery files, never the whole state directory."""
+    check_source_path(source)
+    selected = [(source / Path(member).name, stage / member) for member in NATIVE_CONFIG_MEMBERS]
+    for source_file, _destination in selected:
+        check_source_path(source_file)
+        information = source_file.lstat()
+        if not stat.S_ISREG(information.st_mode) or information.st_nlink != 1:
+            raise BackupError("Native recovery configuration must contain ordinary unlinked files")
+    for source_file, destination in selected:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        check_source_path(source_file)
+        shutil.copy2(source_file, destination)
 
 
 def read_product_name(config_directory: Path) -> str:
@@ -246,6 +296,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--artwork", help="Artwork/cache directory")
     parser.add_argument("--temporary", help="Disposable temporary-work directory")
     parser.add_argument("--config", help="Product configuration directory")
+    parser.add_argument(
+        "--native-config",
+        help=(
+            "Explicit native configuration directory: include only installation.json and Caddyfile for offline recovery"
+        ),
+    )
     parser.add_argument("--output", help="Directory that receives backup archives")
     parser.add_argument("--retention-days", type=int, default=None)
     parser.add_argument("--skip-artwork", action="store_true")
@@ -276,9 +332,11 @@ def main() -> int:
     script_root = Path(__file__).resolve().parent
     repository_root = script_root.parent
     env_path_raw = arguments.env_file or os.environ.get("BACKUP_ENV_FILE")
-    env_path = (
-        Path(env_path_raw).resolve() if env_path_raw else repository_root / ".env"
-    )
+    env_path = Path(env_path_raw).absolute() if env_path_raw else repository_root / ".env"
+    if arguments.native_config and (
+        not env_path_raw or env_path.absolute() != (Path(arguments.native_config).expanduser().absolute() / ".env")
+    ):
+        raise BackupError("Native configuration backup requires its matching explicit environment file")
     dotenv = parse_dotenv(env_path)
 
     if arguments.validate_only:
@@ -296,7 +354,7 @@ def main() -> int:
         None, "DATABASE_PATH", dotenv, "runtime/database", repository_root
     )
     database = (
-        Path(database_explicit).expanduser().resolve()
+        Path(database_explicit).expanduser().absolute()
         if database_explicit
         else database_directory / "app.db"
     )
@@ -322,6 +380,15 @@ def main() -> int:
     output = resolve_setting(
         arguments.output, "BACKUP_PATH", dotenv, "backups", repository_root
     )
+    native_config = None
+    if arguments.native_config:
+        native_config = Path(arguments.native_config).expanduser().absolute()
+        check_source_path(native_config)
+        native_config = native_config.resolve()
+        if not native_config.is_dir() or not env_path.is_file():
+            raise BackupError(
+                "Native configuration backups require the configuration directory and explicit environment file"
+            )
     retention = arguments.retention_days
     if retention is None:
         retention = int(
@@ -337,6 +404,7 @@ def main() -> int:
             "temporary work": temporary_work,
             "product configuration": config,
             "backup output": output,
+            **({"native configuration": native_config} if native_config else {}),
         }
     )
     output.mkdir(parents=True, exist_ok=True)
@@ -363,6 +431,8 @@ def main() -> int:
         if env_path.is_file():
             (stage / "configuration").mkdir(parents=True, exist_ok=True)
             shutil.copy2(env_path, stage / "configuration" / ".env")
+        if native_config is not None:
+            copy_native_configuration(native_config, stage)
         write_manifest(stage, created_at, expected_revision)
         temporary_archive = output / f".{archive_path.name}.partial"
         write_private_archive(stage, temporary_archive)

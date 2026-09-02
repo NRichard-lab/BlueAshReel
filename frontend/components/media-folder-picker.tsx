@@ -13,13 +13,21 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ApiError, apiRequest, jsonBody, type MediaFolderPage, type MediaFolderSelection, type MediaRootSummary } from '@/lib/api';
+import { ApiError, apiRequest, jsonBody, type MediaFolderPage, type MediaFolderSelection, type MediaPlatform, type MediaRootList, type MediaRootSummary } from '@/lib/api';
 
 export const WINDOWS_MEDIA_PATH_MESSAGE =
   'Windows folders must first be configured as approved media roots. Use the local bootstrap workflow, then browse the mounted folder here.';
 
-export function manualMediaPathProblem(value: string): string | undefined {
+export function manualMediaPathProblem(value: string, platform: MediaPlatform = 'docker'): string | undefined {
   const trimmed = value.trim();
+  if (platform === 'windows') {
+    if (!trimmed) return 'Enter an absolute Windows path inside an approved media root.';
+    if (/^\\\\[?.]\\/.test(trimmed)) return 'Windows device paths are not supported. Use an approved drive or share path.';
+    if (!/^[a-zA-Z]:[\\/]/.test(trimmed) && !/^\\\\[^\\]+\\[^\\]+/.test(trimmed)) {
+      return 'Use an absolute Windows path inside an approved media root, such as D:\\Media\\Movies.';
+    }
+    return undefined;
+  }
   if (!trimmed) return 'Enter an internal mounted path to validate.';
   if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith('\\\\')) return WINDOWS_MEDIA_PATH_MESSAGE;
   if (!trimmed.startsWith('/')) return 'Manual paths must use an internal mounted path inside an approved media root.';
@@ -62,6 +70,7 @@ export function FolderBrowserDialog({
   initialRootId?: string;
 }) {
   const [roots, setRoots] = useState<MediaRootSummary[]>([]);
+  const [platform, setPlatform] = useState<MediaPlatform>();
   const [rootId, setRootId] = useState('');
   const [page, setPage] = useState<MediaFolderPage>();
   const [items, setItems] = useState<MediaFolderSelection[]>([]);
@@ -139,10 +148,11 @@ export function FolderBrowserDialog({
     attemptedSelectionId.current = undefined;
     navigationFocusPending.current = undefined;
     setLoading(true); setError(undefined); setPage(undefined); setItems([]);
-    apiRequest<{ items: MediaRootSummary[] }>('/media-roots')
+    apiRequest<MediaRootList>('/media-roots')
       .then((result) => {
         if (currentRequest !== requestId.current) return;
         setRoots(result.items);
+        setPlatform(result.platform);
         const initial = result.items.find((root) => root.id === initialRootId && root.available && root.readable && root.read_only_enforced !== false)
           ?? result.items.find((root) => root.available && root.readable && root.read_only_enforced !== false);
         if (initial) void browse(initial.selection_id);
@@ -212,8 +222,8 @@ export function FolderBrowserDialog({
         <div ref={folderListRef} className="min-h-0 flex-1 overflow-y-auto sm:max-h-[min(48dvh,22rem)]" aria-busy={loading}>
           {error ? <Alert variant="destructive"><AlertTitle>Folders unavailable</AlertTitle><AlertDescription>{error}</AlertDescription><Button className="mt-3" size="sm" variant="outline" onClick={() => attemptedSelectionId.current ? void browse(attemptedSelectionId.current) : setReloadKey((value) => value + 1)}><RotateCcw /> Retry</Button></Alert> : null}
           {!error && loading && !page ? <output className="block space-y-2" aria-live="polite"><span className="sr-only">Loading folders</span><Skeleton className="h-12" /><Skeleton className="h-12" /><Skeleton className="h-12" /></output> : null}
-          {!error && !loading && roots.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><FolderOpen /></EmptyMedia><EmptyTitle>No approved media storage</EmptyTitle><EmptyDescription>Run the local bootstrap workflow to approve a host folder, then recreate the containers.</EmptyDescription></EmptyHeader></Empty> : null}
-          {!error && !loading && roots.length > 0 && !page ? <Empty><EmptyHeader><EmptyMedia variant="icon"><FolderOpen /></EmptyMedia><EmptyTitle>Approved storage unavailable</EmptyTitle><EmptyDescription>The configured folders are missing or cannot be read. Reconnect the storage or check the local mount configuration.</EmptyDescription></EmptyHeader></Empty> : null}
+          {!error && !loading && roots.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><FolderOpen /></EmptyMedia><EmptyTitle>No approved media storage</EmptyTitle><EmptyDescription>{platform === 'windows' ? 'Use the native installer to approve a Windows folder, then check storage again.' : platform === 'docker' ? 'Run the local bootstrap workflow to approve a host folder, then recreate the containers.' : 'Approve a media folder through this installation’s local configuration, then try again.'}</EmptyDescription></EmptyHeader></Empty> : null}
+          {!error && !loading && roots.length > 0 && !page ? <Empty><EmptyHeader><EmptyMedia variant="icon"><FolderOpen /></EmptyMedia><EmptyTitle>Approved storage unavailable</EmptyTitle><EmptyDescription>The configured folders are missing or cannot be read. Reconnect the storage or check this installation’s storage configuration and service permissions.</EmptyDescription></EmptyHeader></Empty> : null}
           {!error && page && items.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><FolderOpen /></EmptyMedia><EmptyTitle>This folder has no subfolders</EmptyTitle><EmptyDescription>You can still select the current folder.</EmptyDescription></EmptyHeader></Empty> : null}
           {!error && items.length ? <ul aria-label={`Folders in ${page?.current.display_path ?? 'media storage'}`} className="divide-y rounded-lg border p-1">
               {items.map((folder, index) => <li key={folder.selection_id}><button
@@ -258,19 +268,21 @@ export function MediaFolderField({
   const [validating, setValidating] = useState(false);
   const [manualError, setManualError] = useState<string>();
   const [approvedRoots, setApprovedRoots] = useState<MediaRootSummary[]>([]);
+  const [platform, setPlatform] = useState<MediaPlatform>();
   const validationRequestId = useRef(0);
 
   useEffect(() => {
-    if (!advanced || approvedRoots.length) return;
-    apiRequest<{ items: MediaRootSummary[] }>('/media-roots')
-      .then((result) => setApprovedRoots(result.items))
-      .catch(() => undefined);
-  }, [advanced, approvedRoots.length]);
+    if (!advanced || platform) return;
+    apiRequest<MediaRootList>('/media-roots')
+      .then((result) => { setApprovedRoots(result.items); setPlatform(result.platform ?? 'docker'); })
+      .catch(() => setManualError('Storage configuration could not be read. Close and reopen manual entry to retry.'));
+  }, [advanced, platform]);
 
   const validateManual = async () => {
     const candidate = manualPath.trim();
     const currentRequest = ++validationRequestId.current;
-    const localProblem = manualMediaPathProblem(candidate);
+    if (!platform) { setManualError('Wait for the approved storage configuration before entering a path.'); return; }
+    const localProblem = manualMediaPathProblem(candidate, platform);
     if (localProblem) { setManualError(localProblem); return; }
     setValidating(true); setManualError(undefined);
     try {
@@ -290,20 +302,20 @@ export function MediaFolderField({
 
   return <Field>
     <FieldLabel htmlFor={id}>Library folder</FieldLabel>
-    <p className="text-sm leading-relaxed text-muted-foreground">Choose the folder that contains this library. BlueReel can read your media but cannot change or delete the source files.</p>
+    <p className="text-sm leading-relaxed text-muted-foreground">Choose the folder that contains this library. BlueReel never changes or deletes source media.</p>
     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
       <Input id={id} readOnly value={selection?.display_path ?? ''} placeholder="No folder selected" aria-describedby={`${id}-description`} />
       <Button type="button" size="lg" onClick={() => setOpen(true)}><FolderOpen /> Browse folders</Button>
     </div>
-    <FieldDescription id={`${id}-description`}>{selection ? 'Selected from approved read-only media storage.' : 'Browse folders to choose from approved media storage.'}</FieldDescription>
+    <FieldDescription id={`${id}-description`}>{selection ? 'Selected from approved media storage; BlueReel treats source media as read-only.' : 'Browse folders to choose from approved media storage.'}</FieldDescription>
     <FolderBrowserDialog open={open} onOpenChange={setOpen} onSelect={acceptBrowsedSelection} initialRootId={initialRootId ?? selection?.root_id} />
     <Collapsible open={advanced} onOpenChange={setAdvanced}>
       <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" className="px-0 text-muted-foreground" />}><ChevronDown className={`transition-transform ${advanced ? 'rotate-180' : ''}`} /> Advanced manual entry</CollapsibleTrigger>
       <CollapsibleContent className="mt-2 space-y-2 rounded-lg border bg-muted/20 p-3">
-        {selection?.internal_path ? <p className="break-all text-xs text-muted-foreground">Current internal mounted path: <code>{selection.internal_path}</code></p> : null}
-        <FieldLabel htmlFor={`${id}-manual`}>Internal mounted path</FieldLabel>
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input id={`${id}-manual`} value={manualPath} onChange={(event) => { const value = event.target.value; validationRequestId.current += 1; setValidating(false); setManualPath(value); setManualError(value ? manualMediaPathProblem(value) : undefined); onSelectionChange(undefined); }} onBlur={() => { if (manualPath && !manualMediaPathProblem(manualPath)) void validateManual(); }} placeholder="/media/approved-root/folder" /><Button type="button" variant="outline" disabled={validating} onPointerDown={(event) => event.preventDefault()} onClick={() => void validateManual()}>{validating ? <LoaderCircle className="animate-spin" /> : null} Validate</Button></div>
-        <p className="text-xs text-muted-foreground">Only internal paths within an approved root are accepted. Windows host paths are never guessed or rewritten.</p>
+        {selection?.internal_path ? <p className="break-all text-xs text-muted-foreground">{platform === 'windows' ? 'Current Windows path: ' : platform === 'docker' ? 'Current internal mounted path: ' : 'Current approved path: '}<code>{selection.internal_path}</code></p> : null}
+        <FieldLabel htmlFor={`${id}-manual`}>{platform === 'windows' ? 'Windows folder path' : platform === 'docker' ? 'Internal mounted path' : 'Approved folder path'}</FieldLabel>
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input id={`${id}-manual`} value={manualPath} onChange={(event) => { const value = event.target.value; validationRequestId.current += 1; setValidating(false); setManualPath(value); setManualError(value ? manualMediaPathProblem(value, platform) : undefined); onSelectionChange(undefined); }} onBlur={() => { if (manualPath && platform && !manualMediaPathProblem(manualPath, platform)) void validateManual(); }} disabled={!platform} placeholder={platform === 'windows' ? 'D:\\Media\\Movies' : platform === 'docker' ? '/media/approved-root/folder' : 'Loading storage configuration…'} /><Button type="button" variant="outline" disabled={validating || !platform} onPointerDown={(event) => event.preventDefault()} onClick={() => void validateManual()}>{validating ? <LoaderCircle className="animate-spin" /> : null} Validate</Button></div>
+        <p className="text-xs text-muted-foreground">{platform === 'windows' ? 'Only real Windows paths within an approved root are accepted. Paths are verified by the service; junctions and links cannot escape the root. Network shares may need extra service-account permissions.' : platform === 'docker' ? 'Only internal paths within an approved root are accepted. Windows host paths are never guessed or rewritten.' : 'Only paths within approved media storage are accepted.'}</p>
         {approvedRoots.length ? <p className="text-xs text-muted-foreground">Allowed {approvedRoots.length === 1 ? 'root' : 'roots'}: {approvedRoots.map((root) => `${root.display_name}${root.internal_path ? ` (${root.internal_path})` : ''}`).join(', ')}</p> : null}
         {manualError ? <p role="alert" className="text-sm text-destructive">{manualError}</p> : null}
       </CollapsibleContent>

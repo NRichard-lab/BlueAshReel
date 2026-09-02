@@ -12,12 +12,14 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { ApiError, apiRequest, jsonBody } from '@/lib/api';
+import { networkEnforcementLabel, type NetworkEnforcement } from '@/lib/privacy';
 
 interface PrivacyRecord {
   local_only: boolean;
   telemetry_enabled: boolean;
   runtime_outbound_allowed: boolean;
   integrations: Record<string, boolean>;
+  network_enforcement?: NetworkEnforcement;
 }
 
 export function PrivacyManager() {
@@ -69,7 +71,22 @@ export function PrivacyManager() {
           {loading ? [0, 1, 2].map((item) => <Skeleton key={item} className="h-20" />) : !privacy ? <output>Live privacy status is unavailable. No enforcement claim can be shown.</output> : <>
             <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Local-only</span><Badge variant="secondary">{privacy?.local_only ? 'Yes' : 'No'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Primary architecture mode</p></div>
             <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Telemetry</span><Badge variant={privacy?.telemetry_enabled ? 'destructive' : 'secondary'}>{privacy?.telemetry_enabled ? 'On' : 'Off'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application analytics</p></div>
-            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Runtime outbound</span><Badge variant={privacy?.runtime_outbound_allowed ? 'outline' : 'secondary'}>{privacy?.runtime_outbound_allowed ? 'Permitted' : 'Blocked'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application gate; network isolation requires the reference deployment.</p></div>
+            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Runtime outbound</span><Badge variant={privacy?.runtime_outbound_allowed ? 'outline' : 'secondary'}>{privacy?.runtime_outbound_allowed ? 'Permitted' : 'Disabled'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application policy gate. OS/network enforcement is reported separately below.</p></div>
+          </>}
+        </CardContent>
+      </Card>
+
+      <Card className="mt-5">
+        <CardHeader className="border-b"><CardTitle>Network enforcement</CardTitle><CardDescription>Actual deployment enforcement, separate from the saved application policy. No global firewall policy is changed by BlueReel.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          {loading ? <Skeleton className="h-20" /> : <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm font-medium">{privacy?.network_enforcement?.platform === 'windows' ? 'Windows application-specific firewall' : privacy?.network_enforcement?.platform === 'docker' ? 'Docker network isolation' : 'Deployment firewall'}</span>
+              <Badge variant={privacy?.network_enforcement?.status === 'enforced' ? 'secondary' : privacy?.network_enforcement?.status === 'not_enforced' ? 'destructive' : 'outline'}>{networkEnforcementLabel(privacy?.network_enforcement?.status)}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">{privacy?.network_enforcement?.detail || 'A live enforcement check is unavailable. The application policy alone does not prove network isolation.'}</p>
+            {privacy?.network_enforcement?.checked_at ? <p className="text-xs text-muted-foreground">Last checked: {new Date(privacy.network_enforcement.checked_at).toLocaleString()}</p> : null}
+            {privacy?.network_enforcement?.platform === 'windows' && privacy.network_enforcement.status !== 'enforced' ? <Alert variant="destructive"><ShieldCheck /><AlertTitle>Strict-local enforcement is not confirmed</AlertTitle><AlertDescription>Review the BlueReel installer/service firewall diagnostics. A detected rule or a saved preference is not enough to claim that DNS-name and direct-IP outbound traffic are blocked.</AlertDescription></Alert> : null}
           </>}
         </CardContent>
       </Card>

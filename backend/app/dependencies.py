@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import Cookie, Depends, Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from app.config import AppConfig, get_config
 from app.database import get_db
 from app.models import Role, User, UserSession
 from app.security import find_session, valid_csrf
-from app.services.setup_session import SETUP_SESSION_COOKIE_NAME, valid_setup_csrf, valid_setup_session
+from app.services.setup_session import valid_setup_csrf, valid_setup_session
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ def require_setup_csrf(
     # Completed setup is rejected by the endpoint with 409. Before completion,
     # only the short-lived browser-bound setup capability may create the Owner.
     if setup_is_pending(db) and not valid_setup_csrf(
-        request.cookies.get(SETUP_SESSION_COOKIE_NAME), csrf_token, config
+        request.cookies.get(config.setup_cookie_name), csrf_token, config
     ):
         raise HTTPException(status_code=403, detail="A valid first-run setup session and CSRF token are required")
 
@@ -46,10 +46,9 @@ def current_principal(
     request: Request,
     db: Session = Depends(get_db),
     config: AppConfig = Depends(get_config),
-    session_cookie: str | None = Cookie(default=None, alias="media_session"),
 ) -> Principal:
     # Support a configured cookie name without making it part of public API state.
-    token = request.cookies.get(config.session_cookie_name) or session_cookie
+    token = request.cookies.get(config.session_cookie_name)
     session = find_session(db, token, config)
     if session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -75,9 +74,12 @@ def require_media_browser(
 ) -> MediaBrowserAccess:
     session = find_session(db, request.cookies.get(config.session_cookie_name), config)
     if session is not None:
-        principal = require_manager(Principal(user=session.user, session=session))
+        principal = Principal(user=session.user, session=session)
+        principal = (
+            require_owner(principal) if config.deployment_mode == "native_windows" else require_manager(principal)
+        )
         return MediaBrowserAccess(principal=principal)
-    if setup_is_pending(db) and valid_setup_session(request.cookies.get(SETUP_SESSION_COOKIE_NAME), config):
+    if setup_is_pending(db) and valid_setup_session(request.cookies.get(config.setup_cookie_name), config):
         return MediaBrowserAccess(principal=None)
     raise HTTPException(status_code=401, detail="An authorized account or active first-run setup session is required")
 
@@ -91,7 +93,7 @@ def require_media_browser_csrf(
     valid = (
         valid_csrf(access.principal.session, csrf_token, config)
         if access.principal is not None
-        else valid_setup_csrf(request.cookies.get(SETUP_SESSION_COOKIE_NAME), csrf_token, config)
+        else valid_setup_csrf(request.cookies.get(config.setup_cookie_name), csrf_token, config)
     )
     if not valid:
         raise HTTPException(status_code=403, detail="CSRF validation failed")

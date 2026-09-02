@@ -21,6 +21,7 @@ from app.dependencies import Principal
 from app.models import ApplicationSetting, MediaFile, PlaybackSession, UserSession, WatchProgress, utcnow
 from app.security import _as_utc
 from app.services.catalog import authorized_file
+from app.services.transcoding_policy import session_policy
 
 
 class RequestBudget:
@@ -63,7 +64,7 @@ def load_playback(
     if playback is None or playback.user_id != principal.user.id or playback.auth_session_id != principal.session.id:
         raise HTTPException(404, "Playback session not found")
     if playback.state != "active" or _as_utc(playback.last_seen_at) < utcnow() - timedelta(
-        seconds=config.playback_session_timeout_seconds
+        seconds=session_policy(playback, config).inactive_session_seconds
     ):
         raise HTTPException(410, "This playback session has ended. Start playback again.")
     file, source = authorized_file(db, principal.user.id, playback.media_file_id, config)

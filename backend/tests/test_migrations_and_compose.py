@@ -46,6 +46,13 @@ def test_compose_has_private_read_only_runtime_foundation() -> None:
     assert "${MEDIA_PATH:?" in raw
     assert compose["x-common-environment"]["MEDIA_ROOTS"] == "${MEDIA_ROOTS:-/media}"
     assert compose["x-common-environment"]["MEDIA_ROOT_DEFINITIONS"] == "${MEDIA_ROOT_DEFINITIONS:-}"
+    for name, default in {
+        "TRANSCODE_MODE": "automatic",
+        "TRANSCODE_CPU_PRESET": "veryfast",
+        "TRANSCODE_ALLOW_4K": "false",
+        "TRANSCODE_DEVICE": "auto",
+    }.items():
+        assert compose["x-common-environment"][name] == f"${{{name}:-{default}}}"
     assert "OUTBOUND_INTEGRATIONS_ENABLED: ${OUTBOUND_INTEGRATIONS_ENABLED:-false}" in raw
     assert "PRODUCT_CONFIG_FILE: /app/config/product.json" in raw
     assert "WORKER_POLL_INTERVAL:" in raw

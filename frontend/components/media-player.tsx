@@ -10,7 +10,7 @@ import { NativeSelect, NativeSelectOption as Option } from '@/components/ui/nati
 import { CatalogState } from '@/components/viewer-catalog';
 import { apiRequest, jsonBody } from '@/lib/api';
 import { MediaDetailRecord, MediaCardRecord, ProfileRecord, useViewerData, clockTime } from '@/lib/viewer';
-import { boundedPosition, browserCapabilities, disableCaptions, methodLabel, PlaybackRecord } from '@/lib/playback';
+import { boundedPosition, browserCapabilities, disableCaptions, HardwareRecoveryGate, methodLabel, PlaybackRecord } from '@/lib/playback';
 
 type Reason = 'periodic' | 'playing' | 'pause' | 'seek' | 'exit' | 'ended' | 'restart';
 
@@ -26,6 +26,8 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
   const alive = useRef(true);
   const starting = useRef(false);
   const autoStarted = useRef(false);
+  const recoveryGate = useRef(new HardwareRecoveryGate());
+  const startRef = useRef<((at?: number, restart?: boolean, recoveryFrom?: string) => Promise<void>) | null>(null);
   const scrub = useRef<number | null>(null);
   const [draftPosition, setDraftPosition] = useState<number | null>(null);
   const desired = useRef(0);
@@ -80,36 +82,56 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
   const fail = useCallback((message: string, expectedId?: string) => {
     if (!alive.current || (expectedId && sessionRef.current?.id !== expectedId)) return;
     const current = sessionRef.current;
-    sessionRef.current = null;
-    detach();
-    setPlaying(false);
-    setSession(null);
-    setError(message);
-    setStatus('Playback stopped');
-    if (current) void apiRequest(`/playback/${current.id}/stop`, { method: 'POST' }).catch(() => undefined);
+    const finishFailure = () => {
+      if (!alive.current || (current && sessionRef.current?.id !== current.id)) return;
+      sessionRef.current = null;
+      detach();
+      setPlaying(false); setSession(null); setBusy(false);
+      setError(message); setStatus('Playback stopped');
+      if (current) void apiRequest('/playback/' + current.id + '/stop', { method: 'POST' }).catch(() => undefined);
+    };
+    if (!current) { finishFailure(); return; }
+    const gate = recoveryGate.current;
+    const action = gate.request(current.id);
+    if (action === 'pending') return;
+    if (action === 'exhausted') { finishFailure(); return; }
+    const resumeAt = boundedPosition((current.video_offset ?? 0) + (videoRef.current?.currentTime ?? 0), current.duration_seconds);
+    setBusy(true); setStatus('Checking local stream recovery…');
+    void (async () => {
+      try {
+        const permission = await apiRequest<{ recoverable: boolean; reason: string | null }>('/playback/' + current.id + '/recovery');
+        if (!alive.current || sessionRef.current?.id !== current.id) { gate.resolve(current.id, false); return; }
+        if (gate.resolve(current.id, permission.recoverable) && startRef.current) {
+          await startRef.current(resumeAt, false, current.id);
+        } else finishFailure();
+      } catch { gate.resolve(current.id, false); finishFailure(); }
+      finally { if (alive.current && sessionRef.current?.id === current.id) setBusy(false); }
+    })();
   }, [detach]);
 
-  const start = useCallback(async (at?: number, restart = false) => {
+  const start = useCallback(async (at?: number, restart = false, recoveryFrom?: string) => {
     const video = videoRef.current;
     if (!file || !video || starting.current) return;
     starting.current = true;
     setBusy(true); setError(''); setNotice(''); setCountdown(null);
-    setStatus('Preparing a local stream…');
-    await checkpoint('exit', true);
+    setStatus(recoveryFrom ? 'Hardware failed; reconnecting with local CPU/software…' : 'Preparing a local stream…');
+    if (recoveryFrom) sessionRef.current = null;
+    else await checkpoint('exit', true);
     detach();
     try {
       const current = await apiRequest<PlaybackRecord>('/playback/sessions', {
         method: 'POST', body: jsonBody({ file_id: file.id, capabilities: browserCapabilities(video),
           audio_index: audio === '' ? null : Number(audio), subtitle_index: subtitle === '' ? null : Number(subtitle),
           quality, restart: restart || new URLSearchParams(window.location.search).get('restart') === '1',
-          position_seconds: at,
+          position_seconds: at, recovery_from: recoveryFrom,
         }),
       });
       if (!alive.current) { await apiRequest(`/playback/${current.id}/stop`, { method: 'POST' }); return; }
       sessionRef.current = current; sequence.current = 0;
       setSession(current); setPosition(current.position_seconds);
+      if (current.fallback) setNotice(current.fallback_reason || 'Hardware-to-software fallback is active.');
       desired.current = current.position_seconds - (current.video_offset ?? 0);
-      setStatus(`${methodLabel[current.decision.method]} · waiting for decoded video`);
+      setStatus(`${(current.method_label ?? methodLabel[current.decision.method])} · waiting for decoded video`);
       if (current.decision.method === 'direct') {
         video.src = current.url;
       } else if (Hls.isSupported()) {
@@ -127,6 +149,9 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
     } catch (e) { fail(e instanceof Error ? e.message : 'Playback could not start.'); }
     finally { starting.current = false; if (alive.current) setBusy(false); }
   }, [file, audio, subtitle, quality, checkpoint, detach, fail]);
+
+  useEffect(() => { startRef.current = start; }, [start]);
+  useEffect(() => { recoveryGate.current = new HardwareRecoveryGate(); }, [mediaId]);
 
   useEffect(() => {
     if (file && !autoStarted.current && new URLSearchParams(window.location.search).get('autoplay') === '1') {
@@ -267,9 +292,10 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <span className="rounded-full border px-3 py-1 text-xs">{session ? methodLabel[session.decision.method] : 'Method determined when playback starts'}</span>
+        <span className="rounded-full border px-3 py-1 text-xs">{session ? (session.method_label ?? methodLabel[session.decision.method]) : 'Method determined when playback starts'}</span>
         <output className="text-sm text-muted-foreground">{status}</output>
       </div>
+      {session?.fallback ? <p className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">Hardware-to-software fallback: {session.fallback_reason || 'This stream is using local CPU/software.'}</p> : null}
       {error && <p role="alert" className="mt-4 rounded-lg border border-destructive p-4 text-sm text-destructive">{error}</p>}
       <div className="my-5 flex flex-wrap gap-3">
         <Button disabled={!file || busy} onClick={() => void start()}><Play />{busy ? 'Preparing…' : session ? 'Reconnect / resume' : item.position_seconds >= 5 && !item.watched ? `Resume at ${clockTime(item.position_seconds)}` : 'Start playback'}</Button>

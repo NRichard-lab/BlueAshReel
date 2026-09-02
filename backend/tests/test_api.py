@@ -199,6 +199,10 @@ def test_privacy_defaults_and_pagination_bounds(owner_context) -> None:
         "telemetry_enabled": False,
         "runtime_outbound_allowed": False,
         "integrations": {"metadata": False, "artwork": False, "portal": False, "telemetry": False},
+        "network_enforcement": {
+            "platform": "docker", "status": "not_managed", "checked_at": None,
+            "detail": "Application gate is separate from container network isolation; verify the reference deployment.",
+        },
     }
     latent_enable = context.client.patch(
         "/api/v1/privacy",

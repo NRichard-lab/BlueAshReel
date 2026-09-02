@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Literal
 
 from app.config import AppConfig, ApprovedMediaRoot
-from app.services.paths import UnsafeMediaPath, is_link_or_reparse, validate_media_directory
+from app.services.paths import (
+    UnsafeMediaPath,
+    is_link_or_reparse,
+    native_directory_guard,
+    protected_media_directories,
+    valid_windows_component,
+    validate_media_directory,
+)
 
 MAX_SELECTION_LENGTH = 8192
 MAX_FOLDER_DEPTH = 64
@@ -84,11 +91,7 @@ def _open_relative_directory(root: Path, parts: tuple[str, ...]) -> int | None:
 
 
 def _ensure_not_protected(canonical: Path, config: AppConfig) -> None:
-    protected = (
-        config.app_data_dir.expanduser().resolve(strict=False),
-        config.temp_dir.expanduser().resolve(strict=False),
-        config.artwork_dir.expanduser().resolve(strict=False),
-    )
+    protected = protected_media_directories(config)
     for directory in protected:
         try:
             canonical.relative_to(directory)
@@ -134,6 +137,7 @@ def resolve_selection_id(selection_id: str, config: AppConfig) -> FolderSelectio
         or "/" in part
         or "\\" in part
         or ":" in part
+        or (os.name == "nt" and not valid_windows_component(part))
         for part in parts
     ):
         raise InvalidFolderSelection("The folder selection is invalid")
@@ -141,25 +145,28 @@ def resolve_selection_id(selection_id: str, config: AppConfig) -> FolderSelectio
     candidate = root.path.joinpath(*parts)
     current = root.path
     try:
-        root.path.lstat()
-        if is_link_or_reparse(root.path):
-            raise InvalidFolderSelection("Linked media roots cannot be selected")
-        canonical_root = root.path.resolve(strict=True)
-        if read_only_enforced(canonical_root) is False:
-            raise FolderUnavailable("The approved media root is not mounted read-only")
-        for part in parts:
-            current = current / part
-            current.lstat()
-            if is_link_or_reparse(current):
-                raise InvalidFolderSelection("Linked media folders cannot be selected")
-        canonical = candidate.resolve(strict=True)
-        canonical.relative_to(canonical_root)
+        with native_directory_guard(candidate):
+            root.path.lstat()
+            if is_link_or_reparse(root.path):
+                raise InvalidFolderSelection("Linked media roots cannot be selected")
+            canonical_root = root.path.resolve(strict=True)
+            if read_only_enforced(canonical_root) is False:
+                raise FolderUnavailable("The approved media root is not mounted read-only")
+            for part in parts:
+                current = current / part
+                current.lstat()
+                if is_link_or_reparse(current):
+                    raise InvalidFolderSelection("Linked media folders cannot be selected")
+            canonical = candidate.resolve(strict=True)
+            canonical.relative_to(canonical_root)
     except PermissionError as exc:
         raise FolderPermissionDenied("The selected folder cannot be read") from exc
     except FolderUnavailable:
         raise
     except InvalidFolderSelection:
         raise
+    except UnsafeMediaPath as exc:
+        raise InvalidFolderSelection("Linked media folders cannot be selected") from exc
     except (OSError, RuntimeError, ValueError) as exc:
         raise FolderUnavailable("The selected folder is unavailable") from exc
     if not canonical.is_dir():
@@ -168,12 +175,16 @@ def resolve_selection_id(selection_id: str, config: AppConfig) -> FolderSelectio
     descriptor: int | None = None
     try:
         descriptor = _open_relative_directory(root.path, parts)
-        with os.scandir(descriptor if descriptor is not None else canonical) as iterator:
+        with native_directory_guard(canonical), os.scandir(
+            descriptor if descriptor is not None else canonical
+        ) as iterator:
             next(iterator, None)
     except PermissionError as exc:
         raise FolderPermissionDenied("The selected folder cannot be read") from exc
     except OSError as exc:
         raise FolderUnavailable("The selected folder is unavailable") from exc
+    except UnsafeMediaPath as exc:
+        raise InvalidFolderSelection("Linked media folders cannot be selected") from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -233,22 +244,26 @@ def root_state(
     root: ApprovedMediaRoot,
 ) -> tuple[Literal["available", "unavailable", "permission_denied"], Path | None]:
     try:
-        root.path.lstat()
-        if is_link_or_reparse(root.path):
-            return "unavailable", None
-        canonical = root.path.resolve(strict=True)
-        if not canonical.is_dir():
-            return "unavailable", None
-        with os.scandir(canonical) as iterator:
-            next(iterator, None)
-        return "available", canonical
+        with native_directory_guard(root.path):
+            root.path.lstat()
+            if is_link_or_reparse(root.path):
+                return "unavailable", None
+            canonical = root.path.resolve(strict=True)
+            if not canonical.is_dir():
+                return "unavailable", None
+            with os.scandir(canonical) as iterator:
+                next(iterator, None)
+            return "available", canonical
     except PermissionError:
         return "permission_denied", None
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, UnsafeMediaPath):
         return "unavailable", None
 
 
 def read_only_enforced(path: Path) -> bool | None:
+    if os.name == "nt":
+        # Application read-only behavior is not an NTFS ACL enforcement claim.
+        return None
     mount_info = Path("/proc/self/mountinfo")
     if not mount_info.is_file():
         return None
@@ -314,12 +329,12 @@ def resolve_page_cursor(cursor: str | None, selection_id: str, config: AppConfig
 
 def folder_state(path: Path) -> Literal["available", "unavailable", "permission_denied"]:
     try:
-        with os.scandir(path) as iterator:
+        with native_directory_guard(path), os.scandir(path) as iterator:
             next(iterator, None)
         return "available"
     except PermissionError:
         return "permission_denied"
-    except OSError:
+    except (OSError, UnsafeMediaPath):
         return "unavailable"
 
 
@@ -330,7 +345,9 @@ def list_folders(selection: FolderSelection) -> list[FolderSelection]:
             raise FolderUnavailable("The selected folder is unavailable")
         descriptor = _open_relative_directory(selection.root.path, selection.relative_parts)
         entries: list[FolderSelection] = []
-        with os.scandir(descriptor if descriptor is not None else selection.path) as iterator:
+        with native_directory_guard(selection.path), os.scandir(
+            descriptor if descriptor is not None else selection.path
+        ) as iterator:
             for entry in iterator:
                 candidate = selection.path / entry.name
                 try:
@@ -352,6 +369,8 @@ def list_folders(selection: FolderSelection) -> list[FolderSelection]:
     except PermissionError as exc:
         raise FolderPermissionDenied("The selected folder cannot be read") from exc
     except OSError as exc:
+        raise FolderUnavailable("The selected folder is unavailable") from exc
+    except UnsafeMediaPath as exc:
         raise FolderUnavailable("The selected folder is unavailable") from exc
     finally:
         if descriptor is not None:

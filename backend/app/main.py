@@ -74,6 +74,16 @@ async def request_context(request: Request, call_next: Callable[[Request], Await
     except (ValueError, AttributeError):
         request_id = str(uuid.uuid4())
     request.state.request_id = request_id
+    if (
+        config.deployment_mode == "native_windows"
+        and config.native_data_dir is not None
+        and request.method == "POST"
+        and request.url.path == f"{product.api_prefix}/playback/sessions"
+        and (config.native_data_dir / "state" / "maintenance").exists()
+    ):
+        return _error_response(
+            request, 503, "maintenance", "An installation update is in progress; retry after it finishes"
+        )
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"

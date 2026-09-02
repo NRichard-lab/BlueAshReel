@@ -81,13 +81,12 @@ from app.services.media_roots import (
     selection_from_path,
 )
 from app.services.media_state import recompute_media_availability
-from app.services.outbound import KNOWN_INTEGRATIONS, outbound_enabled
+from app.services.outbound import KNOWN_INTEGRATIONS, network_enforcement, outbound_enabled
 from app.services.paths import UnsafeMediaPath
 from app.services.rate_limit import login_attempt_key, login_host_key, login_rate_limiter
-from app.services.setup_session import SETUP_SESSION_COOKIE_NAME, SETUP_SESSION_TTL_SECONDS, create_setup_session
+from app.services.setup_session import SETUP_SESSION_TTL_SECONDS, create_setup_session
 
 router = APIRouter()
-CSRF_COOKIE_NAME = "csrf_token"
 Page = Annotated[int, Query(ge=1, le=1_000_000)]
 PageSize = Annotated[int, Query(ge=1, le=100)]
 
@@ -117,7 +116,7 @@ def _set_session_cookies(response: Response, token: str, csrf_token: str, config
         path="/",
     )
     response.set_cookie(
-        key=CSRF_COOKIE_NAME,
+        key=config.csrf_cookie_name,
         value=csrf_token,
         max_age=config.session_ttl_hours * 3600,
         httponly=False,
@@ -133,7 +132,7 @@ def _safe_setup_directory(raw: str | None, configured: Path) -> Path:
     if candidate != expected:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Setup directories must match the server's configured persistent mounts",
+            detail="Setup directories must match the server's configured persistent directories",
         )
     candidate.mkdir(parents=True, exist_ok=True)
     if not candidate.is_dir():
@@ -195,7 +194,7 @@ def begin_setup_session(
         raise HTTPException(status_code=409, detail="Initial setup is already complete")
     session = create_setup_session(config)
     response.set_cookie(
-        SETUP_SESSION_COOKIE_NAME,
+        config.setup_cookie_name,
         session.token,
         max_age=SETUP_SESSION_TTL_SECONDS,
         httponly=True,
@@ -204,7 +203,7 @@ def begin_setup_session(
         path="/",
     )
     response.set_cookie(
-        CSRF_COOKIE_NAME,
+        config.csrf_cookie_name,
         session.csrf_token,
         max_age=SETUP_SESSION_TTL_SECONDS,
         httponly=False,
@@ -289,7 +288,7 @@ def setup_owner(
         db.rollback()
         raise HTTPException(status_code=409, detail="Initial setup could not be completed") from exc
     _set_session_cookies(response, new_session.token, new_session.csrf_token, config)
-    response.delete_cookie(SETUP_SESSION_COOKIE_NAME, path="/", samesite="strict")
+    response.delete_cookie(config.setup_cookie_name, path="/", samesite="strict")
     return SetupResponse(
         user=_user_public(user),
         csrf_token=new_session.csrf_token,
@@ -365,7 +364,7 @@ def logout(
     record_audit(db, "auth.logout", actor_user_id=principal.user.id)
     db.commit()
     response.delete_cookie(config.session_cookie_name, path="/", samesite="strict")
-    response.delete_cookie(CSRF_COOKIE_NAME, path="/", samesite="strict")
+    response.delete_cookie(config.csrf_cookie_name, path="/", samesite="strict")
 
 
 def _active_jobs_by_library(db: Session, library_ids: list[str]) -> dict[str, str]:
@@ -1010,6 +1009,7 @@ def _privacy_public(db: Session, config: AppConfig) -> PrivacyPublic:
     return PrivacyPublic(
         runtime_outbound_allowed=config.outbound_integrations_enabled,
         integrations={name: outbound_enabled(db, config, name) for name in KNOWN_INTEGRATIONS},
+        network_enforcement=network_enforcement(config),
     )
 
 
