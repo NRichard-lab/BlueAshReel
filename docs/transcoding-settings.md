@@ -21,11 +21,14 @@ the available hardware encoders accelerate video, not AAC audio.
 
 ## Conservative limits
 
-Defaults are two conversions, two FFmpeg threads, 12 Mbps output, a `veryfast`
-CPU preset, 4 GiB scratch budget and 90-second inactive-session expiry. Conversion
+Shared configuration/Compose defaults are two conversions, two FFmpeg threads,
+12 Mbps output, a `veryfast` CPU preset, 4 GiB scratch budget and 90-second
+inactive-session expiry. Conversion
 of 4K sources is disabled until the Owner opts in. Compatible 4K Direct Play and
 stream-copy Remux remain available. Maximum output height defaults to 2160 but
 does not override the separate 4K-transcoding permission.
+Fresh native Windows installations instead use 1080p and 8 Mbps ceilings; the
+other conservative defaults and Owner controls are shared.
 
 Completed HLS output retains a storage reservation until its last referencing
 stream stops. Reservations bound future growth, not merely bytes already written.

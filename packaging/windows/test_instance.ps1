@@ -6,10 +6,11 @@ Run with Windows PowerShell x64 through an explicit RunAs elevation.
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Inventory','Snapshot','Diagnostics','StopState','SignalStop','Restart','Backup','VerifyFirewall','UninstallPreserve','UninstallPurge')][string]$Phase,
+    [Parameter(Mandatory)][ValidateSet('Inventory','Snapshot','Diagnostics','StopState','SignalStop','Restart','Backup','VerifyFirewall','UninstallPreserve','UninstallPurge','VerifyUninstallPreserve')][string]$Phase,
     [Parameter(Mandatory)][string]$ReportDirectory,
     [switch]$AllowDisposableInstance,
-    [ValidateSet('BlueReel-Development')][string]$ConfirmPurge
+    [ValidateSet('BlueReel-Development')][string]$ConfirmPurge,
+    [string]$PriorReport
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -285,6 +286,68 @@ function Get-PreservedDataDigest {
     return [ordered]@{file_count=$taskRows.Count; sha256=$taskDigest; excludes_volatile_logs_state_temp=$true}
 }
 
+function Read-PriorUninstallEvidence([string]$Path) {
+    if (-not $Path -or -not [IO.Path]::IsPathRooted($Path) -or $Path -match '(^|[\\/])\.\.([\\/]|$)') { throw 'An absolute prior uninstall report is required.' }
+    $taskPath = [IO.Path]::GetFullPath($Path)
+    if ([IO.Path]::GetDirectoryName($taskPath) -ine $ReportDirectory -or
+        [IO.Path]::GetFileName($taskPath) -cnotmatch '^UninstallPreserve-[0-9]{8}T[0-9]{6}-[a-f0-9]{32}\.json$') { throw 'Prior report must be an exact preserve-uninstall report in this evidence directory.' }
+    Assert-NoReparse $taskPath
+    $taskItem = Get-Item -LiteralPath $taskPath -Force
+    if ($taskItem.PSIsContainer -or $taskItem.Length -gt 1048576) { throw 'Invalid prior report file.' }
+    $taskPrior = [IO.File]::ReadAllText($taskPath) | ConvertFrom-Json
+    if ($taskPrior.schema_version -ne 1 -or $taskPrior.instance -cne 'development' -or $taskPrior.phase -cne 'UninstallPreserve' -or
+        $taskPrior.uninstaller_exit_code -ne 0 -or $taskPrior.preserved_before.file_count -lt 1 -or
+        $taskPrior.preserved_before.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        $taskPrior.preserved_before.excludes_volatile_logs_state_temp -isnot [bool] -or
+        -not $taskPrior.preserved_before.excludes_volatile_logs_state_temp) { throw 'Prior report does not prove a completed development preserve-uninstall with a valid before digest.' }
+    return $taskPrior
+}
+
+function Remove-PrivateUninstallLog([string]$Directory) {
+    $taskAttempts = 0
+    try {
+        $taskPrivate = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
+        if ([IO.Path]::GetDirectoryName($taskPrivate) -ine $ReportDirectory -or
+            [IO.Path]::GetFileName($taskPrivate) -cnotmatch '^private-[a-f0-9]{32}$') { throw 'Unexpected private log target.' }
+        Assert-NoReparse $taskPrivate
+        $taskLog = Join-Path $taskPrivate 'uninstall.log'
+        $taskDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $taskAttempts++
+            if (-not (Test-Path -LiteralPath $taskPrivate)) { return [ordered]@{removed=$true;attempts=$taskAttempts} }
+            $taskEntries = @(Get-ChildItem -LiteralPath $taskPrivate -Force)
+            if (@($taskEntries | Where-Object { $_.Name -cne 'uninstall.log' -or $_.PSIsContainer -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) }).Count) {
+                return [ordered]@{removed=$false;attempts=$taskAttempts;unexpected_entries=$true}
+            }
+            try {
+                # Inno's temporary uninstaller can retain the log briefly after
+                # its launcher returns. Delete only this exact log, then an
+                # empty directory; never recurse or delete unknown children.
+                if (Test-Path -LiteralPath $taskLog) { [IO.File]::Delete($taskLog) }
+                [IO.Directory]::Delete($taskPrivate,$false)
+                return [ordered]@{removed=$true;attempts=$taskAttempts}
+            } catch {
+                $taskCause = $_.Exception
+                while ($null -ne $taskCause.InnerException) { $taskCause = $taskCause.InnerException }
+                $taskNativeCode = $taskCause.HResult -band 65535
+                if ($taskNativeCode -notin @(32,33,145) -or [DateTime]::UtcNow -ge $taskDeadline) {
+                    return [ordered]@{removed=$false;attempts=$taskAttempts;error_type=$taskCause.GetType().Name;native_code=$taskNativeCode}
+                }
+                Start-Sleep -Milliseconds 200
+            }
+        } while ($true)
+    } catch { return [ordered]@{removed=$false;attempts=$taskAttempts;error_type=$_.Exception.GetType().Name} }
+}
+
+function Set-UninstalledStateEvidence {
+    $TaskReport.remaining_services = @($TaskRoles | ForEach-Object { Get-Service -Name ($TaskPrefix + $_) -ErrorAction SilentlyContinue }).Count
+    $TaskReport.remaining_firewall_rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Group $TaskPrefix -ErrorAction SilentlyContinue).Count
+    $TaskReport.remaining_processes = @(Get-InstanceProcesses).Count
+    $TaskReport.program_directory_exists = Test-Path -LiteralPath $TaskProgram
+    $TaskReport.data_directory_exists = Test-Path -LiteralPath $TaskData
+    if ($TaskReport.remaining_services -or $TaskReport.remaining_firewall_rules -or $TaskReport.remaining_processes) { throw 'Disposable service, process, or firewall cleanup is incomplete.' }
+}
+
 function Invoke-NodeChecks {
     $taskSource = @'
 const assert = require('node:assert/strict');
@@ -334,6 +397,19 @@ try {
         }
         'Snapshot' {
             $TaskReport.snapshot = Invoke-Probe 'snapshot'
+        }
+        'VerifyUninstallPreserve' {
+            $taskPrior = Read-PriorUninstallEvidence $PriorReport
+            $TaskReport.prior_report = [IO.Path]::GetFileName($PriorReport)
+            $TaskReport.uninstaller_exit_code = $taskPrior.uninstaller_exit_code
+            $TaskReport.preserved_before = $taskPrior.preserved_before
+            $TaskReport.read_only_followup = $true
+            Set-UninstalledStateEvidence
+            $TaskReport.preserved_after = Get-PreservedDataDigest
+            if (-not $TaskReport.data_directory_exists -or $TaskReport.preserved_before.sha256 -cne $TaskReport.preserved_after.sha256 -or
+                $TaskReport.preserved_before.file_count -ne $TaskReport.preserved_after.file_count) { throw 'Persistent data no longer matches the pre-uninstall digest.' }
+            $TaskReport.application_uninstall_verified = $true
+            $TaskReport.prior_transient_log_cleanup_not_retried = $true
         }
         'Diagnostics' {
             $TaskReport.services = @(Get-ServiceEvidence)
@@ -419,22 +495,16 @@ try {
                 $TaskReport.uninstaller_exit_code = $taskResult.exit_code
                 if ($taskResult.exit_code -ne 0) { throw 'The native uninstaller reported failure.' }
             } finally {
-                if (Test-Path -LiteralPath $taskRawLog) { Remove-Item -LiteralPath $taskRawLog -Force }
-                Remove-Item -LiteralPath $taskPrivate -Force
-                $TaskReport.transient_raw_uninstall_log_removed = $true
+                $TaskReport.transient_log_cleanup = Remove-PrivateUninstallLog $taskPrivate
+                $TaskReport.transient_raw_uninstall_log_removed = $TaskReport.transient_log_cleanup.removed
             }
-            $taskServicesLeft = @($TaskRoles | ForEach-Object { Get-Service -Name ($TaskPrefix + $_) -ErrorAction SilentlyContinue })
-            $taskRulesLeft = @(Get-NetFirewallRule -PolicyStore ActiveStore -Group $TaskPrefix -ErrorAction SilentlyContinue)
-            $TaskReport.remaining_services = $taskServicesLeft.Count
-            $TaskReport.remaining_firewall_rules = $taskRulesLeft.Count
-            $TaskReport.remaining_processes = @(Get-InstanceProcesses).Count
-            $TaskReport.program_directory_exists = Test-Path -LiteralPath $TaskProgram
-            $TaskReport.data_directory_exists = Test-Path -LiteralPath $TaskData
-            if ($taskServicesLeft.Count -or $taskRulesLeft.Count -or $TaskReport.remaining_processes) { throw 'Disposable service, process, or firewall cleanup is incomplete.' }
+            Set-UninstalledStateEvidence
             if ($Phase -eq 'UninstallPreserve') {
                 $TaskReport.preserved_after = Get-PreservedDataDigest
                 if (-not $TaskReport.data_directory_exists -or $TaskReport.preserved_before.sha256 -cne $TaskReport.preserved_after.sha256) { throw 'Default uninstall did not preserve persistent data exactly.' }
             } elseif ($TaskReport.data_directory_exists) { throw 'Explicit purge did not remove the exact disposable data directory.' }
+            $TaskReport.application_uninstall_verified = $true
+            if (-not $TaskReport.transient_raw_uninstall_log_removed) { throw 'Application uninstall verified, but helper transient-log cleanup is incomplete.' }
         }
     }
     $TaskReport.passed = $true

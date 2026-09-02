@@ -30,7 +30,11 @@ conversion defaults for new streams; existing streams retain their snapshots.
 See [Playback & Transcoding policy](transcoding-settings.md) and
 [temporary sizing and hardware](transcoding.md). Keep one API process per
 database/temp root. A second manager fails its ownership lock instead of racing
-cleanup. CPU-only operation is the default; base Compose exposes no GPU devices.
+cleanup. Base Compose exposes no GPU devices, so its default Automatic policy
+uses software when conversion is necessary. Native Windows can use a verified
+GPU under the same Automatic policy. Fresh native installations set more
+conservative conversion ceilings of 1080p and 8 Mbps; the table above records
+the shared configuration/Compose defaults.
 
 Deployment settings live in the uncommitted `.env` file. Product identity lives only in `config/product.json`. Application settings that need an audit trail are stored in SQLite and changed through Owner-authorized APIs/UI.
 
