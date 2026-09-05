@@ -24,7 +24,7 @@ extracts at each service startup. Installation does not download dependencies.
 
 | Item | Development package | Stable packaging definition |
 | --- | --- | --- |
-| Product | BlueReel Development | BlueReel |
+| Product | Blue Ash Reel Development | Blue Ash Reel |
 | Program files | `C:\Program Files\BlueReel Development` | `C:\Program Files\BlueReel` |
 | Persistent data | `C:\ProgramData\BlueReel-Development` | `C:\ProgramData\BlueReel` |
 | Browser port | 18080 | 8080 |
@@ -37,17 +37,17 @@ are not a claim of a separately validated stable/public release.
 ## Installation and media selection
 
 1. Verify the installer SHA-256 against its generated sidecar before running it.
-2. Run `BlueReel-Setup-Development-x64.exe` and accept Windows elevation. Because
+2. Run `BlueAshReel-Setup-Development-x64.exe` and accept Windows elevation. Because
    it is unsigned, SmartScreen may warn; do not disable machine-wide protection.
 3. Keep localhost access unless deliberately enabling a fixed private LAN IPv4
    address. The public port and two adjacent internal ports must be available.
 4. Use **Browse** for the native folder-selection dialog, or enter one absolute
    Windows directory per line. Multiple approved roots are supported. Choose
    existing readable folders, not whole drives or application-state directories.
-5. Finish installation, then open [BlueReel Development](http://127.0.0.1:18080).
+5. Finish installation, then open [Blue Ash Reel Development](http://127.0.0.1:18080).
    Create the initial Owner, choose an approved subfolder, and scan the library.
 
-The Start Menu includes Open BlueReel, media-root and network configuration,
+The Start Menu includes Open Blue Ash Reel, media-root and network configuration,
 online backup, restore dry-run validation, notices and uninstall. Maintenance
 actions request elevation separately; the web API does not run as administrator.
 Repair preserves the previous roots, ports, application secret and database.

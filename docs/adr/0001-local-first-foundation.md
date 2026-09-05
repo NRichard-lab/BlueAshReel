@@ -5,7 +5,7 @@
 
 ## Context
 
-BlueReel needs a secure first phase that a household can operate on one workstation, continues to work without Internet access, scans tens of thousands of files without blocking page requests, and leaves room for later streaming clients and optional integrations. Operational complexity and accidental data disclosure are higher risks than early distributed scale.
+Blue Ash Reel needs a secure first phase that a household can operate on one workstation, continues to work without Internet access, scans tens of thousands of files without blocking page requests, and leaves room for later streaming clients and optional integrations. Operational complexity and accidental data disclosure are higher risks than early distributed scale.
 
 ## Decision
 

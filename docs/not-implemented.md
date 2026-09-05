@@ -1,9 +1,14 @@
-# Phase 2 limitations and deferred work
+# Current limitations and deferred work
 
 Implemented: household roles/assignments, local movie/TV browsing and indexed search,
 authenticated direct playback, per-user resume/watch history, embedded text subtitles,
 explicit audio selection, progressive HLS remux, software conversion, quality limits
 and Owner active-stream controls.
+
+The separate Blue Ash Reel portal adds PostgreSQL accounts, MFA, device pairing,
+an authenticated outbound connection and encrypted diagnostics. The optional local
+connector is disabled until Owner consent. See [remote access](remote-access.md)
+for its isolation requirements and current deployment validation limits.
 
 Current limitations:
 
@@ -31,16 +36,16 @@ Current limitations:
 - Docker Desktop/WSL2 container playback, recovery and no-egress were validated with synthetic media; see [the validation scope](container-validation.md). Long household files and other browser/GPU combinations still need operator testing.
 
 The following remain deliberately deferred:
-- remote/public access, managed TLS, relay services, and router automation;
+- remote media browsing/playback, direct transport, and router automation;
 - IMDb, TMDB, TVDB, or any other metadata-provider calls and matching;
 - downloading remote posters, backgrounds, subtitles, or trailers;
 - recommendations, discovery feeds, social features, or analytics;
 - live television, tuners, electronic program guides, recording, and DVR;
 - Google TV or other native television/mobile applications;
-- Blue Ash portal integration or production deployment;
-- cloud storage, cloud accounts, remote backup, and hosted crash reporting;
-- password reset by email, invitations, federation, or external identity providers;
-- multi-node operation, PostgreSQL, Redis, Kubernetes, or a distributed queue;
+- integration with the separate existing Blue Ash portal;
+- cloud media storage, remote media backup, and hosted crash reporting;
+- email reset/invitations for local household accounts, federation, or external identity providers;
+- multi-node media-server operation, PostgreSQL for media, Redis, Kubernetes, or a distributed queue;
 - unattended upgrades and destructive automated restore; and
 - general unauthenticated server-filesystem browsing.
 

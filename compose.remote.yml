@@ -1,0 +1,53 @@
+# Explicit optional connector. Starting it does not pair or enable remote access.
+# Run together with compose.yml; its media services remain on their private network.
+services:
+  backend:
+    environment:
+      REMOTE_CONTROL_DIR: /remote/control
+    volumes:
+      - remote_control:/remote/control
+
+  remote-connector:
+    build:
+      context: .
+      dockerfile: docker/remote-connector.Dockerfile
+      args:
+        APP_UID: ${PUID:-1000}
+        APP_GID: ${PGID:-1000}
+    init: false
+    cap_drop: [ALL]
+    # Privileged namespace setup only; PID 1 then has no capabilities and runs
+    # under the service UID. No listening ports, media mounts or backend network.
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 128m
+    pids_limit: 32
+    stop_grace_period: 10s
+    networks: [remote_egress]
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    volumes:
+      - remote_control:/remote/control
+      - remote_identity:/remote/identity
+    healthcheck:
+      test: [CMD, /usr/local/bin/remote-connector-health]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-file: '2'
+        max-size: 1m
+
+networks:
+  remote_egress:
+    driver: bridge
+
+volumes:
+  remote_control:
+  remote_identity:

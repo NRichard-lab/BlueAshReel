@@ -1,10 +1,10 @@
 # Approved media storage
 
-BlueReel can browse and scan only host folders that the local operator has explicitly bind-mounted into the backend and worker. Source mounts are read-only. The web application cannot access the Docker socket, inspect an arbitrary host path, create a host mount, or modify source media.
+Blue Ash Reel can browse and scan only host folders that the local operator has explicitly bind-mounted into the backend and worker. Source mounts are read-only. The web application cannot access the Docker socket, inspect an arbitrary host path, create a host mount, or modify source media.
 
 ## Browser experience
 
-During first run, BlueReel establishes a signed, 30-minute setup session with an HttpOnly, SameSite-strict cookie and CSRF protection. This limited session can browse approved folders but cannot access libraries, playback, or administration. Folder names are never exposed through the public setup-status endpoint. Step 3 lets the user choose an approved folder without typing a container path; finishing setup creates the Owner and optional first library together, switches to the normal Owner session, and invalidates every setup browsing capability. No scan starts automatically.
+During first run, Blue Ash Reel establishes a signed, 30-minute setup session with an HttpOnly, SameSite-strict cookie and CSRF protection. This limited session can browse approved folders but cannot access libraries, playback, or administration. Folder names are never exposed through the public setup-status endpoint. Step 3 lets the user choose an approved folder without typing a container path; finishing setup creates the Owner and optional first library together, switches to the normal Owner session, and invalidates every setup browsing capability. No scan starts automatically.
 
 After setup, Owners and Administrators can use the same picker while creating a library or adding a folder to an existing library. The Owner-only **Settings → Media Storage** page reports each configured root's friendly name, availability, readability, read-only enforcement, associated libraries, and last validation time. Its Browse action is a read-only preview and never starts a scan.
 
@@ -18,7 +18,7 @@ The picker:
 - reports missing and permission-denied storage without logging the selected path; and
 - supports breadcrumbs, Back, keyboard navigation, and phone/tablet layouts.
 
-Advanced manual entry is retained for troubleshooting. It accepts only an existing internal path beneath a configured root. A Windows drive or UNC path is rejected with guidance to configure that host folder through bootstrap first; BlueReel never guesses a host-to-container mapping.
+Advanced manual entry is retained for troubleshooting. It accepts only an existing internal path beneath a configured root. A Windows drive or UNC path is rejected with guidance to configure that host folder through bootstrap first; Blue Ash Reel never guesses a host-to-container mapping.
 
 ## Configure roots on Windows
 
@@ -84,6 +84,6 @@ Library creation (including `initial_library` during setup) accepts signed `fold
 
 ## Disconnected storage
 
-If a drive is removed, BlueReel reports its approved root unavailable. Reconnect it at the same host path and run the bootstrap/Compose recreation if Docker no longer has the mount. Do not replace a read-only bind with a writable one. A path returning at a different host location must be configured explicitly so the stable container target remains deliberate.
+If a drive is removed, Blue Ash Reel reports its approved root unavailable. Reconnect it at the same host path and run the bootstrap/Compose recreation if Docker no longer has the mount. Do not replace a read-only bind with a writable one. A path returning at a different host location must be configured explicitly so the stable container target remains deliberate.
 
 See [the validation report](media-storage-validation.md) for automated coverage and the local Docker/browser acceptance results.

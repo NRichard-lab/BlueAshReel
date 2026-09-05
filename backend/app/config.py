@@ -14,6 +14,10 @@ class ProductConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str = "Home Media"
+    package_name: str = "BlueAshReel"
+    agent_name: str = "Blue Ash Reel Agent"
+    server_name: str = "Blue Ash Reel Server"
+    domain: str = "blueashreel.com"
     subtitle: str = "A private media application."
     version: str = "0.1.0"
     api_prefix: str = "/api/v1"
@@ -88,6 +92,8 @@ class AppConfig(BaseSettings):
     media_roots: str = ""
     media_root_definitions: str = ""
     outbound_integrations_enabled: bool = False
+    # Separate service control spool only. The media backend never connects to the portal.
+    remote_control_dir: Path | None = None
     log_level: str = "INFO"
     ffprobe_path: str = "ffprobe"
     ffmpeg_path: str = "ffmpeg"

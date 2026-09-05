@@ -18,7 +18,7 @@ migrations. Native development tests are not a substitute for Compose validation
 - A user permitted to access the Docker socket
 - A readable media directory and writable state/backup directories
 
-Follow Docker's distribution-specific Engine installation documentation. The BlueReel script intentionally does not add repositories, install packages, start system services, add users to privileged groups, change firewall rules, or use `sudo`. If elevation or socket permission is needed, it reports the exact class of blocker so the operator can apply local policy.
+Follow Docker's distribution-specific Engine installation documentation. The Blue Ash Reel script intentionally does not add repositories, install packages, start system services, add users to privileged groups, change firewall rules, or use `sudo`. If elevation or socket permission is needed, it reports the exact class of blocker so the operator can apply local policy.
 
 Run the bootstrap as the unprivileged account that will own application state, not through `sudo`; UID/GID zero is rejected so the application containers do not become root. Resolve Docker socket access according to local policy before rerunning.
 
@@ -32,7 +32,7 @@ docker info
 
 Membership in the `docker` group is effectively root-equivalent; use it only if that matches the host's security policy. Rootless Docker is also suitable when bind-mount permissions are configured correctly.
 
-## Install BlueReel
+## Install Blue Ash Reel
 
 From the repository:
 
@@ -79,7 +79,7 @@ media is mounted read-only even if the host account can write it.
 
 ## Service management
 
-BlueReel containers use `restart: unless-stopped`, but Docker itself must be configured to start according to local policy.
+Blue Ash Reel containers use `restart: unless-stopped`, but Docker itself must be configured to start according to local policy.
 
 ```sh
 docker compose ps
@@ -94,4 +94,4 @@ Compose manages only the `bluereel` project. The scripts do not prune images, st
 
 The default is loopback only. To serve trusted household devices, place this host's stable RFC1918 address in `BIND_ADDRESS` and restart. Do not use a wildcard/public address. The script does not touch UFW, nftables, a cloud security group, or router forwarding; any narrow private-network firewall rule is an operator decision.
 
-BlueReel does not provide TLS, an Internet gateway, or remote-access hardening in this phase. Keep it off untrusted networks.
+Blue Ash Reel does not provide TLS, an Internet gateway, or remote-access hardening in this phase. Keep it off untrusted networks.

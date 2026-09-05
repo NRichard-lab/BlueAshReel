@@ -43,7 +43,7 @@ winget install --exact --id Docker.DockerDesktop
 
 Restart/sign out only if the Docker Desktop installer requests it. Start Docker Desktop and wait for its engine to be ready.
 
-## Install BlueReel
+## Install Blue Ash Reel
 
 Open PowerShell in the repository directory. A process-scoped execution-policy change does not alter the machine policy permanently:
 

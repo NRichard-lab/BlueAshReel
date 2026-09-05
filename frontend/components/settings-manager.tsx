@@ -80,6 +80,7 @@ export function SettingsManager() {
   return (
     <>
       <PageHeader eyebrow="Local configuration" title="Settings" description="Tune local playback and scanning, review storage, and inspect important Owner actions." />
+      <Card className="mt-6"><CardHeader><CardTitle>Remote Access</CardTitle><CardDescription>Pair your Agent, verify its identity, and control the optional encrypted diagnostic connection.</CardDescription></CardHeader><CardContent><Button variant="outline" render={<Link href="/settings/remote-access" />}>Remote Access <ArrowRight className="ml-auto" /></Button></CardContent></Card>
       <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><Cpu className="size-4" /> Playback & Transcoding</CardTitle><CardDescription>Choose Automatic, hardware, software, or Direct Play/remux-only behavior. Verify hardware and set safe resource limits.</CardDescription></CardHeader><CardContent><Button variant="outline" render={<Link href="/settings/playback" />}>Playback & Transcoding <ArrowRight className="ml-auto" /></Button></CardContent></Card>
       {error ? <Alert variant="destructive" className="mt-6"><AlertTitle>Settings action failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {notice ? <Alert className="mt-6 border-[var(--success-border)] bg-[var(--success-soft)]"><Check /><AlertTitle>Saved</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert> : null}

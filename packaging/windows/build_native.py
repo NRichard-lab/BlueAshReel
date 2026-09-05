@@ -29,6 +29,7 @@ from typing import Any
 REPOSITORY = Path(__file__).resolve().parents[2]
 PACKAGING = Path(__file__).resolve().parent
 ARTIFACTS = REPOSITORY / "artifacts" / "native-dev"
+PRODUCT = json.loads((REPOSITORY / "config" / "product.json").read_text(encoding="utf-8"))
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".vite", ".cache"}
 NOTICE_PREFIXES = ("license", "licence", "copying", "notice", "copyright")
@@ -489,7 +490,7 @@ def assert_payload(stage: Path) -> None:
         "frontend/server.js", "frontend/node_modules/vinext/package.json",
         "scripts/backup.py", "scripts/backup_format.py", "scripts/restore_validate.py",
         "config/product.json", "support/install.ps1", "support/native-guard.cjs",
-        "support/maintenance.ps1", "support/development-notice.txt",
+        "support/maintenance.ps1", "support/development-notice.txt", "support/install-remote.ps1",
     ]
     for name in required:
         if not (stage / name).is_file():
@@ -548,7 +549,7 @@ def stage_payload(args: argparse.Namespace) -> Path:
         copy_required(REPOSITORY / "scripts" / name, stage / "scripts" / name)
     copy_required(REPOSITORY / "config" / "product.json", stage / "config" / "product.json")
     copy_tree(REPOSITORY / "frontend" / "dist" / "standalone", stage / "frontend")
-    for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt"):
+    for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1"):
         copy_required(PACKAGING / name, stage / "support" / name)
     if (PACKAGING / "service-template.xml").is_file():
         copy_required(PACKAGING / "service-template.xml", stage / "support" / "service-template.xml")
@@ -566,10 +567,10 @@ def stage_payload(args: argparse.Namespace) -> Path:
     components.extend(stage_additional_components(args.downloads, stage, offline=args.offline))
     for name in ("components.lock.json", "requirements.lock", "build_native.py", "build.ps1",
                  "additional-components.json", "license_sources.py", "installer.iss",
-                 "install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt"):
+                 "install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1"):
         copy_required(PACKAGING / name, stage / "source" / "packaging" / name)
     (stage / "OPEN-SOURCE-NOTICES.txt").write_text(
-        "BlueReel Development — unsigned local development installer\n\n"
+        f"{PRODUCT['name']} Development — unsigned local development installer\n\n"
         "Third-party component versions, original source pins, and notice paths are recorded in "
         "included-components.json. Preserve the licenses directory when redistributing this package.\n\n"
         "This FFmpeg build enables GPL and version 3 plus x264. It is distributed under GPL-3.0-or-later. "
@@ -614,7 +615,7 @@ def stage_payload(args: argparse.Namespace) -> Path:
         cwd=REPOSITORY, capture_output=True, text=True, check=False,
     )
     write_json(stage / "included-components.json", {
-        "schema_version": 1, "product": lock["product"], "version": lock["version"],
+        "schema_version": 1, "product": PRODUCT["name"], "package_name": PRODUCT["package_name"], "version": lock["version"],
         "windows_file_version": lock["windows_file_version"], "architecture": "x64",
         "built_at": dt.datetime.now(dt.UTC).isoformat(), "source_revision": revision.stdout.strip(),
         "source_revision_dirty": bool(worktree.stdout.strip()) if worktree.returncode == 0 else None,
@@ -640,9 +641,11 @@ def compile_installer(stage: Path, args: argparse.Namespace) -> Path:
     run([
         str(args.iscc), "/DPayloadDir=" + str(stage), "/DOutputDir=" + str(output),
         "/DProductVersion=" + lock["version"], "/DFileVersion=" + lock["windows_file_version"],
+        "/DBrandName=" + PRODUCT["name"], "/DPackageName=" + PRODUCT["package_name"],
+        "/DProductDomain=" + PRODUCT["domain"],
         str(PACKAGING / "installer.iss"),
     ])
-    installer = output / "BlueReel-Setup-Development-x64.exe"
+    installer = output / f"{PRODUCT['package_name']}-Setup-Development-x64.exe"
     if not installer.is_file():
         raise BuildError("Inno Setup did not produce the expected development installer")
     write_json(output / "installer-artifact.json", {

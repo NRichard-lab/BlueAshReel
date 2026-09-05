@@ -22,7 +22,7 @@ Restored active sessions are expired on API startup; durable watch checkpoints
 remain resumable after login. Downgrading Phase 2 discards its new history/grants;
 use a verified pre-upgrade backup if that loss is unacceptable.
 
-BlueReel backs up a running SQLite database through SQLite's online backup API. It never copies an active `app.db` file directly. The resulting timestamped ZIP includes a standalone validated database, application data, product configuration and `.env`, and cached artwork unless excluded.
+Blue Ash Reel backs up a running SQLite database through SQLite's online backup API. It never copies an active `app.db` file directly. The resulting timestamped ZIP includes a standalone validated database, application data, product configuration and `.env`, and cached artwork unless excluded.
 
 The local media-root registry (`.bluereel/media-roots.tsv`) and generated `compose.override.yml` are not yet included in these archives. Privately preserve reviewed copies alongside a backup before changing roots or moving the installation. They contain host paths; do not commit or publish them. `.env` alone does not retain secondary host locations. Preserve the stable root IDs/container targets when restoring these mappings so existing libraries keep pointing to the intended folders.
 
@@ -74,7 +74,7 @@ Restoring replaces household state and is therefore manual. Read all steps first
 
 1. Validate the selected archive with the dry-run command above.
 2. While the current installation still runs, create one fresh backup and record its exact filename.
-3. Stop BlueReel cleanly with `docker compose down`. Do not use `--volumes`.
+3. Stop Blue Ash Reel cleanly with `docker compose down`. Do not use `--volumes`.
 4. Resolve `DATABASE_PATH`, `DATA_PATH`, `ARTWORK_PATH`, and `BACKUP_PATH` from `.env`. Confirm each absolute path before moving anything.
 5. Extract the selected ZIP into a new, empty staging directory outside all configured runtime and media paths. Use `Expand-Archive` on Windows or `unzip` on Linux. Do not extract directly over live directories.
 6. Inspect `manifest.json` and compare the archived `configuration/.env` with the current `.env`. Host paths, bind address, UID/GID, port, and secure-cookie settings may need to remain host-specific. Do not blindly replace the current `.env`. Separately review/preserve the local media-root registry and generated override; restore matching private copies or explicitly reconstruct the approved host mappings while retaining the IDs/container targets from `MEDIA_ROOT_DEFINITIONS` before starting containers.

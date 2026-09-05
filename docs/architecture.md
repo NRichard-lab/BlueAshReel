@@ -1,6 +1,6 @@
 # Architecture overview
 
-BlueReel keeps HTTP work, background media inspection, source media, and mutable application state separated. The Docker topology is:
+Blue Ash Reel keeps HTTP work, background media inspection, source media, and mutable application state separated. The Docker topology is:
 
 ```mermaid
 flowchart LR

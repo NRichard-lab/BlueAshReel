@@ -1,5 +1,7 @@
 'use client';
 
+import { productConfig } from '@/lib/product-config';
+
 import { useEffect, useState } from 'react';
 import { ArrowLeft, CheckCircle2, ChevronDown, CircleAlert, FolderOpen, HardDrive, RefreshCw, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
@@ -51,7 +53,7 @@ export function MediaStorageManager() {
     <PageHeader
       eyebrow="Settings"
       title="Media Storage"
-      description={platform === 'windows' ? 'Review approved Windows folders that BlueReel reads directly. Source media is never modified.' : platform === 'docker' ? 'Review host folders that were explicitly mounted for BlueReel to read.' : 'Review media storage approved for this installation.'}
+      description={platform === 'windows' ? `Review approved Windows folders that ${productConfig.name} reads directly. Source media is never modified.` : platform === 'docker' ? `Review host folders that were explicitly mounted for ${productConfig.name} to read.` : 'Review media storage approved for this installation.'}
       actions={<Button variant="outline" disabled={loading} onClick={() => void load()}><RefreshCw className={loading ? 'animate-spin' : ''} /> Check storage</Button>}
     />
 
@@ -93,24 +95,24 @@ export function MediaStorageManager() {
       })}
     </section>
 
-    {!loading && !roots.length ? <Empty className="mt-6 border"><EmptyHeader><EmptyMedia variant="icon"><HardDrive /></EmptyMedia><EmptyTitle>No approved media storage</EmptyTitle><EmptyDescription>{platform === 'windows' ? 'Use the native installer’s media-folder configuration to approve a Windows folder.' : platform === 'docker' ? 'Use the local bootstrap workflow below, then recreate the BlueReel containers.' : 'Configure an approved media root for this installation.'}</EmptyDescription></EmptyHeader></Empty> : null}
+    {!loading && !roots.length ? <Empty className="mt-6 border"><EmptyHeader><EmptyMedia variant="icon"><HardDrive /></EmptyMedia><EmptyTitle>No approved media storage</EmptyTitle><EmptyDescription>{platform === 'windows' ? 'Use the native installer’s media-folder configuration to approve a Windows folder.' : platform === 'docker' ? `Use the local bootstrap workflow below, then recreate the ${productConfig.name} containers.` : 'Configure an approved media root for this installation.'}</EmptyDescription></EmptyHeader></Empty> : null}
 
     {platform === 'windows' ? <Card className="mt-5">
-      <CardHeader className="border-b"><CardTitle>Add or change a Windows folder</CardTitle><CardDescription>Native BlueReel reads approved Windows folders directly. No container paths or drive remapping are needed.</CardDescription></CardHeader>
+      <CardHeader className="border-b"><CardTitle>Add or change a Windows folder</CardTitle><CardDescription>Native {productConfig.name} reads approved Windows folders directly. No container paths or drive remapping are needed.</CardDescription></CardHeader>
       <CardContent className="space-y-4 text-sm leading-relaxed">
-        <p>Use the native installer&apos;s media-folder configuration to choose one or more approved roots. A library can browse only inside those roots. BlueReel does not move, rename, modify, or delete source files.</p>
-        <Alert><ShieldCheck /><AlertTitle>Service access is different from your sign-in</AlertTitle><AlertDescription>A folder readable by your Windows account may not be readable by the BlueReel service. A missing drive or permission problem must be resolved for that service identity. OS-level read-only enforcement is shown only when it has been verified.</AlertDescription></Alert>
+        <p>Use the native installer&apos;s media-folder configuration to choose one or more approved roots. A library can browse only inside those roots. {productConfig.name} does not move, rename, modify, or delete source files.</p>
+        <Alert><ShieldCheck /><AlertTitle>Service access is different from your sign-in</AlertTitle><AlertDescription>A folder readable by your Windows account may not be readable by the {productConfig.name} service. A missing drive or permission problem must be resolved for that service identity. OS-level read-only enforcement is shown only when it has been verified.</AlertDescription></Alert>
         <p>Network shares are an advanced configuration: use an approved UNC path and explicitly grant the service identity access. Your interactive user&apos;s mapped drives may not be visible to services.</p>
       </CardContent>
     </Card> : platform === 'docker' ? <Card className="mt-5">
       <CardHeader className="border-b"><CardTitle>Add or change a host folder</CardTitle><CardDescription>Docker mounts are controlled by the person operating this computer, never by the web application.</CardDescription></CardHeader>
       <CardContent className="space-y-4 text-sm leading-relaxed">
-        <p>Run the bootstrap from the BlueReel repository and explicitly configure one or more media roots. The script validates each host directory, writes only ignored local configuration, and mounts it read-only in the backend and worker.</p>
+        <p>Run the bootstrap from the {productConfig.name} repository and explicitly configure one or more media roots. The script validates each host directory, writes only ignored local configuration, and mounts it read-only in the backend and worker.</p>
         <div className="grid gap-3 md:grid-cols-2">
           <div className="rounded-lg border bg-muted/20 p-4"><p className="font-medium">Windows PowerShell</p><code className="mt-2 block overflow-x-auto text-xs">.\scripts\bootstrap.ps1 -ConfigureMediaRoots</code></div>
           <div className="rounded-lg border bg-muted/20 p-4"><p className="font-medium">Linux shell</p><code className="mt-2 block overflow-x-auto text-xs">./scripts/bootstrap.sh --configure-media-roots</code></div>
         </div>
-        <Alert><RefreshCw /><AlertTitle>Container recreation required</AlertTitle><AlertDescription>Adding or changing a host root takes effect only after the controlled Docker Compose recreation performed by the bootstrap. BlueReel cannot create host mounts from this page.</AlertDescription></Alert>
+        <Alert><RefreshCw /><AlertTitle>Container recreation required</AlertTitle><AlertDescription>Adding or changing a host root takes effect only after the controlled Docker Compose recreation performed by the bootstrap. {productConfig.name} cannot create host mounts from this page.</AlertDescription></Alert>
       </CardContent>
     </Card> : null}
 

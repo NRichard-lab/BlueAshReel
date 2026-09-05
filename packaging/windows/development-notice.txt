@@ -1,4 +1,4 @@
-BlueReel Development — unsigned native Windows installer
+Blue Ash Reel Development — unsigned native Windows installer
 
 This is an installation-testing build, not a final public release. Windows may
 show an unknown-publisher or SmartScreen warning because it is not code-signed.
@@ -14,7 +14,7 @@ No Docker, WSL, Python, Node.js, FFmpeg, Caddy or developer tools are prerequisi
 Administrator elevation is required to install services and app-specific rules.
 
 Localhost only is the default. Private-LAN access is optional and never changes
-router settings. Strict-local outbound blocking applies only to BlueReel's
+router settings. Strict-local outbound blocking applies only to Blue Ash Reel's
 installed executables, without changing global Windows Firewall policy.
 
 Source media is never modified. LocalService needs read access to approved media

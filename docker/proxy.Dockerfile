@@ -1,4 +1,5 @@
 FROM caddy:2-alpine
+LABEL org.opencontainers.image.source="https://github.com/NRichard-lab/BlueAshReel"
 
 # The upstream binary carries NET_BIND_SERVICE, which cannot execute with an
 # empty capability bounding set. Port 8080 needs no capability: remove the file

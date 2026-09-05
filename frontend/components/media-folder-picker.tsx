@@ -1,5 +1,7 @@
 'use client';
 
+import { productConfig } from '@/lib/product-config';
+
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Folder, FolderCheck, FolderOpen, LoaderCircle, RotateCcw } from 'lucide-react';
 
@@ -302,12 +304,12 @@ export function MediaFolderField({
 
   return <Field>
     <FieldLabel htmlFor={id}>Library folder</FieldLabel>
-    <p className="text-sm leading-relaxed text-muted-foreground">Choose the folder that contains this library. BlueReel never changes or deletes source media.</p>
+    <p className="text-sm leading-relaxed text-muted-foreground">Choose the folder that contains this library. {productConfig.name} never changes or deletes source media.</p>
     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
       <Input id={id} readOnly value={selection?.display_path ?? ''} placeholder="No folder selected" aria-describedby={`${id}-description`} />
       <Button type="button" size="lg" onClick={() => setOpen(true)}><FolderOpen /> Browse folders</Button>
     </div>
-    <FieldDescription id={`${id}-description`}>{selection ? 'Selected from approved media storage; BlueReel treats source media as read-only.' : 'Browse folders to choose from approved media storage.'}</FieldDescription>
+    <FieldDescription id={`${id}-description`}>{selection ? `Selected from approved media storage; ${productConfig.name} treats source media as read-only.` : 'Browse folders to choose from approved media storage.'}</FieldDescription>
     <FolderBrowserDialog open={open} onOpenChange={setOpen} onSelect={acceptBrowsedSelection} initialRootId={initialRootId ?? selection?.root_id} />
     <Collapsible open={advanced} onOpenChange={setAdvanced}>
       <CollapsibleTrigger render={<Button type="button" variant="ghost" size="sm" className="px-0 text-muted-foreground" />}><ChevronDown className={`transition-transform ${advanced ? 'rotate-180' : ''}`} /> Advanced manual entry</CollapsibleTrigger>

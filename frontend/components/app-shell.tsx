@@ -143,7 +143,7 @@ export function AppShell({
                   ? 'Only Owner-approved integrations may connect outward. Core media stays on this server.'
                   : privacy?.runtime_outbound_allowed
                     ? 'The runtime gate is open, but no Owner-approved integration is active.'
-                    : 'Outbound integrations are locked off. Your media and activity stay on this server.'}
+                    : 'Media-server integrations are locked off. Optional connection diagnostics are managed in Remote Access.'}
               </p>
             </div>
             <nav aria-label="Configuration" className="space-y-1">
@@ -182,7 +182,7 @@ export function AppShell({
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="hidden border-[var(--success-border)] bg-[var(--success-soft)] text-[var(--success-foreground)] sm:inline-flex">
-                  <LockKeyhole data-icon="inline-start" /> {!privacy ? 'Privacy unknown' : outboundActive ? 'Outbound approved' : privacy.runtime_outbound_allowed ? 'Outbound gate open' : 'Local only'}
+                  <LockKeyhole data-icon="inline-start" /> {!privacy ? 'Privacy unknown' : outboundActive ? 'Outbound approved' : privacy.runtime_outbound_allowed ? 'Outbound gate open' : 'Media stays local'}
                 </Badge>
                 <Button type="button" variant="ghost" size="icon" aria-label="Log out" onClick={logout}>
                   <LogOut />

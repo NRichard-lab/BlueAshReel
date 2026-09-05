@@ -1,8 +1,8 @@
-# BlueReel
+# Blue Ash Reel
 
 **A Blue Ash Application.**
 
-BlueReel is a private, local-first home-media streaming website. Native Windows and Docker share one FastAPI backend, React/TypeScript frontend, SQLite schema, scanner, playback engine, household permissions, and backup format. The first unsigned Windows development installer is an installation-test build, not a public release.
+Blue Ash Reel is a private, local-first home-media streaming website. Native Windows and Docker share one FastAPI backend, React/TypeScript frontend, SQLite schema, scanner, playback engine, household permissions, and backup format. The first unsigned Windows development installer is an installation-test build, not a public release.
 
 The base product name, subtitle, application version, and API prefix live in [`config/product.json`](config/product.json). The Windows component lock additionally identifies its development package/build number. Do not duplicate branding in deployment secrets.
 
@@ -12,7 +12,7 @@ The base product name, subtitle, application version, and API prefix live in [`c
 
 See [native Windows installation and builds](docs/native-windows.md) and the
 [installation test report](docs/native-windows-validation.md). The self-contained
-development package uses **BlueReel Development**, port **18080**, and separate
+development package uses **Blue Ash Reel Development**, port **18080**, and separate
 Program Files/ProgramData, services, secrets, and firewall rules. It does not
 require Docker, WSL, Python, Node, FFmpeg, or development tools on the target PC.
 An administrator installs the services; normal use is through the local browser.
@@ -37,7 +37,7 @@ sh scripts/bootstrap.sh --media-path /srv/media
 
 An interactive first run offers media-root selection (a native folder dialog on Windows, with typed fallback). You can approve multiple folders or explicitly skip and configure them later; skipped/non-interactive installations retain an empty local `media/` directory. Source media is mounted read-only. The application is available at [http://localhost:8080](http://localhost:8080), where Step 3 of protected first-run setup provides a folder browser. See [approved media storage](docs/media-storage.md) for explicit path arguments and reconfiguration.
 
-The default bind is `127.0.0.1`; no firewall, router, or public-access setting is changed. For household LAN access, deliberately set `BIND_ADDRESS` in `.env` to this computer's RFC1918 address and restart. TLS and remote access are not part of this phase.
+The default bind is `127.0.0.1`; no firewall, router, or public-access setting is changed. For household LAN access, deliberately set `BIND_ADDRESS` in `.env` to this computer's RFC1918 address and restart. The optional isolated [remote connector](docs/remote-access.md) supports account pairing and encrypted diagnostics through [blueashreel.com](https://blueashreel.com), with remote media access deferred. Local playback works independently of it.
 
 ## Docker operations
 
@@ -82,6 +82,9 @@ Health responses are intentionally narrow and do not include users, media titles
 - [Configuration reference](docs/configuration.md)
 - [Approved media storage and folder browser](docs/media-storage.md)
 - [Privacy and outbound connections](docs/privacy-and-outbound.md)
+- [Optional remote access, identity and isolation](docs/remote-access.md)
+- [Product rename and preserved installation identifiers](docs/product-rename.md)
+- [Control-plane phase validation and public acceptance status](docs/phase3-validation.md)
 - [Backup and restore](docs/backup-and-restore.md)
 - [Upgrade procedure](docs/upgrades.md)
 - [Troubleshooting](docs/troubleshooting.md)
@@ -131,4 +134,4 @@ Backups contain the database, local configuration (including the application sec
 
 Phase 2 includes assigned-library Home rails, paginated movie/search/TV views, local artwork, Owner/Administrator/Viewer management, authenticated range playback, text subtitles, explicit audio/quality changes, resume/watch history, progressive HLS remuxing, software H.264/AAC conversion, optional tested hardware encoders, and Owner stream monitoring. Image-subtitle burn-in is honestly unsupported in this build. Docker/workstation and cross-browser validation status is recorded separately from native tests; see [validation](docs/phase2-validation.md) and [limitations](docs/not-implemented.md).
 
-BlueReel is not deployed publicly by this repository.
+Blue Ash Reel is not deployed publicly by this repository.

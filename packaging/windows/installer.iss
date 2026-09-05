@@ -1,4 +1,7 @@
-; BlueReel's first unsigned, offline, native Windows development package.
+; Brand values are supplied from config/product.json by build_native.py.
+#ifndef BrandName
+  #error Build with build_native.py to load the central product identity
+#endif
 ; Build input is a verified onedir payload, never the developer checkout.
 #ifndef PayloadDir
   #error PayloadDir must name the verified native payload directory
@@ -16,19 +19,21 @@
   #define BuildChannel "development"
 #endif
 #if BuildChannel == "stable"
-  #define ProductName "BlueReel"
+  #define ProductName BrandName
   #define DataName "BlueReel"
+  #define InstallDirectoryName "BlueReel"
   #define ServicePrefix "BlueReel"
   #define DefaultPort "8080"
   #define ProductId "{{78EF44D3-F1FC-4F2A-92D2-80921F170DEF}"
-  #define OutputName "BlueReel-Setup-x64"
+  #define OutputName PackageName + "-Setup-x64"
 #else
-  #define ProductName "BlueReel Development"
+  #define ProductName BrandName + " Development"
   #define DataName "BlueReel-Development"
+  #define InstallDirectoryName "BlueReel Development"
   #define ServicePrefix "BlueReelDevelopment"
   #define DefaultPort "18080"
   #define ProductId "{{5E41781A-6BE6-4505-B5D9-177F592ED611}"
-  #define OutputName "BlueReel-Setup-Development-x64"
+  #define OutputName PackageName + "-Setup-Development-x64"
 #endif
 
 [Setup]
@@ -36,10 +41,11 @@ AppId={#ProductId}
 AppName={#ProductName}
 AppVersion={#ProductVersion}
 AppVerName={#ProductName} {#ProductVersion} (unsigned)
-AppPublisher=BlueReel
-AppPublisherURL=https://github.com/NRichard-lab/BlueReel
-AppSupportURL=https://github.com/NRichard-lab/BlueReel
-DefaultDirName={autopf}\{#ProductName}
+AppPublisher={#BrandName}
+AppPublisherURL=https://{#ProductDomain}
+AppSupportURL=https://{#ProductDomain}/security
+; Keep established install locations, service IDs, registry keys and AppId.
+DefaultDirName={autopf}\{#InstallDirectoryName}
 DefaultGroupName={#ProductName}
 DisableProgramGroupPage=yes
 DisableDirPage=yes
@@ -54,7 +60,7 @@ UninstallDisplayName={#ProductName}
 VersionInfoVersion={#FileVersion}
 VersionInfoProductVersion={#FileVersion}
 VersionInfoProductTextVersion={#ProductVersion}
-VersionInfoDescription=Unsigned BlueReel native Windows development installer
+VersionInfoDescription=Unsigned {#BrandName} native Windows development installer
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputName}
 Compression=lzma2/normal
@@ -170,12 +176,12 @@ begin
   Arguments := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
     Quoted(ExpandConstant('{app}\support\install.ps1')) + ' -Action ' + Action +
     CommonArguments + Extra;
-  Log('Running BlueReel maintenance action: ' + Action);
+  Log('Running {#BrandName} maintenance action: ' + Action);
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     Arguments, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Result := Result and (ExitCode = 0);
   if not Result then
-    Log('BlueReel maintenance action failed with exit code ' + IntToStr(ExitCode));
+    Log('{#BrandName} maintenance action failed with exit code ' + IntToStr(ExitCode));
 end;
 
 function WriteExistingDataValidator(const ScriptPath: String): Boolean;
@@ -314,7 +320,7 @@ begin
   MediaCaption.SetBounds(0, 0, MediaPage.SurfaceWidth, ScaleY(48));
   MediaCaption.AutoSize := False;
   MediaCaption.WordWrap := True;
-  MediaCaption.Caption := 'Only these roots are visible in BlueReel. Source media is never moved, modified, or deleted. ' +
+  MediaCaption.Caption := 'Only these roots are visible in {#BrandName}. Source media is never moved, modified, or deleted. ' +
     'Services use LocalService: ensure it can read the selected folders. Network shares need advanced service-account configuration.';
   MediaMemo := TNewMemo.Create(MediaPage);
   MediaMemo.Parent := MediaPage.Surface;
@@ -375,7 +381,7 @@ begin
     NetworkPage.Values[0] := SavedPort;
     if not PreservedReinstall then begin
       if not RunMaintenance('PrepareUpgrade', '') then begin
-        Result := 'The validated backup or graceful service shutdown failed. No program files were replaced. Check the protected BlueReel logs before retrying.';
+        Result := 'The validated backup or graceful service shutdown failed. No program files were replaced. Check the protected {#BrandName} logs before retrying.';
         Exit;
       end;
     end else begin
@@ -401,7 +407,7 @@ begin
     Extra := ' -Port ' + GetPort('') + ' -BindAddress ' + Quoted(NetworkPage.Values[1]) +
       ' -RootsFile ' + Quoted(RootsFile);
     if not RunMaintenance('Install', Extra) then
-      RaiseException('BlueReel services did not install or become healthy. Persistent data and upgrade backups were preserved. Automatic rollback is not provided; see the native Windows recovery instructions.');
+      RaiseException('{#BrandName} services did not install or become healthy. Persistent data and upgrade backups were preserved. Automatic rollback is not provided; see the native Windows recovery instructions.');
     InstallSuccessful := True;
   end;
 end;

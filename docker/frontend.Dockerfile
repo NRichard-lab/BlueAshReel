@@ -19,6 +19,7 @@ RUN pnpm run build
 RUN node -e "const fs=require('node:fs');const p='dist/server/wrangler.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.observability={enabled:false};if(c.dev)c.dev.enable_containers=false;fs.writeFileSync(p,JSON.stringify(c));"
 
 FROM node:22-bookworm-slim AS runtime
+LABEL org.opencontainers.image.source="https://github.com/NRichard-lab/BlueAshReel"
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     HOST=0.0.0.0 \

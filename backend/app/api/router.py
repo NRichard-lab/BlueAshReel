@@ -1158,4 +1158,4 @@ def health_ready(
 
 @router.get("/version", tags=["health"])
 def version(product: ProductConfig = Depends(get_product_config)) -> dict[str, str]:
-    return {"version": product.version}
+    return {"version": product.version, "product": product.name, "server_name": product.server_name}

@@ -29,7 +29,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 
-from app.config import AppConfig
+from app.config import AppConfig, get_product_config
 from app.services.paths import (
     assert_no_link_components,
     is_link_or_reparse,
@@ -39,8 +39,8 @@ from app.services.paths import (
 
 ROLES = {"api": "API", "worker": "Worker", "web": "Web", "proxy": "Proxy"}
 INSTANCES = {
-    "development": ("BlueReel Development", "BlueReelDevelopment", "BlueReel-Development", 18080),
-    "stable": ("BlueReel", "BlueReel", "BlueReel", 8080),
+    "development": (get_product_config().name + " Development", "BlueReelDevelopment", "BlueReel-Development", 18080),
+    "stable": (get_product_config().name, "BlueReel", "BlueReel", 8080),
 }
 STATE_DIRECTORIES = ("configuration", "database", "data", "artwork", "logs", "temp", "backups", "state", "upgrade")
 MARKER = ".bluereel-native-instance"
@@ -288,7 +288,9 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
     if data.exists() and any(
         child.name not in STATE_DIRECTORIES or not child.is_dir() or any(child.iterdir()) for child in data.iterdir()
     ):
-        raise NativeInstallError("The data location is not an empty BlueReel directory; nothing was replaced")
+        raise NativeInstallError(
+            f"The data location is not an empty {get_product_config().name} directory; nothing was replaced"
+        )
     validate_ports(port, bind)
     product, prefix, _directory, _port = INSTANCES[instance]
     for name in STATE_DIRECTORIES:
@@ -360,8 +362,10 @@ def render_services(metadata: dict[str, Any]) -> None:
         root = ET.Element("service")
         fields = {
             "id": name,
-            "name": f"{metadata['product_name']} - {suffix}",
-            "description": "Local-first BlueReel component; no desktop session or external runtime is required.",
+            "name": f"{get_product_config().server_name} - {suffix}",
+            "description": (
+                f"Local-first {get_product_config().name} component; no external runtime is required."
+            ),
             "executable": str(program / "runtime" / "python" / "python.exe"),
             # WinSW 2.12 appends common arguments to BOTH startarguments and
             # stoparguments. Duplicating -m in common arguments breaks stop.
@@ -554,7 +558,9 @@ def health(data: Path, seconds: int = 60) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="BlueReel native installation maintenance (Windows administrator)")
+    parser = argparse.ArgumentParser(
+        description=f"{get_product_config().name} native installation maintenance (Windows administrator)"
+    )
     parser.add_argument(
         "command",
         choices=(
@@ -621,11 +627,11 @@ def main() -> int:
             if arguments.archive is None:
                 raise NativeInstallError("A backup archive is required; validation never restores live files")
             validate(arguments.archive)
-        print(f"BlueReel native {arguments.command}: successful")
+        print(f"{get_product_config().name} native {arguments.command}: successful")
         return 0
     except Exception as error:
         detail = str(error) if isinstance(error, NativeInstallError) else type(error).__name__
-        print(f"BlueReel native {arguments.command} failed: {detail}", file=sys.stderr)
+        print(f"{get_product_config().name} native {arguments.command} failed: {detail}", file=sys.stderr)
         return 1
 
 

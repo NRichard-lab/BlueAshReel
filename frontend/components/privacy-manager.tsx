@@ -1,5 +1,7 @@
 'use client';
 
+import { productConfig } from '@/lib/product-config';
+
 import { useEffect, useState } from 'react';
 import { Check, CloudOff, HardDrive, LoaderCircle, LockKeyhole, Save, ShieldCheck, WifiOff } from 'lucide-react';
 
@@ -66,18 +68,18 @@ export function PrivacyManager() {
       </div>
 
       <Card className="mt-5">
-        <CardHeader className="border-b"><CardTitle>Runtime posture</CardTitle><CardDescription>Core operation does not require Internet access.</CardDescription></CardHeader>
+        <CardHeader className="border-b"><CardTitle>Media-server posture</CardTitle><CardDescription>Local playback does not require Internet access. An explicitly enabled Remote Access connector shares only account association, coarse Agent status and encrypted diagnostics. Its connection state is shown in Settings → Remote Access.</CardDescription></CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
           {loading ? [0, 1, 2].map((item) => <Skeleton key={item} className="h-20" />) : !privacy ? <output>Live privacy status is unavailable. No enforcement claim can be shown.</output> : <>
-            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Local-only</span><Badge variant="secondary">{privacy?.local_only ? 'Yes' : 'No'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Primary architecture mode</p></div>
+            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Media stays local</span><Badge variant="secondary">{privacy?.local_only ? 'Yes' : 'No'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Private media data plane</p></div>
             <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Telemetry</span><Badge variant={privacy?.telemetry_enabled ? 'destructive' : 'secondary'}>{privacy?.telemetry_enabled ? 'On' : 'Off'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application analytics</p></div>
-            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Runtime outbound</span><Badge variant={privacy?.runtime_outbound_allowed ? 'outline' : 'secondary'}>{privacy?.runtime_outbound_allowed ? 'Permitted' : 'Disabled'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application policy gate. OS/network enforcement is reported separately below.</p></div>
+            <div className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Media-server outbound</span><Badge variant={privacy?.runtime_outbound_allowed ? 'outline' : 'secondary'}>{privacy?.runtime_outbound_allowed ? 'Permitted' : 'Disabled'}</Badge></div><p className="mt-2 text-xs text-muted-foreground">Application policy gate. OS/network enforcement is reported separately below.</p></div>
           </>}
         </CardContent>
       </Card>
 
       <Card className="mt-5">
-        <CardHeader className="border-b"><CardTitle>Network enforcement</CardTitle><CardDescription>Actual deployment enforcement, separate from the saved application policy. No global firewall policy is changed by BlueReel.</CardDescription></CardHeader>
+        <CardHeader className="border-b"><CardTitle>Network enforcement</CardTitle><CardDescription>Actual deployment enforcement, separate from the saved application policy. No global firewall policy is changed by {productConfig.name}.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           {loading ? <Skeleton className="h-20" /> : <>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -86,13 +88,13 @@ export function PrivacyManager() {
             </div>
             <p className="text-sm text-muted-foreground">{privacy?.network_enforcement?.detail || 'A live enforcement check is unavailable. The application policy alone does not prove network isolation.'}</p>
             {privacy?.network_enforcement?.checked_at ? <p className="text-xs text-muted-foreground">Last checked: {new Date(privacy.network_enforcement.checked_at).toLocaleString()}</p> : null}
-            {privacy?.network_enforcement?.platform === 'windows' && privacy.network_enforcement.status !== 'enforced' ? <Alert variant="destructive"><ShieldCheck /><AlertTitle>Strict-local enforcement is not confirmed</AlertTitle><AlertDescription>Review the BlueReel installer/service firewall diagnostics. A detected rule or a saved preference is not enough to claim that DNS-name and direct-IP outbound traffic are blocked.</AlertDescription></Alert> : null}
+            {privacy?.network_enforcement?.platform === 'windows' && privacy.network_enforcement.status !== 'enforced' ? <Alert variant="destructive"><ShieldCheck /><AlertTitle>Strict-local enforcement is not confirmed</AlertTitle><AlertDescription>Review the {productConfig.name} installer/service firewall diagnostics. A detected rule or a saved preference is not enough to claim that DNS-name and direct-IP outbound traffic are blocked.</AlertDescription></Alert> : null}
           </>}
         </CardContent>
       </Card>
 
       <Card className="mt-5">
-        <CardHeader className="border-b"><CardTitle className="flex items-center gap-2"><WifiOff className="size-4" /> Future integration switches</CardTitle><CardDescription>Each outbound provider remains explicit, auditable, and Owner-controlled. No provider is contacted in this phase.</CardDescription></CardHeader>
+        <CardHeader className="border-b"><CardTitle className="flex items-center gap-2"><WifiOff className="size-4" /> Future integration switches</CardTitle><CardDescription>Each outbound provider remains explicit, auditable, and Owner-controlled. Media providers remain unimplemented. The optional diagnostic connector is managed separately in Remote Access.</CardDescription></CardHeader>
         <CardContent className="space-y-3">
           {!loading && privacy && !privacy.runtime_outbound_allowed ? (
             <Alert>

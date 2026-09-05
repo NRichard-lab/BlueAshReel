@@ -250,7 +250,7 @@ def test_installer_compile_uses_payload_and_output_defines(tmp_path: Path, monke
     args.iscc.write_bytes(b"fixture")
     args.output_dir = tmp_path / "artifacts" / "native-dev"
     args.output_dir.mkdir(parents=True)
-    installer = args.output_dir / "BlueReel-Setup-Development-x64.exe"
+    installer = args.output_dir / "BlueAshReel-Setup-Development-x64.exe"
     installer.write_bytes(b"fixture installer")
     monkeypatch.setattr(builder, "REPOSITORY", tmp_path)
     monkeypatch.setattr(builder, "run", lambda command: seen.append(command))

@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 
 function localOnlyError() {
-  const error = new Error('BlueReel strict-local mode blocked a network operation');
+  const error = new Error('Strict-local mode blocked a network operation');
   error.code = 'ERR_BLUEREEL_LOCAL_ONLY';
   return error;
 }

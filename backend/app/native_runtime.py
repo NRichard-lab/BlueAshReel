@@ -407,7 +407,7 @@ def run_python(installation: Installation, config: AppConfig, role: Role) -> int
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run one isolated native BlueReel service")
+    parser = argparse.ArgumentParser(description="Run one isolated native media service")
     parser.add_argument("--data-dir", required=True, type=Path)
     parser.add_argument("--role", required=True, choices=ROLES)
     parser.add_argument("--stop", action="store_true")

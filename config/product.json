@@ -1,5 +1,9 @@
 {
-  "name": "BlueReel",
+  "name": "Blue Ash Reel",
+  "package_name": "BlueAshReel",
+  "agent_name": "Blue Ash Reel Agent",
+  "server_name": "Blue Ash Reel Server",
+  "domain": "blueashreel.com",
   "subtitle": "A Blue Ash Application.",
   "version": "0.1.0",
   "api_prefix": "/api/v1"

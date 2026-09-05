@@ -20,5 +20,5 @@ if ($SkipInstaller) { $arguments += "--skip-installer" }
 if ($Offline) { $arguments += "--offline" }
 & $Python @arguments
 if ($LASTEXITCODE -ne 0) {
-    throw "The BlueReel native development build failed (exit $LASTEXITCODE). Existing artifacts were preserved."
+    throw "The Blue Ash Reel native development build failed (exit $LASTEXITCODE). Existing artifacts were preserved."
 }

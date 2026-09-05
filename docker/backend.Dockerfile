@@ -1,4 +1,5 @@
 FROM python:3.12-slim-bookworm
+LABEL org.opencontainers.image.source="https://github.com/NRichard-lab/BlueAshReel"
 
 ARG APP_UID=1000
 ARG APP_GID=1000
@@ -22,8 +23,9 @@ COPY docker/backend-entrypoint.sh /usr/local/bin/bluereel-entrypoint
 
 RUN pip install . \
     && chmod 0755 /usr/local/bin/bluereel-entrypoint \
-    && mkdir -p /data /database /artwork /tmp/app \
-    && chown -R "${APP_UID}:${APP_GID}" /data /database /artwork /tmp/app /app
+    && mkdir -p /data /database /artwork /tmp/app /remote/control \
+    && chmod 0700 /remote/control \
+    && chown -R "${APP_UID}:${APP_GID}" /data /database /artwork /tmp/app /remote/control /app
 
 USER ${APP_UID}:${APP_GID}
 

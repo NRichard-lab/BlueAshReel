@@ -1,5 +1,7 @@
 'use client';
 
+import { productConfig } from '@/lib/product-config';
+
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Check, LoaderCircle, Save } from 'lucide-react';
 import Link from 'next/link';
@@ -123,9 +125,9 @@ export function PlaybackSettings() {
         </Card>
 
         <Card>
-          <CardHeader className="border-b"><CardTitle>Temporary storage & subtitles</CardTitle><CardDescription>Only BlueReel-owned temporary output is cleaned up. Source media is never removed.</CardDescription></CardHeader>
+          <CardHeader className="border-b"><CardTitle>Temporary storage & subtitles</CardTitle><CardDescription>Only {productConfig.name}-owned temporary output is cleaned up. Source media is never removed.</CardDescription></CardHeader>
           <CardContent className="grid gap-5 sm:grid-cols-2">
-            <Field className="sm:col-span-2"><FieldLabel htmlFor="transcode-directory">Temporary transcode directory</FieldLabel><Input id="transcode-directory" required value={draft.temp_directory} onChange={event => update('temp_directory', event.target.value)} /><FieldDescription>Use an absolute, writable directory dedicated to BlueReel within application-managed storage. Do not choose a media folder.</FieldDescription></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="transcode-directory">Temporary transcode directory</FieldLabel><Input id="transcode-directory" required value={draft.temp_directory} onChange={event => update('temp_directory', event.target.value)} /><FieldDescription>Use an absolute, writable directory dedicated to {productConfig.name} within application-managed storage. Do not choose a media folder.</FieldDescription></Field>
             <Field><FieldLabel htmlFor="max-temp-storage">Maximum temporary-storage use (MiB)</FieldLabel><Input id="max-temp-storage" type="number" required min="64" max="1048576" step="1" value={draft.max_storage_mb} onChange={event => update('max_storage_mb', Number(event.target.value))} /><FieldDescription>Playback stops with an explanation if its safe storage limit is reached.</FieldDescription></Field>
             <Field><FieldLabel htmlFor="inactive-cleanup">Inactive-session cleanup (seconds)</FieldLabel><Input id="inactive-cleanup" type="number" required min="30" max="600" step="1" value={draft.inactive_session_seconds} onChange={event => update('inactive_session_seconds', Number(event.target.value))} /><FieldDescription>Abandoned sessions and their local conversion processes are cleaned up after this timeout.</FieldDescription></Field>
             <Field className="sm:col-span-2"><FieldLabel>Currently supported subtitle behavior</FieldLabel><p className="text-sm">{draft.subtitle_behavior}</p><FieldDescription>Choose an available subtitle track or Off in the player. Unsupported formats are reported; no unimplemented burn-in option is offered.</FieldDescription></Field>

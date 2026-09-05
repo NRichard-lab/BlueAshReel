@@ -19,6 +19,11 @@ $TaskPrefix = if ($Instance -eq 'development') { 'BlueReelDevelopment' } else { 
 $TaskDataName = if ($Instance -eq 'development') { 'BlueReel-Development' } else { 'BlueReel' }
 $TaskRoles = @('API','Worker','Web','Proxy')
 $TaskStopOrder = @('Proxy','Worker','API','Web')
+$TaskDisplayName = 'Media server'
+$taskProductFile = Join-Path $ProgramDir 'config\product.json'
+if (Test-Path -LiteralPath $taskProductFile) {
+    $TaskDisplayName = (Get-Content -LiteralPath $taskProductFile -Raw | ConvertFrom-Json).name
+}
 
 function Assert-Administrator {
     $taskIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -47,7 +52,7 @@ function Assert-DedicatedPath([string]$Path) {
 
 function Invoke-Checked([string]$File, [string[]]$Arguments) {
     & $File @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "BlueReel maintenance operation failed (exit $LASTEXITCODE)." }
+    if ($LASTEXITCODE -ne 0) { throw "Native maintenance operation failed (exit $LASTEXITCODE)." }
 }
 
 function Invoke-Native([string]$Command, [string[]]$Extra = @()) {
@@ -65,7 +70,31 @@ function Assert-ServiceIdentity([string]$Suffix) {
     return $taskService
 }
 
+function Get-OptionalRemoteService {
+    $taskRemoteName = $TaskPrefix + 'Remote'
+    $taskRemote = Get-CimInstance Win32_Service -Filter "Name='$taskRemoteName'" -ErrorAction Stop
+    if ($taskRemote) {
+        $taskExpected = Join-Path $ProgramDir "services\$taskRemoteName.exe"
+        if ($taskRemote.PathName.Trim('"') -ine $taskExpected -or
+            $taskRemote.StartName -ine "NT SERVICE\$taskRemoteName") {
+            throw 'The optional remote connector service has a conflicting installation identity.'
+        }
+    }
+    return $taskRemote
+}
+
+function Assert-RemoteUpgradeReady {
+    if (Get-OptionalRemoteService) {
+        throw 'Before upgrading or changing approved media roots, unpair Remote Access, then run support\install-remote.ps1 -Action Remove with this ProgramDir and DataDir. The connector must be reinstalled after the update so its sandbox code, privacy policy and destination rules are revalidated. Local media and connector state are preserved.'
+    }
+}
+
 function Stop-Instance {
+    $taskRemote = Get-OptionalRemoteService
+    if ($taskRemote -and $taskRemote.State -ne 'Stopped') {
+        Stop-Service -Name $taskRemote.Name -ErrorAction Stop
+        (Get-Service -Name $taskRemote.Name).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30))
+    }
     foreach ($taskRole in $TaskStopOrder) {
         $taskService = Assert-ServiceIdentity $taskRole
         if ($null -ne $taskService -and $taskService.State -ne 'Stopped') {
@@ -430,15 +459,17 @@ function Remove-InstanceFirewall {
 function Start-Instance {
     foreach ($taskRole in $TaskRoles) { Start-Service -Name ($TaskPrefix + $taskRole) -ErrorAction Stop }
     Invoke-Native 'health'
+    $taskRemote = Get-OptionalRemoteService
+    if ($taskRemote -and $taskRemote.State -eq 'Stopped') { Start-Service -Name $taskRemote.Name }
     foreach ($taskRole in $TaskRoles) {
-        if ((Get-Service -Name ($TaskPrefix + $taskRole)).Status -ne 'Running') { throw 'A BlueReel component did not remain running.' }
+        if ((Get-Service -Name ($TaskPrefix + $taskRole)).Status -ne 'Running') { throw 'A media-server component did not remain running.' }
     }
 }
 
 function Select-ApprovedRoots {
     Add-Type -AssemblyName System.Windows.Forms
     $taskForm = [Windows.Forms.Form]::new()
-    $taskForm.Text = 'BlueReel approved media folders'
+    $taskForm.Text = "$TaskDisplayName approved media folders"
     $taskForm.Width = 650; $taskForm.Height = 420
     $taskForm.StartPosition = 'CenterScreen'
     $taskLabel = [Windows.Forms.Label]::new()
@@ -488,6 +519,7 @@ try {
     $TaskPython = Join-Path $ProgramDir 'runtime\python\python.exe'
     switch ($Action) {
         'Install' {
+            Assert-RemoteUpgradeReady
             foreach ($taskRole in $TaskRoles) { $null = Assert-ServiceIdentity $taskRole }
             Stop-Instance
             Set-PrivateDataAcl
@@ -507,7 +539,7 @@ try {
             Start-Instance
         }
         'Stop' { Stop-Instance }
-        'PrepareUpgrade' { Invoke-Native 'prepare-upgrade'; Stop-Instance }
+        'PrepareUpgrade' { Assert-RemoteUpgradeReady; Invoke-Native 'prepare-upgrade'; Stop-Instance }
         'Health' { Invoke-Native 'health' }
         'Backup' { Invoke-Native 'backup' }
         'ValidateBackup' {
@@ -515,13 +547,14 @@ try {
                 Add-Type -AssemblyName System.Windows.Forms
                 $taskDialog = New-Object System.Windows.Forms.OpenFileDialog
                 $taskDialog.InitialDirectory = Join-Path $DataDir 'backups'
-                $taskDialog.Filter = 'BlueReel backups (*.zip)|*.zip'
+                $taskDialog.Filter = "$TaskDisplayName backups (*.zip)|*.zip"
                 if ($taskDialog.ShowDialog() -ne 'OK') { exit 0 }
                 $Archive = $taskDialog.FileName
             }
             Invoke-Native 'validate-backup' @('--archive',$Archive)
         }
         'ConfigureMedia' {
+            Assert-RemoteUpgradeReady
             if (-not $RootsFile) {
                 if (-not $Interactive) { throw 'An explicit approved-root list is required.' }
                 $RootsFile = Select-ApprovedRoots
@@ -535,7 +568,7 @@ try {
             if ($Interactive) {
                 Add-Type -AssemblyName Microsoft.VisualBasic
                 $taskMetadata = Get-Content -LiteralPath (Join-Path $DataDir 'configuration\installation.json') -Raw | ConvertFrom-Json
-                $BindAddress = [Microsoft.VisualBasic.Interaction]::InputBox('Owner/administrator choice: enter 127.0.0.1 to disable LAN access, or this PC''s exact private IPv4 address to enable it. Only the private firewall profile and local subnet are allowed. No router changes are made.', 'BlueReel private-LAN access', $taskMetadata.bind_address)
+                $BindAddress = [Microsoft.VisualBasic.Interaction]::InputBox('Owner/administrator choice: enter 127.0.0.1 to disable LAN access, or this PC''s exact private IPv4 address to enable it. Only the private firewall profile and local subnet are allowed. No router changes are made.', "$TaskDisplayName private-LAN access", $taskMetadata.bind_address)
                 if (-not $BindAddress) { exit 0 }
             }
             Stop-Instance
@@ -546,6 +579,13 @@ try {
         }
         'Remove' {
             Stop-Instance
+            if (Get-OptionalRemoteService) {
+                $taskRemoteHelper = Join-Path $ProgramDir 'support\install-remote.ps1'
+                if (-not (Test-Path -LiteralPath $taskRemoteHelper)) {
+                    throw 'The optional remote connector removal helper is missing; installation was preserved.'
+                }
+                & $taskRemoteHelper -Action Remove -ProgramDir $ProgramDir -DataDir $DataDir
+            }
             foreach ($taskRole in $TaskStopOrder) {
                 if ($null -ne (Assert-ServiceIdentity $taskRole)) {
                     Invoke-Checked (Join-Path $ProgramDir ('services\' + $TaskPrefix + $taskRole + '.exe')) @('uninstall')
@@ -559,13 +599,13 @@ try {
                 if (Get-ChildItem -LiteralPath $DataDir -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1) { throw 'Data contains a reparse point; no recursive removal was attempted.' }
                 # Exact canonical ProgramData instance validated above; never media or workspace.
                 Remove-Item -LiteralPath $DataDir -Recurse -Force
-                Write-Output 'Explicitly selected BlueReel instance data was permanently removed; source media was not touched.'
-            } else { Write-Output 'BlueReel data, configuration, history and backups were preserved.' }
+                Write-Output 'Explicitly selected instance data was permanently removed; source media was not touched.'
+            } else { Write-Output 'Instance data, configuration, history and backups were preserved.' }
         }
     }
-    Write-Output "BlueReel native $Action completed."
+    Write-Output "$TaskDisplayName native $Action completed."
     exit 0
 } catch {
-    Write-Error -Message ('BlueReel native maintenance failed. ' + $_.Exception.Message) -ErrorAction Continue
+    Write-Error -Message ('Native maintenance failed. ' + $_.Exception.Message) -ErrorAction Continue
     exit 1
 }

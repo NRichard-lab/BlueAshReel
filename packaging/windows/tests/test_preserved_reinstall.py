@@ -183,8 +183,11 @@ def test_current_inno_compiler_accepts_full_installer_source(tmp_path: Path) -> 
     payload = tmp_path / "payload"
     payload.mkdir()
     (payload / "synthetic.txt").write_text("Compilation fixture, never installed")
+    product = json.loads((DIRECTORY.parents[1] / "config/product.json").read_text(encoding="utf-8"))
     result = subprocess.run(
-        [str(compiler), f"/DPayloadDir={payload}", f"/DOutputDir={tmp_path / 'output'}", str(INSTALLER)],
+        [str(compiler), f"/DPayloadDir={payload}", f"/DOutputDir={tmp_path / 'output'}",
+         "/DBrandName=" + product["name"], "/DPackageName=" + product["package_name"],
+         "/DProductDomain=" + product["domain"], str(INSTALLER)],
         capture_output=True, text=True, timeout=60, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
