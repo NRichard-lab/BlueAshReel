@@ -22,11 +22,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $TaskPrefix = 'BlueReelDevelopment'
-$TaskProgram = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'BlueReel Development'
-$TaskData = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BlueReel-Development'
-$TaskExpectedMedia = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BlueReel-Development-TestMedia'
+$TaskProgram = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'BlueAshReel Development'
+$TaskData = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BlueAshReel-Development'
+$TaskExpectedMedia = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BlueAshReel-Development-TestMedia'
 $TaskRepository = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$TaskArtifactRoot = [IO.Path]::GetFullPath((Join-Path $TaskRepository 'artifacts\native-dev')).TrimEnd('\')
+$TaskArtifactRoot = [IO.Path]::GetFullPath((Join-Path $TaskRepository 'artifacts\development')).TrimEnd('\')
 $TaskStage = 'input_validation'
 $TaskReportPath = $null
 $TaskStarted = [DateTime]::UtcNow
@@ -77,7 +77,7 @@ function Assert-GuiInputs {
     foreach ($taskPath in @($InstallerPath,$MediaRoot,$ReportDirectory,$TaskProgram,$TaskData)) { Assert-SafePath $taskPath }
     $taskInstaller = [IO.Path]::GetFullPath($InstallerPath)
     if (-not $taskInstaller.StartsWith($TaskArtifactRoot + '\',[StringComparison]::OrdinalIgnoreCase) -or
-        [IO.Path]::GetFileName($taskInstaller) -cne 'BlueReel-Setup-Development-x64.exe') { throw 'Wrong installer target' }
+        [IO.Path]::GetFileName($taskInstaller) -cne 'BlueAshReel-Setup-Development-x64.exe') { throw 'Wrong installer target' }
     if ([IO.Path]::GetFullPath($MediaRoot).TrimEnd('\') -ine $TaskExpectedMedia -or -not (Test-Path -LiteralPath $MediaRoot -PathType Container)) { throw 'Only the owned TestMedia root is allowed' }
     if (-not [IO.Path]::GetFullPath($ReportDirectory).TrimEnd('\').StartsWith($TaskArtifactRoot + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Reports must be in an ignored native artifact subdirectory' }
     if ((Get-FileHash -LiteralPath $taskInstaller -Algorithm SHA256).Hash -ine $InstallerSha256) { throw 'Installer checksum mismatch' }
@@ -85,7 +85,7 @@ function Assert-GuiInputs {
     if (Test-Path -LiteralPath $TaskData) { throw 'Existing disposable data must be explicitly purged before this clean GUI test' }
     if (@(Get-SafeFiles $TaskProgram).Count) { throw 'An old program payload remains' }
     if (Test-Path -LiteralPath 'HKLM:\Software\BlueReel\development') { throw 'An old product registration remains' }
-    foreach ($taskRole in @('API','Worker','Web','Proxy')) {
+    foreach ($taskRole in @('API','Worker','Web','Proxy','Remote')) {
         if (Test-Path -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $TaskPrefix + $taskRole)) { throw 'An old service remains' }
     }
     $null = @(Get-SafeFiles $MediaRoot)
@@ -175,7 +175,7 @@ function Set-OwnedValue($Element,[string]$Value) {
 
 function Get-Wizard {
     $taskWindows = @(Get-OwnedNativeWindows | Where-Object {
-        $_.Current.ClassName -eq 'TWizardForm' -and $_.Current.Name -match 'BlueReel Development'
+        $_.Current.ClassName -eq 'TWizardForm' -and $_.Current.Name -match 'Blue Ash Reel Development'
     })
     if ($taskWindows.Count -eq 0) { return $null }
     $taskWizard = Select-UniqueElement $taskWindows
@@ -246,7 +246,7 @@ function Assert-LocalDefaults($Wizard) {
 function Enable-BrowserLaunch($Wizard) {
     $taskCandidates = @()
     foreach ($taskType in @('CheckBox','ListItem')) {
-        $taskCandidates += @(Find-Controls $Wizard $taskType '^Open BlueReel Development and set up the Owner account$')
+        $taskCandidates += @(Find-Controls $Wizard $taskType '^Open Blue Ash Reel Development and set up the Owner account$')
     }
     $taskOption = Select-UniqueElement $taskCandidates
     $taskPattern = $null
@@ -271,7 +271,7 @@ function Get-NativeFailureDiagnostics {
             $taskName = $taskControl.Current.Name.Replace('&','').Trim()
             # Never emit path text, folder/file names, field values or arbitrary
             # labels. Only known installer captions are safe for the report.
-            if ($taskName -notmatch '^(Welcome to the BlueReel Development Setup Wizard|Completing the BlueReel Development Setup Wizard|Information|Local access|Approved media folders|Ready to Install|Installing|Next\s*>?|<\s*Back|Cancel|Finish|Install|Add folder\.\.\.|Select [Ff]older|OK|Folder( name)?:?|File name:?|Open BlueReel Development and set up the Owner account)$') { $taskName = '[redacted]' }
+            if ($taskName -notmatch '^(Welcome to the Blue Ash Reel Development Setup Wizard|Completing the Blue Ash Reel Development Setup Wizard|Information|Local access|Approved media folders|Ready to Install|Installing|Next\s*>?|<\s*Back|Cancel|Finish|Install|Add folder\.\.\.|Select [Ff]older|OK|Folder( name)?:?|File name:?|Open Blue Ash Reel Development and set up the Owner account)$') { $taskName = '[redacted]' }
             $taskId = $taskControl.Current.AutomationId
             if ($taskId -notmatch '^[0-9]{0,16}$') { $taskId = '[redacted]' }
             $taskRows.Add([ordered]@{
@@ -367,7 +367,7 @@ public static class BlueReelGuiAutomation {
             continue
         }
         $taskTexts = @(Find-Controls $taskWizard 'Text' '.*' | ForEach-Object { $_.Current.Name })
-        $taskPageNames = @($taskTexts | Where-Object { $_ -match '^(Welcome to the BlueReel Development Setup Wizard|Information|Local access)$' })
+        $taskPageNames = @($taskTexts | Where-Object { $_ -match '^(Welcome to the Blue Ash Reel Development Setup Wizard|Information|Local access)$' })
         if ($taskPageNames.Count -ne 1) { throw 'Unrecognized or ambiguous installer page' }
         if ($taskPageNames[0] -ceq $taskLastSetupPage) {
             if ([DateTime]::UtcNow -ge $taskPageChangeDeadline) { throw 'Installer page did not advance' }

@@ -9,15 +9,15 @@ param(
     [Parameter(Mandatory)][ValidateSet('Inventory','Snapshot','Diagnostics','StopState','SignalStop','Restart','Backup','VerifyFirewall','UninstallPreserve','UninstallPurge','VerifyUninstallPreserve')][string]$Phase,
     [Parameter(Mandatory)][string]$ReportDirectory,
     [switch]$AllowDisposableInstance,
-    [ValidateSet('BlueReel-Development')][string]$ConfirmPurge,
+    [ValidateSet('BlueAshReel-Development')][string]$ConfirmPurge,
     [string]$PriorReport
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $TaskPrefix = 'BlueReelDevelopment'
-$TaskProgram = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'BlueReel Development'
-$TaskData = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BlueReel-Development'
+$TaskProgram = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'BlueAshReel Development'
+$TaskData = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BlueAshReel-Development'
 $TaskPython = Join-Path $TaskProgram 'runtime\python\python.exe'
 $TaskNode = Join-Path $TaskProgram 'runtime\node\node.exe'
 $TaskRoles = @('API','Worker','Web','Proxy')
@@ -62,6 +62,18 @@ function Assert-Instance {
             throw 'A development service has a foreign binary or account identity.'
         }
     }
+    $null = Get-TestRemoteService
+}
+
+function Get-TestRemoteService {
+    $taskName = $TaskPrefix + 'Remote'
+    $taskService = Get-CimInstance Win32_Service -Filter "Name='$taskName'"
+    if ($null -ne $taskService -and
+        ($taskService.PathName.Trim('"') -ine (Join-Path $TaskProgram "services\$taskName.exe") -or
+         $taskService.StartName -ine "NT SERVICE\$taskName")) {
+        throw 'The disposable remote service has a foreign binary or account identity.'
+    }
+    return $taskService
 }
 
 function Quote-Argument([string]$Value) {
@@ -242,6 +254,11 @@ function Get-InstanceProcesses {
 }
 
 function Stop-TestInstance {
+    $taskRemote = Get-TestRemoteService
+    if ($taskRemote -and $taskRemote.State -ne 'Stopped') {
+        Stop-Service -Name $taskRemote.Name -NoWait
+        (Get-Service -Name $taskRemote.Name).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(120))
+    }
     foreach ($taskRole in @('Proxy','Worker','API','Web')) {
         $taskService = Get-Service -Name ($TaskPrefix + $taskRole) -ErrorAction SilentlyContinue
         if ($taskService -and $taskService.Status -ne 'Stopped') {
@@ -340,8 +357,8 @@ function Remove-PrivateUninstallLog([string]$Directory) {
 }
 
 function Set-UninstalledStateEvidence {
-    $TaskReport.remaining_services = @($TaskRoles | ForEach-Object { Get-Service -Name ($TaskPrefix + $_) -ErrorAction SilentlyContinue }).Count
-    $TaskReport.remaining_firewall_rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Group $TaskPrefix -ErrorAction SilentlyContinue).Count
+    $TaskReport.remaining_services = @(@($TaskRoles + 'Remote') | ForEach-Object { Get-Service -Name ($TaskPrefix + $_) -ErrorAction SilentlyContinue }).Count
+    $TaskReport.remaining_firewall_rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Group $TaskPrefix,($TaskPrefix + 'Remote') -ErrorAction SilentlyContinue).Count
     $TaskReport.remaining_processes = @(Get-InstanceProcesses).Count
     $TaskReport.program_directory_exists = Test-Path -LiteralPath $TaskProgram
     $TaskReport.data_directory_exists = Test-Path -LiteralPath $TaskData
@@ -377,12 +394,12 @@ try {
     if (-not [Environment]::Is64BitProcess) { throw 'Use x64 Windows PowerShell.' }
     $taskPrincipal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if (-not $taskPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run acceptance with explicit Windows administrator elevation.' }
-    if ($Phase -eq 'UninstallPurge' -and $ConfirmPurge -cne 'BlueReel-Development') { throw 'Purge additionally requires -ConfirmPurge BlueReel-Development.' }
+    if ($Phase -eq 'UninstallPurge' -and $ConfirmPurge -cne 'BlueAshReel-Development') { throw 'Purge additionally requires -ConfirmPurge BlueAshReel-Development.' }
     $taskRepository = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    $taskIgnoredRoot = [IO.Path]::GetFullPath((Join-Path $taskRepository 'artifacts\native-dev')).TrimEnd('\')
+    $taskIgnoredRoots = @('native-dev','development') | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $taskRepository ('artifacts\' + $_))).TrimEnd('\') }
     if (-not [IO.Path]::IsPathRooted($ReportDirectory) -or $ReportDirectory -match '(^|[\\/])\.\.([\\/]|$)') { throw 'Report directory must be an absolute ignored artifact location.' }
     $ReportDirectory = [IO.Path]::GetFullPath($ReportDirectory).TrimEnd('\')
-    if (-not $ReportDirectory.StartsWith($taskIgnoredRoot + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Use a report subdirectory beneath artifacts/native-dev.' }
+    if (-not @($taskIgnoredRoots | Where-Object { $ReportDirectory.StartsWith($_ + '\',[StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'Use a report subdirectory beneath an ignored native artifact directory.' }
     Assert-NoReparse $ReportDirectory
     if (-not (Test-Path -LiteralPath $ReportDirectory)) { New-Item -ItemType Directory -Path $ReportDirectory | Out-Null }
     $TaskReportPath = Join-Path $ReportDirectory ($Phase + '-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmss') + '-' + [guid]::NewGuid().ToString('N') + '.json')
@@ -462,9 +479,11 @@ try {
         'Restart' {
             $TaskReport.before = Invoke-Probe 'snapshot'
             $TaskReport.processes_before = @(Get-InstanceProcesses)
+            $taskRemoteBefore = Get-TestRemoteService
             Stop-TestInstance
             $TaskReport.child_cleanup = $true
             foreach ($taskRole in $TaskRoles) { Start-Service -Name ($TaskPrefix + $taskRole) }
+            if ($taskRemoteBefore) { Start-Service -Name $taskRemoteBefore.Name }
             $TaskReport.health = Invoke-Probe 'health' 75
             $TaskReport.after = Invoke-Probe 'snapshot'
             $TaskReport.services_after = @(Get-ServiceEvidence)
@@ -489,7 +508,7 @@ try {
             Set-Acl -LiteralPath $taskPrivate -AclObject $taskAcl
             $taskRawLog = Join-Path $taskPrivate 'uninstall.log'
             $taskArguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $taskRawLog))
-            if ($Phase -eq 'UninstallPurge') { $taskArguments += '/PURGEDATA=BlueReel-Development' }
+            if ($Phase -eq 'UninstallPurge') { $taskArguments += '/PURGEDATA=BlueAshReel-Development' }
             try {
                 $taskResult = Invoke-PrivateProcess $taskUninstaller $taskArguments 600
                 $TaskReport.uninstaller_exit_code = $taskResult.exit_code

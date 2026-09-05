@@ -33,8 +33,8 @@ from pathlib import Path
 from typing import Any
 
 REPOSITORY = Path(__file__).resolve().parents[2]
-MEDIA_ROOT = Path(r"C:\ProgramData\BlueReel-Development-TestMedia")
-PROGRAM_ROOT = Path(r"C:\Program Files\BlueReel Development")
+MEDIA_ROOT = Path(r"C:\ProgramData\BlueAshReel-Development-TestMedia")
+PROGRAM_ROOT = Path(r"C:\Program Files\BlueAshReel Development")
 CAPS = {"h264": True, "aac": True, "hls": True, "max_height": 2160, "max_h264_level": 51}
 MODES = ("automatic", "hardware_preferred", "software_only", "direct_only", "hardware_required")
 
@@ -238,8 +238,9 @@ class Harness:
         self.media: dict[str, dict[str, Any]] = {}
         self.libraries: dict[str, str] = {}
         self.output = ordinary_path(args.output_dir) / ("acceptance-api-" + self.run_id)
-        check(self.output.is_relative_to(REPOSITORY / "artifacts" / "native-dev"),
-              "Acceptance evidence must be inside artifacts/native-dev")
+        check(any(self.output.is_relative_to(REPOSITORY / "artifacts" / directory)
+                  for directory in ("native-dev", "development")),
+              "Acceptance evidence must be inside an ignored native artifact directory")
         self.output.mkdir(parents=True)
 
     def case(self, name: str, operation: Callable[[], Any]) -> Any:
@@ -604,7 +605,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--create-owner", action="store_true", help="Only for a fresh native instance with no Owner")
     result.add_argument("--credentials-file", type=Path, help="Existing private JSON file containing username/password")
     result.add_argument("--ffmpeg", type=Path, default=PROGRAM_ROOT / "runtime" / "ffmpeg" / "ffmpeg.exe")
-    result.add_argument("--output-dir", type=Path, default=REPOSITORY / "artifacts" / "native-dev")
+    result.add_argument("--output-dir", type=Path, default=REPOSITORY / "artifacts" / "development" / "acceptance")
     result.add_argument("--scan-timeout", type=int, default=180)
     return result
 

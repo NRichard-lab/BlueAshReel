@@ -148,6 +148,45 @@ def test_snapshot_phase_only_invokes_existing_read_only_snapshot_probe() -> None
     assert "'Snapshot' {\n            $TaskReport.snapshot = Invoke-Probe 'snapshot'\n        }" in source
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows service identity guard")
+@pytest.mark.parametrize("scenario", ["absent", "valid", "foreign_path", "foreign_account"])
+def test_remote_acceptance_refuses_foreign_service_before_lifecycle_changes(scenario: str) -> None:
+    shell = shutil.which("powershell.exe")
+    assert shell
+    script = r"""
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$taskTokens = $null; $taskErrors = $null
+$taskAst = [Management.Automation.Language.Parser]::ParseFile($env:BLUEREEL_TEST_HELPER,[ref]$taskTokens,[ref]$taskErrors)
+if ($taskErrors.Count) { throw 'Parse failed' }
+$taskFunction = $taskAst.Find({param($item) $item -is [Management.Automation.Language.FunctionDefinitionAst] -and $item.Name -eq 'Get-TestRemoteService'},$true)
+. ([scriptblock]::Create($taskFunction.Extent.Text))
+$TaskPrefix = 'BlueReelDevelopment'
+$TaskProgram = 'C:\Program Files\BlueAshReel Development'
+function Get-CimInstance {
+    param([string]$ClassName,[string]$Filter)
+    if ($ClassName -cne 'Win32_Service' -or $Filter -cne "Name='BlueReelDevelopmentRemote'") { throw 'Unexpected service lookup' }
+    if ($env:BLUEREEL_TEST_SCENARIO -eq 'absent') { return $null }
+    $taskPath = Join-Path $TaskProgram 'services\BlueReelDevelopmentRemote.exe'
+    $taskAccount = 'NT SERVICE\BlueReelDevelopmentRemote'
+    if ($env:BLUEREEL_TEST_SCENARIO -eq 'foreign_path') { $taskPath = 'C:\Unrelated\service.exe' }
+    if ($env:BLUEREEL_TEST_SCENARIO -eq 'foreign_account') { $taskAccount = 'LocalSystem' }
+    return [pscustomobject]@{PathName=('"' + $taskPath + '"');StartName=$taskAccount}
+}
+try { $taskResult = Get-TestRemoteService; @{accepted=$true;exists=($null -ne $taskResult)} | ConvertTo-Json -Compress }
+catch { @{accepted=$false;exists=$false} | ConvertTo-Json -Compress }
+"""
+    result = subprocess.run(
+        [shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.b64encode(script.encode("utf-16-le")).decode()],
+        env={**os.environ, "BLUEREEL_TEST_HELPER": str(DIRECTORY / "test_instance.ps1"),
+             "BLUEREEL_TEST_SCENARIO": scenario},
+        capture_output=True, text=True, timeout=15, check=True,
+    )
+    assert json.loads(result.stdout) == {
+        "accepted": scenario in {"absent", "valid"}, "exists": scenario == "valid",
+    }
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL objects, no filesystem ACL mutation")
 @pytest.mark.parametrize("scenario", ["directory", "file", "service_modify", "service_full", "service_incomplete", "runtime_owner", "broad_sid", "missing_sid", "unprotected", "inherit_only"])
 def test_configuration_acl_requires_exact_service_read_only_permissions(scenario: str) -> None:

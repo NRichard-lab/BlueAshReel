@@ -176,12 +176,12 @@ def test_source_scopes_every_ui_action_and_keeps_browser_verification_separate()
     assert "if ($Elements.Count -ne 1)" in source
     assert "browser_verification='requires_browser_skill'" in source
     assert "$TaskEvidence.browser_load_verified = $true" not in source
-    assert "-cne 'BlueReel-Setup-Development-x64.exe'" in source
+    assert "-cne 'BlueAshReel-Setup-Development-x64.exe'" in source
     assert "Get-FileHash -LiteralPath $taskInstaller -Algorithm SHA256" in source
     assert ".Status -ne 'NotSigned'" in source
     assert "if (Test-Path -LiteralPath $TaskData)" in source
     assert "HKLM:\\Software\\BlueReel\\development" in source
-    assert "'BlueReel-Development-TestMedia'" in source
+    assert "'BlueAshReel-Development-TestMedia'" in source
     assert "$taskDialogHandle = [int]$taskDialog.Current.NativeWindowHandle" in source
     assert "$_.Current.NativeWindowHandle -eq $taskDialog.Current.NativeWindowHandle" not in source
     assert "Environment.Exit(124)" in source  # Deadline terminates only this helper, never the installer.
