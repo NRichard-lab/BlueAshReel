@@ -20,13 +20,15 @@ history, backups and local Docker services were preserved.
 
 ## Tests and builds
 
-- Complete Python regression run: 568 passed, four platform-specific skips. This
+- Complete Python regression run: 569 passed, four platform-specific skips. This
   includes real bundled FFmpeg/FFprobe and Caddy execution for playback, streaming,
   local permissions, backup, native packaging and reinstall regression.
 - Local frontend: 58 tests passed; TypeScript and lint passed.
-- Backend strict mypy: 49 modules passed with `backend/pyproject.toml`; Ruff passed.
-- Agent application coverage: 82.07% statements (4999/6091), 64.93% branches
-  (1048/1614), 78.48% combined. Scope is `backend/app`, not the entire repository.
+- Backend strict mypy: 50 modules passed with `backend/pyproject.toml`; Ruff passed.
+- Agent application coverage: 81.15% statements (5025/6192), 63.79% branches
+  (1050/1646), 77.51% combined. Scope is `backend/app`, not the entire repository.
+  Elevated Windows service acceptance runs separately and is not included in
+  these coverage numbers.
 - Separate renamed backend/frontend Docker images built successfully. The optional
   connector image ran with zero capabilities, UID 1000 and no-new-privileges; only
   its two dedicated state/control volumes were mounted. Arbitrary HTTPS and
@@ -38,11 +40,22 @@ history, backups and local Docker services were preserved.
   internal, and direct-IP HTTPS and external DNS probes from the updated backend
   are blocked. Remote access remains disabled; no optional override was activated.
 - Native development installer built from pinned runtimes and hashed dependency
-  locks. It remains unsigned and is not published for download.
+  locks at clean source `df26a7b6ab5b2f024cb572198b116a85d785ea14`. It remains
+  unsigned and is not published for download.
 - Native connector tests exercise a real AppContainer token, permitted control
   spool access, denied synthetic private-file access, and DPAPI protection across
   two child processes. A later PowerShell 5 argument-handling regression was
   reproduced and corrected by passing a protected pins-file path instead of JSON.
+- Elevated native installation passed with the actual dedicated virtual service
+  account and AppContainer. The unmodified production helper verified running
+  state and fresh status before reporting success. A synthetic diagnostic then
+  verified DPAPI protection/decryption across service restart, denied media/data
+  access, disabled remote access with no generated Agent identity, six effective
+  scoped firewall rules, and local server readiness before and after installation.
+  All synthetic services, firewall rules and directories were removed successfully.
+  The Session 0 desktop read-access fix grants only the verified private service
+  station/desktop permissions needed to initialize Python DLLs; interactive
+  desktops and media ACLs are unchanged. Public native WSS pairing remains pending.
 
 ## Real browser and relay acceptance
 
@@ -73,6 +86,10 @@ uses five isolated containers behind the existing Caddy edge. PostgreSQL migrati
 head is `914fedcc620a`. The protected initial Owner bootstrap, post-Owner backup,
 integrity check and full dry restore passed. Existing unrelated services retained
 their container identities and configuration hashes.
+
+The final-source backup is `blueashreel-20260905T185006Z`, with source `b09798f`
+and schema `914fedcc620a` captured. The actual systemd backup/prune job succeeded;
+its daily timer is enabled, with protected storage and 14-day retention.
 
 Workstation public IPv4 was verified as `174.29.198.176`. The domain still points
 to Hostinger parking at `2.57.91.91`; no DNS records were changed. Authenticated

@@ -210,10 +210,13 @@ service before removing application binaries, and preserves remote state.
 
 Native acceptance includes a real AppContainer token, allowed spool write, denied
 synthetic private-file read and DPAPI encryption/decryption across child-process
-restart. Elevated SCM provisioning, firewall integration and public pairing must
-also be validated on the final installed build before calling the native remote
-installation production-ready. AppContainer/profile creation or DPAPI failures
-are fail-closed; there is no fallback to a media-capable process.
+restart. The September 5 development build also passed elevated SCM provisioning,
+effective firewall checks and DPAPI protection/decryption across actual virtual
+service restarts. The local server stayed ready and remote access stayed disabled;
+all synthetic fixture services, rules and directories were removed. Public WSS
+pairing through trusted domain TLS must still pass before calling the native
+remote installation production-ready. AppContainer/profile creation or DPAPI
+failures are fail-closed; there is no fallback to a media-capable process.
 
 ## Incident recovery and next phase
 
