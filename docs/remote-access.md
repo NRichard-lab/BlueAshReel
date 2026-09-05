@@ -11,7 +11,7 @@ search, proxy an HTTP request, read a path, or play remote media.
 
 1. Install the optional isolated connector using the deployment instructions below.
 2. Sign in at `https://blueashreel.com` and select **Pair New Server**.
-3. Sign in as a local Owner and open **Settings → Remote Access** (also `/remote-access`).
+3. Sign in as a local Owner and open **Settings â†’ Remote Access** (also `/remote-access`).
 4. Enter the five-minute, single-use pairing code and a friendly name. Avoid putting
    personal paths or media names in the friendly name.
 5. Explicitly check the sharing explanation and select **Pair and enable remote access**.
@@ -151,16 +151,12 @@ startup DNS is unavailable, the process still handles local disablement/unpairin
 with all network access denied; restart it after DNS recovers. The isolation setup
 requires Docker IPv4 and `iptables` support and fails closed if setup fails.
 
-## Native Windows opt-in installation
+## Native Windows installation
 
-The unsigned development installer remains private. Its optional connector helper
-is `support/install-remote.ps1`; remote access remains disabled until local Owner
-pairing. Run this helper from the tested installed payload with the exact installed
-`ProgramDir` and `DataDir` in an elevated PowerShell:
-
-```powershell
-& '<ProgramDir>\support\install-remote.ps1' -Action Install -ProgramDir '<ProgramDir>' -DataDir '<DataDir>'
-```
+The unsigned development EXE provisions the isolated connector automatically.
+It remains disabled and creates no identity until the local Owner pairs it in
+**Settings → Remote Access**. No additional PowerShell setup is needed. The
+packaged `support/install-remote.ps1` remains the administrator recovery helper.
 
 The helper verifies the existing installation identity and paths, copies only the
 pinned interpreter/remote modules/dependencies into `runtime\remote-python`, and
@@ -199,14 +195,25 @@ Reused remote state is checked for reparse points and hardlinks before any ACL
 or configuration update.
 The helper saves an ACL-protected `.env` backup before adding `REMOTE_CONTROL_DIR`.
 
-The base installer refuses an upgrade or approved-media-root change while an
-optional connector service exists. Unpair first, run the helper with `-Action
-Remove`, perform the update, then install the optional connector again. Removal
-stops/unregisters only its verified service, removes only its firewall rules,
-and retires its separate code into protected remote state for rollback; private
-state is preserved. This explicit process ensures updated sandbox code, pins
-and privacy boundaries are revalidated. Base uninstall also removes the optional
-service before removing application binaries, and preserves remote state.
+Repair and upgrade stop the verified connector, retain its virtual service
+identity and DPAPI profile, retire only its separate runtime into protected
+remote state, and install/revalidate the current sandbox code, policy, pins and
+ACLs before restarting it. The key and account association remain unchanged.
+The new EXE embeds matching pre-upgrade helpers so an older paired installation
+can use the new preservation path before its program files are replaced.
+Changing approved media roots rebuilds and revalidates the denial policy too.
+
+Offline installation uses an empty destination list, blocks every destination
+and leaves the TLS allow rule disabled. Re-run the EXE to repair after DNS
+recovers. A plain service restart does not refresh static destination pins.
+An explicit endpoint refresh with unavailable DNS preserves the existing rules.
+
+Default uninstall removes the verified connector service and rules while
+preserving protected remote state and local data. The explicit data-deletion
+choice also purges the exact marked default `<DataDir>-Remote` sibling after
+checking its owner, scope, reparse points and hardlinks. Unpair first to complete
+central revocation; removing local state while offline cannot itself revoke the
+portal's association.
 
 Native acceptance includes a real AppContainer token, allowed spool write, denied
 synthetic private-file read and DPAPI encryption/decryption across child-process

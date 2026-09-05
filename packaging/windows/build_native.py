@@ -32,6 +32,10 @@ ARTIFACTS = REPOSITORY / "artifacts" / "native-dev"
 PRODUCT = json.loads((REPOSITORY / "config" / "product.json").read_text(encoding="utf-8"))
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".vite", ".cache"}
+FRONTEND_DEVELOPMENT_DIRS = {
+    "test", "tests", "__tests__", "fixtures", "__fixtures__", "example", "examples",
+    "benchmark", "benchmarks", ".github", ".vscode", ".idea", ".bin", "bin",
+}
 NOTICE_PREFIXES = ("license", "licence", "copying", "notice", "copyright")
 EMBEDDED_PTH = "python313.zip\n.\nLib/site-packages\n../../backend\n../../.\nimport site\n"
 
@@ -159,7 +163,7 @@ def extract_zip(archive: Path, destination: Path, members: dict[str, str] | None
                 raise BuildError(f"Required archive files are absent: {sorted(missing)}")
 
 
-def copy_tree(source: Path, destination: Path) -> None:
+def copy_tree(source: Path, destination: Path, *, frontend_runtime: bool = False) -> None:
     if not source.is_dir():
         raise BuildError(f"Required build output directory is missing: {source}")
     ensure_no_links(source)
@@ -167,10 +171,13 @@ def copy_tree(source: Path, destination: Path) -> None:
     for entry in sorted(source.iterdir()):
         if entry.name in SKIP_DIRS or entry.name.startswith(".env") or entry.suffix in {".pyc", ".pyo"}:
             continue
+        if frontend_runtime and (entry.name in FRONTEND_DEVELOPMENT_DIRS or entry.suffix == ".map"
+                                 or entry.name.endswith((".d.ts", ".d.cts", ".d.mts"))):
+            continue
         ensure_no_links(entry)
         target = destination / entry.name
         if entry.is_dir():
-            copy_tree(entry, target)
+            copy_tree(entry, target, frontend_runtime=frontend_runtime)
         elif entry.is_file():
             shutil.copy2(entry, target)
         else:
@@ -474,7 +481,7 @@ def stage_ffmpeg(source: Path, stage: Path, lock: dict[str, Any]) -> None:
         verify_file(stage / "runtime" / "ffmpeg" / name, match)
     copy_tree(source / "licenses", stage / "licenses" / "ffmpeg")
     copy_tree(source / "source", stage / "source" / "ffmpeg")
-    for name in ("build-ffmpeg.sh", "ffmpeg.Dockerfile", "mingw-toolchain.cmake"):
+    for name in ("build-ffmpeg.sh", "ffmpeg.Dockerfile", "mingw-toolchain.cmake", "ffmpeg-redistribution.md"):
         copy_required(PACKAGING / name, stage / "source" / "ffmpeg" / name)
     if not (stage / "licenses" / "ffmpeg" / "FFmpeg-GPL-3.0.txt").is_file():
         raise BuildError("FFmpeg GPL redistribution notice is missing")
@@ -503,10 +510,27 @@ def assert_payload(stage: Path) -> None:
         ensure_no_links(path)
         if path.name.startswith(".env") or path.suffix in {".sqlite", ".sqlite3", ".db", ".pyc", ".log"}:
             raise BuildError(f"Runtime state or secret configuration must not enter the payload: {path.name}")
+        relative = path.relative_to(stage)
+        if relative.parts[0] == "frontend" and any(part in FRONTEND_DEVELOPMENT_DIRS for part in relative.parts[1:]):
+            raise BuildError(f"Frontend development material entered the payload: {relative}")
+        if path.is_file() and path.suffix in {".json", ".js", ".cjs", ".mjs", ".py", ".ps1", ".txt", ".yaml"}:
+            content = path.read_bytes().lower()
+            host_paths = (str(REPOSITORY), REPOSITORY.as_posix(), str(REPOSITORY).replace("\\", "\\\\"))
+            if any(value.lower().encode() in content for value in host_paths):
+                raise BuildError(f"Build checkout path entered the payload: {relative}")
+
+
+def package_versions(args: argparse.Namespace, lock: dict[str, Any]) -> tuple[str, str]:
+    version = getattr(args, "version", None) or lock["version"]
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)-development\.(\d+)", version)
+    if not match or any(int(part) > 65535 for part in match.groups()):
+        raise BuildError("Development version must be major.minor.patch-development.build with 16-bit numeric fields")
+    return version, ".".join(str(int(part)) for part in match.groups())
 
 
 def stage_payload(args: argparse.Namespace) -> Path:
     lock = load_lock(args.component_lock)
+    version, file_version = package_versions(args, lock)
     if os.name != "nt":
         raise BuildError("Native payload assembly runs on Windows; unit tests are platform-independent")
     downloadable = [*lock["artifacts"], *lock.get("npm_notices", []), *lock.get("npm_sources", [])]
@@ -539,8 +563,9 @@ def stage_payload(args: argparse.Namespace) -> Path:
         if sbom.is_file():
             copy_required(sbom, stage / "licenses" / sbom.name)
     inno_notice = next((path for path in args.iscc.parent.glob("*") if path.name.lower() in {"license.txt", "license.rtf"}), None)
-    if inno_notice:
-        copy_required(inno_notice, stage / "licenses" / ("Inno-Setup-" + inno_notice.name))
+    if inno_notice is None:
+        raise BuildError("The installer engine's original Inno Setup redistribution notice is required")
+    copy_required(inno_notice, stage / "licenses" / ("Inno-Setup-" + inno_notice.name))
     stage_ffmpeg(args.ffmpeg_dir, stage, lock)
     copy_tree(REPOSITORY / "backend" / "app", stage / "backend" / "app")
     copy_tree(REPOSITORY / "backend" / "alembic", stage / "backend" / "alembic")
@@ -548,7 +573,7 @@ def stage_payload(args: argparse.Namespace) -> Path:
     for name in ("backup.py", "backup_format.py", "restore_validate.py", "__init__.py"):
         copy_required(REPOSITORY / "scripts" / name, stage / "scripts" / name)
     copy_required(REPOSITORY / "config" / "product.json", stage / "config" / "product.json")
-    copy_tree(REPOSITORY / "frontend" / "dist" / "standalone", stage / "frontend")
+    copy_tree(REPOSITORY / "frontend" / "dist" / "standalone", stage / "frontend", frontend_runtime=True)
     for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1"):
         copy_required(PACKAGING / name, stage / "support" / name)
     if (PACKAGING / "service-template.xml").is_file():
@@ -615,8 +640,8 @@ def stage_payload(args: argparse.Namespace) -> Path:
         cwd=REPOSITORY, capture_output=True, text=True, check=False,
     )
     write_json(stage / "included-components.json", {
-        "schema_version": 1, "product": PRODUCT["name"], "package_name": PRODUCT["package_name"], "version": lock["version"],
-        "windows_file_version": lock["windows_file_version"], "architecture": "x64",
+        "schema_version": 1, "product": PRODUCT["name"], "package_name": PRODUCT["package_name"], "version": version,
+        "windows_file_version": file_version, "architecture": "x64",
         "built_at": dt.datetime.now(dt.UTC).isoformat(), "source_revision": revision.stdout.strip(),
         "source_revision_dirty": bool(worktree.stdout.strip()) if worktree.returncode == 0 else None,
         "unsigned": True, "external_prerequisites": [],
@@ -638,9 +663,10 @@ def compile_installer(stage: Path, args: argparse.Namespace) -> Path:
     inside(output, REPOSITORY / "artifacts")
     output.mkdir(parents=True, exist_ok=True)
     lock = load_lock(args.component_lock)
+    version, file_version = package_versions(args, lock)
     run([
         str(args.iscc), "/DPayloadDir=" + str(stage), "/DOutputDir=" + str(output),
-        "/DProductVersion=" + lock["version"], "/DFileVersion=" + lock["windows_file_version"],
+        "/DProductVersion=" + version, "/DFileVersion=" + file_version,
         "/DBrandName=" + PRODUCT["name"], "/DPackageName=" + PRODUCT["package_name"],
         "/DProductDomain=" + PRODUCT["domain"],
         str(PACKAGING / "installer.iss"),
@@ -648,10 +674,14 @@ def compile_installer(stage: Path, args: argparse.Namespace) -> Path:
     installer = output / f"{PRODUCT['package_name']}-Setup-Development-x64.exe"
     if not installer.is_file():
         raise BuildError("Inno Setup did not produce the expected development installer")
+    manifest = json.loads((stage / "included-components.json").read_text(encoding="utf-8"))
     write_json(output / "installer-artifact.json", {
-        "path": str(installer), "size": installer.stat().st_size, "sha256": digest(installer),
-        "unsigned": True, "payload": str(stage), "version": lock["version"],
-        "windows_file_version": lock["windows_file_version"],
+        "filename": installer.name, "size": installer.stat().st_size, "sha256": digest(installer),
+        "unsigned": True, "payload": stage.relative_to(REPOSITORY).as_posix(), "version": version,
+        "windows_file_version": file_version, "source_revision": manifest["source_revision"],
+        "source_revision_dirty": manifest["source_revision_dirty"], "built_at": manifest["built_at"],
+        "component_inventory_sha256": digest(stage / "included-components.json"),
+        "payload_inventory_sha256": digest(stage.with_name(stage.name + ".files.json")),
     })
     (output / (installer.name + ".sha256")).write_text(digest(installer) + "  " + installer.name + "\n", encoding="ascii")
     return installer
@@ -662,6 +692,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--python", default=sys.executable, help="Build-only Python with pip; never used by the installer")
     result.add_argument("--pnpm", default="pnpm")
     result.add_argument("--component-lock", type=Path, default=PACKAGING / "components.lock.json")
+    result.add_argument("--version", help="Development package version override; dependency pins remain unchanged")
     result.add_argument("--downloads", type=Path, default=ARTIFACTS / "downloads")
     result.add_argument("--wheelhouse", type=Path, default=ARTIFACTS / "wheels")
     result.add_argument("--ffmpeg-dir", type=Path, default=ARTIFACTS / "ffmpeg")
@@ -677,6 +708,10 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     try:
+        state = subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"],
+                               cwd=REPOSITORY, capture_output=True, text=True, check=True)
+        if state.stdout.strip():
+            raise BuildError("Commit the reviewed source before building a development installer")
         stage = stage_payload(args)
         installer = None if args.skip_installer else compile_installer(stage, args)
         print(json.dumps({"payload": str(stage), "installer": str(installer) if installer else None}, indent=2))

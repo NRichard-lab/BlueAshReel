@@ -32,7 +32,7 @@ def locked_artifact(content: bytes = b"pinned dependency") -> dict[str, str]:
 
 def test_repository_component_pins_are_complete() -> None:
     lock = builder.load_lock()
-    assert lock["version"] == "0.1.0-dev.2"
+    assert lock["version"] == "0.1.0-development.4"
     assert {item["id"] for item in lock["artifacts"]} >= {"python", "node", "winsw", "caddy", "inno"}
     assert {item["id"] for item in lock["ffmpeg_sources"]} == {
         "ffmpeg", "x264", "nv-codec-headers", "amf", "libvpl",
@@ -133,6 +133,33 @@ def test_source_copy_excludes_secrets_caches_and_bytecode(tmp_path: Path) -> Non
     (source / "__pycache__" / "cached.pyc").write_bytes(b"cache")
     builder.copy_tree(source, target)
     assert [path.name for path in target.iterdir()] == ["main.py"]
+
+
+def test_frontend_runtime_excludes_developer_fixtures_and_maps_but_preserves_code_and_license(tmp_path: Path) -> None:
+    source, target = tmp_path / "source", tmp_path / "target"
+    (source / "tests").mkdir(parents=True)
+    (source / "tests" / "fixture.json").write_text("synthetic fixture")
+    (source / "server.js").write_text("export default {}")
+    (source / "server.js.map").write_text("build paths")
+    (source / "LICENSE").write_text("original copyright notice")
+    builder.copy_tree(source, target, frontend_runtime=True)
+    assert sorted(path.name for path in target.iterdir()) == ["LICENSE", "server.js"]
+
+
+@pytest.mark.parametrize("version", ["1.2.3", "1.2.3-development.65536", "../bad", "1.2.3-stable.4"])
+def test_package_version_rejects_invalid_development_identifiers(version: str) -> None:
+    args = builder.parser().parse_args(["--version", version])
+    with pytest.raises(builder.BuildError, match="Development version"):
+        builder.package_versions(args, builder.load_lock())
+
+
+def test_candidate_version_override_preserves_exact_dependency_pins() -> None:
+    lock = builder.load_lock()
+    original = json.dumps(lock)
+    assert builder.package_versions(builder.parser().parse_args(["--version", "0.1.0-development.3"]), lock) == (
+        "0.1.0-development.3", "0.1.0.3",
+    )
+    assert json.dumps(lock) == original
 
 
 def test_python_requirements_require_hashes_and_versions(tmp_path: Path) -> None:
@@ -255,6 +282,11 @@ def test_installer_compile_uses_payload_and_output_defines(tmp_path: Path, monke
     monkeypatch.setattr(builder, "REPOSITORY", tmp_path)
     monkeypatch.setattr(builder, "run", lambda command: seen.append(command))
     stage = tmp_path / "artifacts" / "package"
+    stage.mkdir()
+    (stage / "included-components.json").write_text(json.dumps({
+        "source_revision": "a" * 40, "source_revision_dirty": False, "built_at": "2026-09-05T00:00:00Z",
+    }))
+    stage.with_name(stage.name + ".files.json").write_text('{"files":[]}')
     assert builder.compile_installer(stage, args) == installer
     assert "/DPayloadDir=" + str(stage) in seen[0]
     assert "/DOutputDir=" + str(args.output_dir) in seen[0]
@@ -266,6 +298,9 @@ def test_installer_compile_uses_payload_and_output_defines(tmp_path: Path, monke
     assert artifact["version"] == lock["version"]
     assert artifact["windows_file_version"] == lock["windows_file_version"]
     assert artifact["size"] == len(b"fixture installer")
+    assert artifact["source_revision"] == "a" * 40
+    assert not artifact["source_revision_dirty"]
+    assert str(tmp_path) not in json.dumps(artifact)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Real embedded Windows runtime path regression")

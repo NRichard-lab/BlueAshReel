@@ -16,7 +16,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $TaskPrefix = if ($Instance -eq 'development') { 'BlueReelDevelopment' } else { 'BlueReel' }
-$TaskDataName = if ($Instance -eq 'development') { 'BlueReel-Development' } else { 'BlueReel' }
+$TaskDataName = if ($Instance -eq 'development') { 'BlueAshReel-Development' } else { 'BlueReel' }
 $TaskRoles = @('API','Worker','Web','Proxy')
 $TaskStopOrder = @('Proxy','Worker','API','Web')
 $TaskDisplayName = 'Media server'
@@ -83,10 +83,12 @@ function Get-OptionalRemoteService {
     return $taskRemote
 }
 
-function Assert-RemoteUpgradeReady {
-    if (Get-OptionalRemoteService) {
-        throw 'Before upgrading or changing approved media roots, unpair Remote Access, then run support\install-remote.ps1 -Action Remove with this ProgramDir and DataDir. The connector must be reinstalled after the update so its sandbox code, privacy policy and destination rules are revalidated. Local media and connector state are preserved.'
-    }
+function Invoke-RemoteMaintenance([string]$RemoteAction) {
+    # During pre-upgrade Inno extracts this script and its matching connector
+    # helper together from the NEW verified payload, before replacing old files.
+    $taskRemoteHelper = Join-Path $PSScriptRoot 'install-remote.ps1'
+    if (-not (Test-Path -LiteralPath $taskRemoteHelper)) { throw 'The packaged connector provisioning helper is missing.' }
+    & $taskRemoteHelper -Action $RemoteAction -ProgramDir $ProgramDir -DataDir $DataDir
 }
 
 function Stop-Instance {
@@ -456,11 +458,11 @@ function Remove-InstanceFirewall {
     }
 }
 
-function Start-Instance {
+function Start-Instance([switch]$SkipRemote) {
     foreach ($taskRole in $TaskRoles) { Start-Service -Name ($TaskPrefix + $taskRole) -ErrorAction Stop }
     Invoke-Native 'health'
     $taskRemote = Get-OptionalRemoteService
-    if ($taskRemote -and $taskRemote.State -eq 'Stopped') { Start-Service -Name $taskRemote.Name }
+    if (-not $SkipRemote -and $taskRemote -and $taskRemote.State -eq 'Stopped') { Start-Service -Name $taskRemote.Name }
     foreach ($taskRole in $TaskRoles) {
         if ((Get-Service -Name ($TaskPrefix + $taskRole)).Status -ne 'Running') { throw 'A media-server component did not remain running.' }
     }
@@ -519,7 +521,7 @@ try {
     $TaskPython = Join-Path $ProgramDir 'runtime\python\python.exe'
     switch ($Action) {
         'Install' {
-            Assert-RemoteUpgradeReady
+            $null = Get-OptionalRemoteService
             foreach ($taskRole in $TaskRoles) { $null = Assert-ServiceIdentity $taskRole }
             Stop-Instance
             Set-PrivateDataAcl
@@ -536,10 +538,19 @@ try {
             Set-ServiceDataAcl
             Set-InstanceFirewall
             Invoke-Native 'migrate'
+            # The one-EXE install includes a ready, isolated connector. It stays
+            # disabled and creates no identity until the local Owner pairs it.
+            # Repair replaces its code and policy while retaining its DPAPI key.
+            Invoke-RemoteMaintenance 'Install'
             Start-Instance
         }
         'Stop' { Stop-Instance }
-        'PrepareUpgrade' { Assert-RemoteUpgradeReady; Invoke-Native 'prepare-upgrade'; Stop-Instance }
+        'PrepareUpgrade' {
+            $null = Get-OptionalRemoteService
+            Invoke-Native 'prepare-upgrade'
+            Stop-Instance
+            if (Get-OptionalRemoteService) { Invoke-RemoteMaintenance 'PrepareUpgrade' }
+        }
         'Health' { Invoke-Native 'health' }
         'Backup' { Invoke-Native 'backup' }
         'ValidateBackup' {
@@ -554,15 +565,16 @@ try {
             Invoke-Native 'validate-backup' @('--archive',$Archive)
         }
         'ConfigureMedia' {
-            Assert-RemoteUpgradeReady
             if (-not $RootsFile) {
                 if (-not $Interactive) { throw 'An explicit approved-root list is required.' }
                 $RootsFile = Select-ApprovedRoots
                 if (-not $RootsFile) { exit 0 }
             }
             Stop-Instance
-            try { Invoke-Native 'change-media' @('--roots-file',$RootsFile) }
-            finally { Start-Instance }
+            try {
+                Invoke-Native 'change-media' @('--roots-file',$RootsFile)
+                Invoke-RemoteMaintenance 'Install'
+            } finally { Start-Instance -SkipRemote }
         }
         'ConfigureNetwork' {
             if ($Interactive) {
@@ -580,11 +592,7 @@ try {
         'Remove' {
             Stop-Instance
             if (Get-OptionalRemoteService) {
-                $taskRemoteHelper = Join-Path $ProgramDir 'support\install-remote.ps1'
-                if (-not (Test-Path -LiteralPath $taskRemoteHelper)) {
-                    throw 'The optional remote connector removal helper is missing; installation was preserved.'
-                }
-                & $taskRemoteHelper -Action Remove -ProgramDir $ProgramDir -DataDir $DataDir
+                Invoke-RemoteMaintenance 'Remove'
             }
             foreach ($taskRole in $TaskStopOrder) {
                 if ($null -ne (Assert-ServiceIdentity $taskRole)) {
@@ -593,10 +601,15 @@ try {
             }
             Remove-InstanceFirewall
             if ($RemoveData) {
+                if ($Instance -eq 'development' -and
+                    $DataDir -ieq (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'BlueReel-Development')) {
+                    $TaskDataName = 'BlueReel-Development'
+                }
                 $taskExpected = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) $TaskDataName
                 if ($ConfirmDataRemoval -cne $TaskDataName -or $DataDir -ine $taskExpected) { throw 'Explicit data removal requires the exact instance name and default ProgramData target.' }
                 if ((Get-Content -LiteralPath (Join-Path $DataDir '.bluereel-native-instance') -Raw).Trim() -cne $TaskPrefix) { throw 'Native data marker mismatch; no data was removed.' }
                 if (Get-ChildItem -LiteralPath $DataDir -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1) { throw 'Data contains a reparse point; no recursive removal was attempted.' }
+                Invoke-RemoteMaintenance 'PurgeState'
                 # Exact canonical ProgramData instance validated above; never media or workspace.
                 Remove-Item -LiteralPath $DataDir -Recurse -Force
                 Write-Output 'Explicitly selected instance data was permanently removed; source media was not touched.'

@@ -25,11 +25,17 @@ extracts at each service startup. Installation does not download dependencies.
 | Item | Development package | Stable packaging definition |
 | --- | --- | --- |
 | Product | Blue Ash Reel Development | Blue Ash Reel |
-| Program files | `C:\Program Files\BlueReel Development` | `C:\Program Files\BlueReel` |
-| Persistent data | `C:\ProgramData\BlueReel-Development` | `C:\ProgramData\BlueReel` |
+| Program files | `C:\Program Files\BlueAshReel Development` | `C:\Program Files\BlueReel` |
+| Persistent data | `C:\ProgramData\BlueAshReel-Development` | `C:\ProgramData\BlueReel` |
 | Browser port | 18080 | 8080 |
 | Internal API / web | 18081 / 18082 | 8081 / 8082 |
 | Service prefix | `BlueReelDevelopment` | `BlueReel` |
+
+Fresh development installations use the paths above. Registered or retained
+legacy `BlueReel Development` / `BlueReel-Development` instances keep their
+existing paths, AppId, service IDs and registry identity; ambiguous dual-state
+installations are rejected. Repair/upgrade also preserve the isolated connector
+identity and refresh its sandbox automatically.
 
 Only the development identity was installed/tested in this phase. Stable defaults
 are not a claim of a separately validated stable/public release.

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Install','RefreshEndpoint','Stop','Remove')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Install','PrepareUpgrade','RefreshEndpoint','Stop','Remove','PurgeState')][string]$Action,
     [Parameter(Mandatory)][string]$ProgramDir,
     [Parameter(Mandatory)][string]$DataDir
 )
@@ -44,10 +44,20 @@ function Set-ScopedAcl([string]$Path, [hashtable]$Rules, [switch]$LowIntegrity) 
 }
 
 function Read-Pins {
-    $taskPins = @([Net.Dns]::GetHostAddresses('blueashreel.com') |
-        Where-Object AddressFamily -eq ([Net.Sockets.AddressFamily]::InterNetwork) |
-        ForEach-Object IPAddressToString | Sort-Object -Unique)
-    if ($taskPins.Count -lt 1 -or $taskPins.Count -gt 16) { throw 'Canonical portal IPv4 destinations could not be verified.' }
+    $taskPins = @()
+    try {
+        $taskPins = @([Net.Dns]::GetHostAddresses('blueashreel.com') |
+            Where-Object AddressFamily -eq ([Net.Sockets.AddressFamily]::InterNetwork) |
+            ForEach-Object IPAddressToString | Sort-Object -Unique)
+    } catch {
+        # An offline installation still provisions the disabled connector. With
+        # no pins every destination is blocked until a repair refreshes DNS.
+        if ($Action -eq 'RefreshEndpoint') { throw 'Canonical portal DNS is unavailable; endpoint refresh was not applied.' }
+    }
+    if ($Action -eq 'RefreshEndpoint' -and $taskPins.Count -eq 0) {
+        throw 'Canonical portal IPv4 destinations are unavailable; endpoint refresh was not applied.'
+    }
+    if ($taskPins.Count -gt 16) { throw 'Canonical portal IPv4 destination set is unexpectedly large.' }
     return $taskPins
 }
 
@@ -65,7 +75,8 @@ function Assert-ConnectorFirewall {
     foreach ($taskSuffix in @('OtherDestinations','OtherTCP','UDP','ICMP','TLS','NoInbound')) {
         $taskEffective = @(Get-NetFirewallRule -PolicyStore ActiveStore -Name "$TaskName-$taskSuffix" -ErrorAction Stop)
         $taskExpectedAction = if ($taskSuffix -eq 'TLS') { 'Allow' } else { 'Block' }
-        if ($taskEffective.Count -ne 1 -or [string]$taskEffective[0].Enabled -ne 'True' -or
+        $taskExpectedEnabled = if ($taskSuffix -eq 'TLS' -and $TaskPins.Count -eq 0) { 'False' } else { 'True' }
+        if ($taskEffective.Count -ne 1 -or [string]$taskEffective[0].Enabled -ne $taskExpectedEnabled -or
             [string]$taskEffective[0].Action -ne $taskExpectedAction -or $taskEffective[0].Group -cne $TaskName) {
             throw 'Connector firewall rules are absent or overridden in effective Windows policy.'
         }
@@ -77,7 +88,7 @@ function Assert-ConnectorFirewall {
     }
 }
 
-function Assert-ConnectorState {
+function Assert-ConnectorState([string]$Root = $TaskRemoteData) {
     # lstat checks hardlinks as well as reparse points before any inherited ACL
     # or state-file mutation, including endpoint refreshes and reinstalls.
     $taskCheckTree = @'
@@ -91,7 +102,7 @@ for parent,dirs,files in os.walk(root,followlinks=False,onerror=reject_unreadabl
         if getattr(info,'st_file_attributes',0)&1024 or (stat.S_ISREG(info.st_mode) and info.st_nlink!=1):
             raise SystemExit('Connector state contains a filesystem link; it was preserved.')
 '@
-    Invoke-Checked $TaskPython @('-I','-B','-c',$taskCheckTree,$TaskRemoteData)
+    Invoke-Checked $TaskPython @('-I','-B','-c',$taskCheckTree,$Root)
 }
 
 function Assert-ConnectorReady([double]$StartedAt) {
@@ -149,8 +160,11 @@ function Set-ConnectorFirewall([string[]]$Pins) {
         -Direction Outbound -Action Block -Protocol UDP | Out-Null
     New-NetFirewallRule @taskCommon -Name "$TaskName-ICMP" -DisplayName "$TaskDisplayName no ICMP" `
         -Direction Outbound -Action Block -Protocol ICMPv4 | Out-Null
-    New-NetFirewallRule @taskCommon -Name "$TaskName-TLS" -DisplayName "$TaskDisplayName canonical TLS" `
-        -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -RemoteAddress $Pins | Out-Null
+    $taskTls = $taskCommon.Clone()
+    $taskDestinations = $Pins
+    if ($Pins.Count -eq 0) { $taskTls.Enabled = 'False'; $taskDestinations = @('Any') }
+    New-NetFirewallRule @taskTls -Name "$TaskName-TLS" -DisplayName "$TaskDisplayName canonical TLS" `
+        -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -RemoteAddress $taskDestinations | Out-Null
     New-NetFirewallRule @taskCommon -Name "$TaskName-NoInbound" -DisplayName "$TaskDisplayName no inbound" `
         -Direction Inbound -Action Block -Protocol Any | Out-Null
     Assert-ConnectorFirewall
@@ -184,6 +198,36 @@ if ($TaskService -and $TaskService.State -ne 'Stopped') {
     (Get-Service -Name $TaskName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(30))
 }
 if ($Action -eq 'Stop') { return }
+if (Test-Path -LiteralPath $TaskRemoteData) { Assert-ConnectorState }
+if (Test-Path -LiteralPath $TaskRemoteRuntime) { Assert-ConnectorState $TaskRemoteRuntime }
+if ($Action -eq 'PurgeState') {
+    if ($TaskService -or (Test-Path -LiteralPath $TaskRemoteRuntime)) { throw 'Remove the connector service and runtime before explicit state removal.' }
+    if (-not (Test-Path -LiteralPath $TaskRemoteData)) { return }
+    $taskCommonData = [Environment]::GetFolderPath('CommonApplicationData')
+    $taskAllowedData = if ($TaskMetadata.service_prefix -eq 'BlueReelDevelopment') {
+        @((Join-Path $taskCommonData 'BlueAshReel-Development'), (Join-Path $taskCommonData 'BlueReel-Development'))
+    } else { @((Join-Path $taskCommonData 'BlueReel')) }
+    if ($DataDir -notin $taskAllowedData -or $TaskRemoteData -ine ($DataDir + '-Remote') -or
+        [IO.File]::ReadAllText((Join-Path $TaskRemoteData '.connector-instance')).Trim() -cne $TaskName) {
+        throw 'Explicit connector state removal requires the exact marked default instance directory.'
+    }
+    $taskAcl = Get-Acl -LiteralPath $TaskRemoteData
+    if ($taskAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-32-544' -or
+        -not $taskAcl.AreAccessRulesProtected) { throw 'Connector state protection changed; no data was removed.' }
+    # Exact resolved, marked default sibling checked above; the complete tree
+    # was rejected for reparse points and hardlinks before this recursive delete.
+    Remove-Item -LiteralPath $TaskRemoteData -Recurse -Force
+    return
+}
+if ($Action -eq 'PrepareUpgrade') {
+    if (-not $TaskService -or -not (Test-Path -LiteralPath $TaskRemoteRuntime) -or
+        [IO.File]::ReadAllText((Join-Path $TaskRemoteData '.connector-instance')).Trim() -cne $TaskName) {
+        throw 'Connector upgrade identity is incomplete; state and program files were preserved.'
+    }
+    # Keep the deterministic virtual service identity and DPAPI profile. The
+    # new install retires only this sandbox runtime after replacing base code.
+    return
+}
 if ($Action -eq 'Remove') {
     if (Test-Path -LiteralPath $TaskRemoteRuntime) {
         $taskMarker = Join-Path $TaskRemoteData '.connector-instance'
@@ -203,7 +247,6 @@ if ($Action -eq 'Remove') {
     return
 }
 $TaskPins = @(Read-Pins)
-if (Test-Path -LiteralPath $TaskRemoteData) { Assert-ConnectorState }
 if ($Action -eq 'RefreshEndpoint') {
     if (-not $TaskService) { throw 'Install the isolated connector before refreshing its endpoint.' }
     $taskPolicyData = Get-Content -LiteralPath $TaskPolicy -Raw | ConvertFrom-Json
@@ -233,7 +276,13 @@ if (Test-Path -LiteralPath $TaskRemoteData) {
     New-Item -ItemType Directory -Path $TaskRemoteData | Out-Null
     Set-ScopedAcl $TaskRemoteData @{}
 }
-if (Test-Path -LiteralPath $TaskRemoteRuntime) { throw 'Remote runtime already exists. Use a reviewed package upgrade or RefreshEndpoint; files were preserved.' }
+if (Test-Path -LiteralPath $TaskRemoteRuntime) {
+    if (-not $TaskService) { throw 'An unregistered connector runtime remains; files were preserved for administrator recovery.' }
+    $taskRetired = Assert-Path (Join-Path $TaskRemoteData ('retired-runtime-' + (Get-Date -Format 'yyyyMMddHHmmssfff')))
+    if ([IO.Path]::GetDirectoryName($TaskRemoteRuntime) -ine (Join-Path $ProgramDir 'runtime') -or
+        [IO.Path]::GetDirectoryName($taskRetired) -ine $TaskRemoteData) { throw 'Runtime retirement escaped its scope.' }
+    Move-Item -LiteralPath $TaskRemoteRuntime -Destination $taskRetired
+}
 foreach ($taskDirectory in @('control','identity','configuration','logs')) {
     New-Item -ItemType Directory -Path (Join-Path $TaskRemoteData $taskDirectory) -Force | Out-Null
 }
@@ -285,7 +334,7 @@ $null=$taskDocument.DocumentElement.AppendChild($taskAccount)
 $taskLog=$taskDocument.CreateElement('log');$taskLog.SetAttribute('mode','none')
 $null=$taskDocument.DocumentElement.AppendChild($taskLog)
 $taskDocument.Save($TaskXml)
-Invoke-Checked $TaskWrapper @('install')
+if (-not $TaskService) { Invoke-Checked $TaskWrapper @('install') }
 Invoke-Checked 'sc.exe' @('sidtype',$TaskName,'unrestricted')
 $TaskSid=([Security.Principal.NTAccount]::new('NT SERVICE',$TaskName)).Translate([Security.Principal.SecurityIdentifier]).Value
 $TaskApiSid=([Security.Principal.NTAccount]::new('NT SERVICE',($TaskMetadata.service_prefix+'API'))).Translate([Security.Principal.SecurityIdentifier]).Value

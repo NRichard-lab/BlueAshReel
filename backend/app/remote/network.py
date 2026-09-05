@@ -16,7 +16,10 @@ def pin_resolution(addresses: list[str]) -> None:
         if host not in {"blueashreel.com", b"blueashreel.com"} or int(port) != 443:
             raise OSError("Connector destination is not allowlisted")
         if not pins:
-            raise OSError("Canonical destination unavailable; restart the isolated connector after DNS recovers")
+            raise OSError(
+                "Canonical destination unavailable; repair the Agent installation after DNS recovers "
+                "to refresh endpoint pins"
+            )
         return [item for address in pins for item in original(address, 443, *args, **kwargs)]
 
     socket.getaddrinfo = pinned

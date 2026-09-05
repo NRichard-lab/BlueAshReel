@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "product": "BlueReel Development",
-  "version": "0.1.0-dev.2",
-  "windows_file_version": "0.1.0.2",
+  "product": "Blue Ash Reel Development",
+  "version": "0.1.0-development.4",
+  "windows_file_version": "0.1.0.4",
   "architecture": "x64",
   "minimum_windows": "Windows 10 22H2 or Windows 11 (inbox .NET Framework 4.8)",
   "artifacts": [
@@ -19,7 +19,8 @@
     {"id":"yoga_notice","name":"Yoga original MIT notice","version":"3.2.1","filename":"yoga-3.2.1-LICENSE.txt","url":"https://raw.githubusercontent.com/facebook/yoga/042f5013152eb81c1552dec945b88f7b95ca350f/LICENSE","sha256":"52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85","role":"notice","license":"MIT","packages":["yoga-layout@3.2.1"]},
     {"id":"resvg_notice","name":"resvg-js original MPL notice","version":"2.4.0","filename":"resvg-js-2.4.0-LICENSE.txt","url":"https://raw.githubusercontent.com/yisibl/resvg-js/30ac8d830d44802df7e967569c92edabbbcec017/LICENSE","sha256":"4b89d4518bd135ab4ee154a7bce722246b57a98c3d7efc1a09409898160c2bd1","role":"notice","license":"MPL-2.0","packages":["@resvg/resvg-wasm@2.4.0"]},
     {"id":"input_otp_notice","name":"input-otp original MIT notice","version":"1.4.2","filename":"input-otp-1.4.2-LICENSE.txt","url":"https://raw.githubusercontent.com/guilhermerodz/input-otp/81ccdb48c010d800b24942aa231909f0c971b1ca/LICENSE","sha256":"079031192fea535a245aa64a637d8433c406b82a14f91c3606b1d63e41c00152","role":"notice","license":"MIT","packages":["input-otp@1.4.2"]},
-    {"id":"embla_notice","name":"Embla Carousel original MIT notice","version":"8.5.2","filename":"embla-carousel-8.5.2-LICENSE.txt","url":"https://raw.githubusercontent.com/davidjerleke/embla-carousel/5ee3c4ed0251dc685198d0ac21dc3e754b865476/LICENSE","sha256":"992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093","role":"notice","license":"MIT","packages":["embla-carousel@8.5.2","embla-carousel-react@8.5.2","embla-carousel-reactive-utils@8.5.2"]}
+    {"id":"embla_notice","name":"Embla Carousel original MIT notice","version":"8.5.2","filename":"embla-carousel-8.5.2-LICENSE.txt","url":"https://raw.githubusercontent.com/davidjerleke/embla-carousel/5ee3c4ed0251dc685198d0ac21dc3e754b865476/LICENSE","sha256":"992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093","role":"notice","license":"MIT","packages":["embla-carousel@8.5.2","embla-carousel-react@8.5.2","embla-carousel-reactive-utils@8.5.2"]},
+    {"id":"react_scroll_bar_notice","name":"react-remove-scroll-bar upstream MIT notice","version":"2.3.8","filename":"react-remove-scroll-bar-LICENSE.txt","url":"https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/7301c160fda44cb8cf2b9fdfde61efad35736196/LICENSE","sha256":"a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84","role":"notice","license":"MIT","packages":["react-remove-scroll-bar@2.3.8"],"provenance_note":"Authentic project notice added in upstream commit 7301c160. Published 2.3.8 tarball omits the notice; its original MIT declaration and tarball are also retained."}
   ],
   "npm_sources": [
     {"id":"resvg_source","name":"resvg-js corresponding source and Cargo build controls","version":"2.4.0","filename":"resvg-js-2.4.0-source.tar.gz","url":"https://codeload.github.com/yisibl/resvg-js/tar.gz/30ac8d830d44802df7e967569c92edabbbcec017","sha256":"faeab159da246345bea2b9bd401f6ac1a68a4e8ccbebfe119f63b9cb92dfba47","role":"source","license":"MPL-2.0","packages":["@resvg/resvg-wasm@2.4.0"]},

@@ -3,6 +3,8 @@ param(
     [string]$Python = "python",
     [string]$Pnpm = "pnpm",
     [string]$StageDir,
+    [string]$OutputDir,
+    [string]$Version,
     [string]$FfmpegDir,
     [string]$Iscc,
     [switch]$SkipFrontendBuild,
@@ -13,6 +15,8 @@ $ErrorActionPreference = "Stop"
 $builder = Join-Path $PSScriptRoot "build_native.py"
 $arguments = @($builder, "--python", $Python, "--pnpm", $Pnpm)
 if ($StageDir) { $arguments += @("--stage-dir", $StageDir) }
+if ($OutputDir) { $arguments += @("--output-dir", $OutputDir) }
+if ($Version) { $arguments += @("--version", $Version) }
 if ($FfmpegDir) { $arguments += @("--ffmpeg-dir", $FfmpegDir) }
 if ($Iscc) { $arguments += @("--iscc", $Iscc) }
 if ($SkipFrontendBuild) { $arguments += "--skip-frontend-build" }

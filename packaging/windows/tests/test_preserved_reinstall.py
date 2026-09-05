@@ -171,7 +171,7 @@ def test_installer_routes_backup_before_migrate_and_never_silently_purges() -> N
     assert post_install.index("RunMaintenance('Backup'") < post_install.index("RunMaintenance('Install'")
     uninstall = source.split("procedure CurUninstallStepChanged", 1)[1]
     assert uninstall.index("ValidateExistingData(False, SavedPort)") < uninstall.index("RunMaintenance('Remove'")
-    assert "ExpandConstant('{param:PURGEDATA|}') = '{#DataName}'" in uninstall
+    assert "ExpandConstant('{param:PURGEDATA|}') = ExtractFileName(GetDataDir(''))" in uninstall
     assert "MB_DEFBUTTON2" in uninstall
     assert "if RemoveData then" in uninstall
 
@@ -183,6 +183,9 @@ def test_current_inno_compiler_accepts_full_installer_source(tmp_path: Path) -> 
     payload = tmp_path / "payload"
     payload.mkdir()
     (payload / "synthetic.txt").write_text("Compilation fixture, never installed")
+    (payload / "support").mkdir()
+    for name in ("install.ps1", "install-remote.ps1"):
+        (payload / "support" / name).write_text("# Synthetic compilation fixture; never installed")
     product = json.loads((DIRECTORY.parents[1] / "config/product.json").read_text(encoding="utf-8"))
     result = subprocess.run(
         [str(compiler), f"/DPayloadDir={payload}", f"/DOutputDir={tmp_path / 'output'}",

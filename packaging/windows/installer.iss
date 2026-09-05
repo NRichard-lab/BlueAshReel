@@ -10,10 +10,10 @@
   #define OutputDir "..\..\artifacts\native-dev"
 #endif
 #ifndef ProductVersion
-  #define ProductVersion "0.1.0-dev.2"
+  #define ProductVersion "0.1.0-development.4"
 #endif
 #ifndef FileVersion
-  #define FileVersion "0.1.0.2"
+  #define FileVersion "0.1.0.4"
 #endif
 #ifndef BuildChannel
   #define BuildChannel "development"
@@ -28,8 +28,8 @@
   #define OutputName PackageName + "-Setup-x64"
 #else
   #define ProductName BrandName + " Development"
-  #define DataName "BlueReel-Development"
-  #define InstallDirectoryName "BlueReel Development"
+  #define DataName "BlueAshReel-Development"
+  #define InstallDirectoryName "BlueAshReel Development"
   #define ServicePrefix "BlueReelDevelopment"
   #define DefaultPort "18080"
   #define ProductId "{{5E41781A-6BE6-4505-B5D9-177F592ED611}"
@@ -44,8 +44,8 @@ AppVerName={#ProductName} {#ProductVersion} (unsigned)
 AppPublisher={#BrandName}
 AppPublisherURL=https://{#ProductDomain}
 AppSupportURL=https://{#ProductDomain}/security
-; Keep established install locations, service IDs, registry keys and AppId.
-DefaultDirName={autopf}\{#InstallDirectoryName}
+; Preserve registered/retained instance locations and all established IDs.
+DefaultDirName={code:GetDefaultProgramDir}
 DefaultGroupName={#ProductName}
 DisableProgramGroupPage=yes
 DisableDirPage=yes
@@ -74,10 +74,12 @@ InfoBeforeFile=development-notice.txt
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PayloadDir}\support\install.ps1"; DestName: "upgrade-install.ps1"; Flags: dontcopy
+Source: "{#PayloadDir}\support\install-remote.ps1"; Flags: dontcopy
 
 [Registry]
 Root: HKLM; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "ProgramDir"; ValueData: "{app}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "DataDir"; ValueData: "{commonappdata}\{#DataName}"
+Root: HKLM; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "DataDir"; ValueData: "{code:GetDataDir}"
 Root: HKLM; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "Port"; ValueData: "{code:GetPort}"
 
 [Icons]
@@ -102,6 +104,8 @@ Type: files; Name: "{app}\services\{#ServicePrefix}Web.exe"
 Type: files; Name: "{app}\services\{#ServicePrefix}Web.xml"
 Type: files; Name: "{app}\services\{#ServicePrefix}Proxy.exe"
 Type: files; Name: "{app}\services\{#ServicePrefix}Proxy.xml"
+Type: files; Name: "{app}\services\{#ServicePrefix}Remote.exe"
+Type: files; Name: "{app}\services\{#ServicePrefix}Remote.xml"
 
 [Code]
 var
@@ -115,6 +119,51 @@ var
   InstallSuccessful: Boolean;
   PreparedUpgrade: Boolean;
   PreservedReinstall: Boolean;
+  ResolvedDataDir: String;
+
+function HasInstanceMarker(const Directory: String): Boolean;
+begin
+  Result := FileExists(AddBackslash(Directory) + '.bluereel-native-instance') or
+    DirExists(AddBackslash(Directory) + '.bluereel-native-instance');
+end;
+
+function GetDataDir(Param: String): String;
+var
+  Registered, Fresh, Legacy: String;
+begin
+  if ResolvedDataDir = '' then begin
+    Fresh := ExpandConstant('{commonappdata}\{#DataName}');
+    Legacy := Fresh;
+#if BuildChannel == "development"
+    Legacy := ExpandConstant('{commonappdata}\BlueReel-Development');
+    if HasInstanceMarker(Fresh) and HasInstanceMarker(Legacy) then
+      RaiseException('Both current and legacy development data exist. Resolve the instance identity before installing; no data was changed.');
+#endif
+    Registered := '';
+    if RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'DataDir', Registered) then begin
+      if not HasInstanceMarker(Registered) then
+        RaiseException('Registered instance data is missing or incomplete. Existing registration was preserved.');
+      if (HasInstanceMarker(Fresh) and (CompareText(Registered, Fresh) <> 0)) or
+        (HasInstanceMarker(Legacy) and (CompareText(Registered, Legacy) <> 0)) then
+        RaiseException('Registered and retained development data disagree. No instance was selected.');
+      ResolvedDataDir := Registered;
+    end else if HasInstanceMarker(Legacy) then
+      ResolvedDataDir := Legacy
+    else
+      ResolvedDataDir := Fresh;
+  end;
+  Result := ResolvedDataDir;
+end;
+
+function GetDefaultProgramDir(Param: String): String;
+begin
+  if RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'ProgramDir', Result) then Exit;
+  Result := ExpandConstant('{autopf}\{#InstallDirectoryName}');
+#if BuildChannel == "development"
+  if CompareText(GetDataDir(''), ExpandConstant('{commonappdata}\BlueReel-Development')) = 0 then
+    Result := ExpandConstant('{autopf}\BlueReel Development');
+#endif
+end;
 
 function Quoted(const Value: String): String;
 begin
@@ -137,7 +186,7 @@ end;
 function CommonArguments: String;
 begin
   Result := ' -ProgramDir ' + Quoted(ExpandConstant('{app}')) +
-    ' -DataDir ' + Quoted(ExpandConstant('{commonappdata}\{#DataName}')) +
+    ' -DataDir ' + Quoted(GetDataDir('')) +
     ' -Instance {#BuildChannel}';
 end;
 
@@ -171,10 +220,18 @@ end;
 function RunMaintenance(const Action, Extra: String): Boolean;
 var
   ExitCode: Integer;
-  Arguments: String;
+  Arguments, Helper: String;
 begin
+  Helper := ExpandConstant('{app}\support\install.ps1');
+  if Action = 'PrepareUpgrade' then begin
+    { Use the new installer helpers even when the old installation predates
+      automatic connector upgrades. Existing runtime performs its safe backup. }
+    ExtractTemporaryFile('upgrade-install.ps1');
+    ExtractTemporaryFile('install-remote.ps1');
+    Helper := ExpandConstant('{tmp}\upgrade-install.ps1');
+  end;
   Arguments := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
-    Quoted(ExpandConstant('{app}\support\install.ps1')) + ' -Action ' + Action +
+    Quoted(Helper) + ' -Action ' + Action +
     CommonArguments + Extra;
   Log('Running {#BrandName} maintenance action: ' + Action);
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
@@ -265,7 +322,7 @@ begin
   if not WriteExistingDataValidator(ScriptPath) then Exit;
   Arguments := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + Quoted(ScriptPath) +
     ' -ProgramDir ' + Quoted(ExpandConstant('{app}')) +
-    ' -DataDir ' + Quoted(ExpandConstant('{commonappdata}\{#DataName}')) +
+    ' -DataDir ' + Quoted(GetDataDir('')) +
     ' -Prefix {#ServicePrefix} -Channel {#BuildChannel} -PortFile ' + Quoted(PortFile);
   if RequireUninstalled then Arguments := Arguments + ' -Preserved';
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
@@ -301,8 +358,7 @@ begin
   InstallSuccessful := False;
   PreparedUpgrade := False;
   PreservedReinstall := False;
-  ExistingInstallation := FileExists(ExpandConstant('{commonappdata}\{#DataName}\.bluereel-native-instance')) or
-    DirExists(ExpandConstant('{commonappdata}\{#DataName}\.bluereel-native-instance'));
+  ExistingInstallation := HasInstanceMarker(GetDataDir(''));
   PreviousPort := '{#DefaultPort}';
   RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'Port', PreviousPort);
   NetworkPage := CreateInputQueryPage(wpSelectDir, 'Local access',
@@ -428,18 +484,17 @@ var
   Extra, SavedPort: String;
 begin
   if CurUninstallStep = usUninstall then begin
-    if FileExists(ExpandConstant('{commonappdata}\{#DataName}\.bluereel-native-instance')) or
-      DirExists(ExpandConstant('{commonappdata}\{#DataName}\.bluereel-native-instance')) then begin
+    if HasInstanceMarker(GetDataDir('')) then begin
       if not ValidateExistingData(False, SavedPort) then
         RaiseException('The retained instance identity is invalid or unsafe. No service, firewall, or data removal was attempted.');
     end;
-    RemoveData := ExpandConstant('{param:PURGEDATA|}') = '{#DataName}';
+    RemoveData := ExpandConstant('{param:PURGEDATA|}') = ExtractFileName(GetDataDir(''));
     if not UninstallSilent then
       RemoveData := MsgBox('Permanently delete this {#ProductName} instance''s database, accounts, configuration, artwork, history and backups?' + #13#10 +
         'Choose No to preserve all data (recommended). Source media is never removed.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
     Extra := '';
     if RemoveData then
-      Extra := ' -RemoveData -ConfirmDataRemoval {#DataName}';
+      Extra := ' -RemoveData -ConfirmDataRemoval ' + Quoted(ExtractFileName(GetDataDir('')));
     if not RunMaintenance('Remove', Extra) then
       RaiseException('Services or firewall rules could not be removed safely. Uninstallation was stopped; inspect the protected instance logs.');
   end;
