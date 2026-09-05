@@ -73,13 +73,32 @@ Final browser revocation was observed locally within 3.02 seconds, with the Agen
 unpaired and credentials removed. Reusing the consumed code failed. The test
 account, registrations, sessions, credentials and temporary test database were removed.
 
+The same acceptance subsequently ran against the real public domain with trusted
+TLS, an isolated Docker Agent and a disposable MFA account. Password/TOTP login,
+fingerprint matching and the encrypted status diagnostic passed. Revocation
+removed the identity file within 1.61 seconds and published revoked/unpaired state
+within 4.00 seconds. Fresh pairing created a different Agent ID and fingerprint;
+reusing that consumed code with a valid fresh-key signature returned HTTP 400
+without changing the active identity. Restarting the Agent and all five production
+portal containers preserved its key and restored the relay automatically. The
+portal showed offline state during the outage; the encrypted diagnostic passed
+again after recovery. The connector had only its two dedicated volumes, UID 1000,
+zero capabilities and no-new-privileges; canonical HTTPS succeeded while an
+arbitrary external HTTPS probe was blocked. No URL or TLS bypass was used.
+
+Final local unpair confirmed central revocation and removed the Agent identity.
+The browser then showed no Agents and was signed out. The disposable production
+account, both Agent registrations, pairing/session/ticket records, fixture audit
+and rate-limit rows, local credentials, container, network and state volumes were
+removed and their absence verified. The sole real Owner remained unchanged.
+
 The browser validates Ed25519 identity signatures; ephemeral X25519/HKDF keys
 protect directional AES-GCM messages with sequence/replay checks. The relay sees
 only bounded ciphertext frames and authorization metadata; synthetic opacity,
 non-persistence, oversize, queue/backpressure, idle and cross-user/Agent/session
 tests pass. No media command is implemented in the remote protocol.
 
-## Production boundary and remaining acceptance
+## Production boundary and public acceptance
 
 The private portal repository is `NRichard-lab/BlueAshReelPortal`. Its Ubuntu stack
 uses five isolated containers behind the existing Caddy edge. PostgreSQL migration
@@ -87,15 +106,26 @@ head is `914fedcc620a`. The protected initial Owner bootstrap, post-Owner backup
 integrity check and full dry restore passed. Existing unrelated services retained
 their container identities and configuration hashes.
 
-The final-source backup is `blueashreel-20260905T185006Z`, with source `b09798f`
+The pre-DNS backup is `blueashreel-20260905T185006Z`, with source `b09798f`
 and schema `914fedcc620a` captured. The actual systemd backup/prune job succeeded;
 its daily timer is enabled, with protected storage and 14-day retention.
 
-Workstation public IPv4 was verified as `174.29.198.176`. The domain still points
-to Hostinger parking at `2.57.91.91`; no DNS records were changed. Authenticated
-zone export and update require the Hostinger connector to load after an app
-restart. Trusted TLS, public login, www redirect and actual Internet WSS/443
-acceptance remain pending. Loopback/hairpin tests are not claimed as those checks.
+Workstation public IPv4 was verified as `174.29.198.176`. The full authenticated
+DNS zone was exported before replacing only the apex A record, previously
+`2.57.91.91`. Hostinger required increasing its TTL from 50 to 60 seconds. The
+existing `www` CNAME and its TTL were unchanged, and the complete after-zone diff
+was verified. Both authoritative nameservers and Cloudflare/Google resolvers
+returned the new IP.
+
+Trusted Let's Encrypt certificates were issued for apex and www on September 5,
+expiring December 4, 2026. HTTP redirects to HTTPS; HTTPS www redirects to the
+canonical apex while preserving path/query. TLS 1.3, security headers and public
+login/MFA/diagnostics passed. Successful external TLS-ALPN-01 validations prove
+public port 443 reachability. Browser and Agent acceptance used real public DNS
+from this LAN; those requests are not described as independent outside-LAN
+authenticated sessions. An external web-fetch service refused the new URLs before
+fetching. Public Windows-service pairing remains separate future native release
+acceptance; its elevated AppContainer/DPAPI/firewall tests passed as recorded above.
 
 Public registration and email delivery remain disabled. The real Owner must
 complete MFA enrollment and change the generated bootstrap password privately.
