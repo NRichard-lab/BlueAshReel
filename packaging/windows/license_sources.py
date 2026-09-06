@@ -16,7 +16,7 @@ from typing import Any
 
 LOCK = Path(__file__).with_name("additional-components.json")
 NOTICE_PREFIXES = ("license", "licence", "copying", "notice", "copyright", "patents", "authors")
-MIT_LICENSE_REFERENCE = {
+MIT_LICENSE_REFERENCE: dict[str, Any] = {
     "id": "spdx_mit_reference",
     "name": "SPDX MIT license text reference",
     "version": "license-list-data-v3.27.0",
