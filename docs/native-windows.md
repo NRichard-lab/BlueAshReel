@@ -12,6 +12,17 @@ Local management listens on `127.0.0.1:<port>` (development default 18080). The 
 
 ## Runtime ownership and privacy
 
+Installer completion uses `--finish-install` after native health succeeds. The
+tray defers this request until its current supervisor reports fresh health;
+API readiness follows initialization of the random loopback callback listener.
+An unpaired instance opens the Agent's local pairing start route, which generates
+the protected production authorization handoff. A paired instance opens its
+existing opaque Agent page. Repeated completion signals open at most one browser
+flow per tray lifetime; normal Windows login startup does not create a request.
+Cancelled or expired callbacks offer Retry Pairing. Retry replaces only the
+request bound to that browser's HttpOnly loopback cookie and retains the key.
+Changing this compiled behavior requires a new installer version and hash.
+
 If the Portal saved a pairing but its response was interrupted, choose Reconnect
 and Pair Agent to recover it under its original Owner. If that Portal entry was
 revoked before recovery, use the tray's **Discard incomplete pairing** action.

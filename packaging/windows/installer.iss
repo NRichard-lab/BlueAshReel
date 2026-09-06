@@ -83,9 +83,6 @@ Name: "{group}\Open Blue Ash Reel Portal"; Filename: "https://{#ProductDomain}"
 Name: "{group}\Open-source notices"; Filename: "{app}\OPEN-SOURCE-NOTICES.txt"
 Name: "{group}\Uninstall {#ProductName}"; Filename: "{uninstallexe}"
 
-[Run]
-Filename: "https://{#ProductDomain}"; Description: "Sign in to Blue Ash Reel to pair this Agent and add libraries"; Flags: shellexec nowait postinstall skipifsilent runasoriginaluser; Check: WasSuccessful
-
 [Code]
 var
   RuntimePage, LocationsPage, CachePage: TInputQueryWizardPage;
@@ -345,6 +342,10 @@ begin
     end;
     if LegacyMigration and not RunMaintenance('FinalizeMigration','',True) then
       RaiseException('The new Agent is healthy but legacy service retirement needs recovery review.');
+    if not ExecAsOriginalUser(ExpandConstant('{app}\BlueAshReelAgent.exe'),
+      '--data-dir ' + Quoted(GetDataDir('')) + ' --finish-install',
+      ExpandConstant('{app}'),SW_SHOWNORMAL,ewNoWait,ExitCode) then
+      RaiseException('The Agent is installed and healthy, but its pairing window could not open. Choose Pair Agent from the Windows tray.');
     InstallSuccessful := True;
   end;
 end;

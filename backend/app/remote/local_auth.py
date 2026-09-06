@@ -45,7 +45,7 @@ def state(request: Request) -> tuple[Any, dict[str, Any], dict[str, Any]]:
 
 
 @router.get("/start")
-async def start(request: Request, purpose: str = "status") -> RedirectResponse:
+async def start(request: Request, purpose: str = "status", retry: bool = False) -> RedirectResponse:
     origin = local_host(request)
     callback_origin = getattr(request.app.state, "portal_callback_origin", origin)
     connector, pending, _sessions = state(request)
@@ -57,6 +57,11 @@ async def start(request: Request, purpose: str = "status") -> RedirectResponse:
         raise HTTPException(409, "This Agent is paired. Revoke the existing pairing before changing accounts.")
     if (connector.identity / "revocation.json").exists():
         raise HTTPException(409, "Unpairing is still reaching the Portal. Reconnect to the network and try again.")
+    if retry:
+        previous = request.cookies.get(COOKIE, "")
+        current = pending.get(previous)
+        if current and current["purpose"] == purpose and current["callback"] == callback_origin + "/portal/callback":
+            del pending[previous]  # Only this browser's pending request is replaced.
     for key, value in list(pending.items()):
         if value["expires_at"] < time.time():
             del pending[key]
@@ -111,6 +116,7 @@ async def callback_page(request: Request) -> HTMLResponse:
     result = HTMLResponse(
         """<!doctype html><html><meta charset="utf-8"><title>Blue Ash Reel</title>
 <body><p id="status">Completing Portal authorization. Confirm on the Agent workstation if requested.</p>
+<p><a id="retry" href="/portal/start?purpose=pair&amp;retry=true" hidden>Retry Pairing</a></p>
 <script nonce="""
         + '"'
         + csp_nonce
@@ -120,9 +126,11 @@ const parameters=new URLSearchParams(location.hash.slice(1));history.replaceStat
 try {const response=await fetch('/portal/callback',{method:'POST',credentials:'same-origin',
 headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(parameters))});
 const result=await response.json();if(!response.ok)throw new Error(result.detail||'Authorization was rejected.');
-if(result.redirect)location.replace(result.redirect);else document.getElementById('status').textContent=result.message;
+if(result.redirect)location.replace(result.redirect);else {document.getElementById('status').textContent=result.message;
+document.getElementById('retry').hidden=false;}
 }catch(error){document.getElementById('status').textContent=
-(error.message||'Authorization expired or was rejected.')+' Open Blue Ash Reel from the tray to retry.'}
+(error.message||'Authorization expired or was rejected.')+' Retry pairing to request a fresh approval.';
+document.getElementById('retry').hidden=false;}
 })();</script></body></html>"""
     )
     result.headers["Content-Security-Policy"] = (

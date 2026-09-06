@@ -64,6 +64,39 @@ def test_double_click_refresh_and_browser_reopen_reuse_one_authorization(local_a
     assert short == readable_fingerprint(first["fingerprint"])
 
 
+def test_retry_replaces_only_browser_bound_pending_request_and_rejects_previous_callback(local_agent):
+    client, connector, application = local_agent
+    first = begin(client)
+    saved_key = (connector.identity / "identity.json").read_bytes()
+    response = client.get("/portal/start?purpose=pair&retry=true", follow_redirects=False)
+    values = parse_qs(urlsplit(response.headers["location"]).fragment)
+    assert response.status_code == 303 and values["state"][0] != first["state"]
+    assert len(application.state.portal_pending) == 1
+    assert (connector.identity / "identity.json").read_bytes() == saved_key
+    with patch("app.native_consent.request_confirmation", new=AsyncMock()) as consent:
+        replay = client.post("/portal/callback", json=callback_payload(first), headers={"Origin": BASE})
+        assert replay.status_code == 403
+        consent.assert_not_called()
+
+
+def test_retry_without_original_cookie_does_not_invalidate_another_pending_request(local_agent):
+    client, _connector, application = local_agent
+    first = begin(client)
+    client.cookies.clear()
+    response = client.get("/portal/start?purpose=pair&retry=true", follow_redirects=False)
+    assert parse_qs(urlsplit(response.headers["location"]).fragment)["state"] == [first["state"]]
+    assert len(application.state.portal_pending) == 1
+
+
+def test_callback_failure_and_cancel_page_offers_local_secret_free_retry(local_agent):
+    client, _connector, _application = local_agent
+    page = client.get("/portal/callback")
+    assert page.status_code == 200
+    assert 'href="/portal/start?purpose=pair&amp;retry=true"' in page.text
+    assert '>Retry Pairing</a>' in page.text
+    assert page.text.index("history.replaceState") < page.text.index("fetch(")
+
+
 @pytest.mark.parametrize("tamper", ["state", "nonce", "cookie", "origin", "callback_port", "expired"])
 def test_browser_binding_tampering_never_requests_local_consent(local_agent, tamper):
     client, connector, application = local_agent

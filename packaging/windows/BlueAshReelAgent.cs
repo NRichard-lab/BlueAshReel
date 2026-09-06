@@ -30,6 +30,16 @@ sealed class AgentTray : ApplicationContext {
     Icon brand;
     [DllImport("user32.dll", SetLastError = true)] static extern bool DestroyIcon(IntPtr handle);
     Dictionary<string, object> last = new Dictionary<string, object>();
+    bool finishInstallPending, finishInstallOpened;
+    int localPort;
+
+    internal static string InstallationDestination(bool ready, bool paired, string agentId, int port) {
+        if (!ready || port < 1024 || port > 65533) return null;
+        if (!paired) return "http://127.0.0.1:" + port + "/portal/start?purpose=pair";
+        Guid parsed;
+        return Guid.TryParseExact(agentId, "D", out parsed)
+            ? "https://blueashreel.com/portal/agents/" + parsed.ToString("D") : null;
+    }
 
     internal static bool CanDiscardIncomplete(bool isPaired, bool pendingRevocation, string status, string fingerprint) {
         return !isPaired && !pendingRevocation && fingerprint != null && fingerprint.Length == 64 &&
@@ -45,10 +55,10 @@ sealed class AgentTray : ApplicationContext {
                 throw new IOException("Linked Agent storage is not supported.");
         }
     }
-    void Write(string path, object value) {
+    static void Write(string path, object value) {
         NoLinks(path);
         string temporary = Path.Combine(Path.GetDirectoryName(path), ".tray-" + Guid.NewGuid().ToString("N"));
-        File.WriteAllText(temporary, json.Serialize(value));
+        File.WriteAllText(temporary, new JavaScriptSerializer { MaxJsonLength = 32768 }.Serialize(value));
         if (File.Exists(path)) File.Replace(temporary, path, null); else File.Move(temporary, path);
     }
     Dictionary<string, object> Read(string path) {
@@ -60,9 +70,11 @@ sealed class AgentTray : ApplicationContext {
     string Value(Dictionary<string, object> value, string key) { return value.ContainsKey(key) ? Convert.ToString(value[key]) : ""; }
     void Error() { MessageBox.Show("The Agent operation could not complete. Review the local logs and runtime settings.", "Blue Ash Reel", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
 
-    public AgentTray(string location) {
+    public AgentTray(string location, bool finishInstall = false) {
         data = Path.GetFullPath(location); NoLinks(data);
         var settings = Read(Path.Combine(data, @"configuration\installation.json"));
+        localPort = Convert.ToInt32(settings["port"]);
+        finishInstallPending = finishInstall;
         if (Value(settings, "runtime_mode") != "per_user") throw new IOException("Run the user-mode migration before launching the tray.");
         program = Path.GetFullPath(Value(settings, "program_dir")); NoLinks(program);
         if (!String.Equals(program, AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
@@ -208,6 +220,19 @@ sealed class AgentTray : ApplicationContext {
                 if (Now() - Convert.ToDouble(action["created_at"]) < 15) {
                     if (Value(action,"action") == "status") ShowStatus();
                     else if (Value(action,"action") == "open") Open(false);
+                    else if (Value(action,"action") == "finish_install" && !finishInstallOpened) finishInstallPending = true;
+                }
+            }
+            if (finishInstallPending && !finishInstallOpened) {
+                bool ready = runtime != null && !runtime.HasExited && last.ContainsKey("pid") &&
+                    Convert.ToInt32(last["pid"]) == runtime.Id && last.ContainsKey("healthy") &&
+                    Convert.ToBoolean(last["healthy"]) && last.ContainsKey("updated_at") &&
+                    Now() - Convert.ToDouble(last["updated_at"]) < 10;
+                string destination = InstallationDestination(ready, isPaired, Value(last,"agent_id"), localPort);
+                if (destination != null) {
+                    Browser(destination);
+                    finishInstallOpened = true;
+                    finishInstallPending = false;
                 }
             }
             string requests = Path.Combine(state,"tray-requests");
@@ -257,18 +282,20 @@ sealed class AgentTray : ApplicationContext {
     [STAThread] static int Main(string[] args) {
         Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
         try {
-            if ((args.Length != 2 && args.Length != 3) || args[0] != "--data-dir" || (args.Length == 3 && args[2] != "--status"))
+            if ((args.Length != 2 && args.Length != 3) || args[0] != "--data-dir" ||
+                (args.Length == 3 && args[2] != "--status" && args[2] != "--finish-install"))
                 throw new ArgumentException("Launch the Agent from its installed shortcut.");
             string sid = WindowsIdentity.GetCurrent().User.Value;
             string key = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(args[1]).ToLowerInvariant())).Replace('/','_');
             bool created;
             using (var singleton = new Mutex(true,"Local\\BlueAshReel-" + sid + "-" + key,out created)) {
-                if (!created || args.Length == 3) {
+                if (!created || (args.Length == 3 && args[2] == "--status")) {
                     string path = Path.Combine(Path.GetFullPath(args[1]),@"state\tray-window.json"); NoLinks(path);
-                    File.WriteAllText(path,new JavaScriptSerializer().Serialize(new { action = args.Length == 3 ? "status" : "open", created_at = Now() }));
+                    string action = args.Length == 3 ? (args[2] == "--status" ? "status" : "finish_install") : "open";
+                    Write(path,new { action = action, created_at = Now() });
                     if (!created) return 0;
                 }
-                Application.Run(new AgentTray(args[1]));
+                Application.Run(new AgentTray(args[1], args.Length == 3 && args[2] == "--finish-install"));
             }
             return 0;
         } catch {

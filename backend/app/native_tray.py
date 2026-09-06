@@ -204,6 +204,7 @@ class Supervisor:
             "runtime_id": self.runtime_id,
             "port": self.installation.port, "fingerprint": status.get("fingerprint"),
             "fingerprint_short": status.get("fingerprint_short"), "paired": status.get("paired", False),
+            "agent_id": status.get("agent_id"),
             "central_revocation_pending": status.get("central_revocation_pending", False),
             "update_version": status.get("update_version"),
         })
