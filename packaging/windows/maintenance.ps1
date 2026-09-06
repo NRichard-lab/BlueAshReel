@@ -22,7 +22,9 @@ if (-not $Elevated) {
         (Quote-TaskArgument $PSCommandPath),'-Action',$Action,'-ProgramDir',(Quote-TaskArgument $ProgramDir),
         '-DataDir',(Quote-TaskArgument $DataDir),'-Instance',$Instance,'-Elevated')
     try {
-        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -WindowStyle Hidden -ArgumentList $taskArguments | Out-Null
+        # This child is an interactive GUI, not a background worker. A Hidden
+        # STARTUPINFO state can suppress its first WinForms dialog on Windows.
+        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -WindowStyle Normal -ArgumentList $taskArguments | Out-Null
     } catch {
         Add-Type -AssemblyName System.Windows.Forms
         [Windows.Forms.MessageBox]::Show('Administrator elevation was not granted. No maintenance was performed.', "$taskDisplayName maintenance") | Out-Null

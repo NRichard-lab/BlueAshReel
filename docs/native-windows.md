@@ -57,6 +57,10 @@ The Start Menu includes Open Blue Ash Reel, media-root and network configuration
 online backup, restore dry-run validation, notices and uninstall. Maintenance
 actions request elevation separately; the web API does not run as administrator.
 Repair preserves the previous roots, ports, application secret and database.
+Interactive maintenance requests a normal visible launch because a hidden
+Windows startup state can also hide its folder dialog. A PowerShell console may
+appear beside the dialog; no command entry is required. Background media and
+connector services still run without interactive windows.
 
 Services run as LocalService, not the interactive user. Give the chosen media
 folders read/list access usable by that identity where needed; the installer
