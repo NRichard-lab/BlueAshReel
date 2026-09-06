@@ -455,7 +455,11 @@ def test_unconfirmed_auxiliary_remains_visible_and_blocks_probes(owner_context: 
     process.stdin.close.side_effect = lambda: setattr(process.stdin, "closed", True)
     process.wait.side_effect = subprocess.TimeoutExpired("probe", 12)
     process.poll.return_value = None
-    with patch.object(manager, "_launch", return_value=process):
+    with (
+        patch.object(manager, "_launch", return_value=process),
+        patch("app.services.transcoding.detected_gpus", return_value=["Intel test adapter"]),
+        patch("app.services.transcoding.advertised_encoders", return_value={"h264_qsv"}),
+    ):
         manager.detect_hardware()
     assert len(manager.auxiliary) == 1 and manager.health()["maintenance_error"]
     with pytest.raises(HTTPException) as failure:
@@ -646,7 +650,7 @@ def test_real_amf_auto_and_explicit_devices_report_only_verified_encodes(
         assert job.encoder == ("h264_amf" if available else "libx264")
         assert job.process.wait(timeout=15) == 0
         active = context.client.get("/api/v1/streams").json()["items"][0]
-        assert active["method_label"] == ("Hardware Transcode" if available else "Hardware-to-software fallback")
+        assert active["method_label"] == ("Hardware Transcode" if available else "Software Transcode")
         probe, _elapsed = run_ffprobe(
             str(Path(ffmpeg).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")),
             job.directory / "segment-000000.ts",

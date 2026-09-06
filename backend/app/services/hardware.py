@@ -11,6 +11,21 @@ from pathlib import Path
 ENCODERS = {"software": "libx264", "qsv": "h264_qsv", "nvenc": "h264_nvenc", "amf": "h264_amf"}
 
 
+def advertised_encoders(executable: str) -> set[str]:
+    """Inspect only the local versioned binary; never log its output or arguments."""
+    try:
+        result = subprocess.run(
+            [executable, "-hide_banner", "-encoders"], capture_output=True, timeout=8, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0 or len(result.stdout) > 1048576:
+            return set()
+        return {line.split()[1] for line in result.stdout.decode(errors="replace").splitlines()
+                if len(line.split()) >= 2 and line.strip().startswith("V")}
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+
+
 def binary_identity(executable: str) -> tuple[str, int, int] | None:
     value = shutil.which(executable)
     if value is None:

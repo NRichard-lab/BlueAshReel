@@ -36,6 +36,7 @@ class PlaybackChoice(BaseModel):
     restart: bool = False
     position_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     recovery_from: str | None = Field(default=None, min_length=1, max_length=36)
+    delivery: Literal["auto", "remux", "transcode"] = "auto"
 
 
 class Decision(BaseModel):
@@ -100,7 +101,10 @@ def decide(
     # Browser APIs do not reliably select embedded tracks or expose disposition.
     default_audio = len(audios) <= 1
     container = set((file.container or "").split(","))
-    if h264 and aac and not reduce and not burn and default_audio and container.intersection({"mov", "mp4"}):
+    if (
+        choice.delivery == "auto" and h264 and aac and not reduce and not burn
+        and default_audio and container.intersection({"mov", "mp4"})
+    ):
         return Decision(
             method="direct",
             reason="Compatible MP4 video and audio; decoding is verified by the player.",
@@ -111,6 +115,7 @@ def decide(
         )
     if (
         caps.webm_vp9
+        and choice.delivery == "auto"
         and caps.opus
         and video.codec == "vp9"
         and (video.bit_depth or 8) <= 8
@@ -133,7 +138,9 @@ def decide(
         )
     if not (caps.hls and caps.h264 and caps.aac):
         return unsupported("This browser cannot play the source or the local H.264/AAC streaming output.")
-    video_copy = h264 and not reduce and not burn
+    video_copy = h264 and not reduce and not burn and choice.delivery != "transcode"
+    if choice.delivery == "remux" and not (video_copy and aac):
+        return unsupported("Forced Remux requires compatible video and audio without quality reduction.")
     method = "remux" if video_copy and aac else "transcode"
     if method == "transcode" and policy.mode == "direct_only":
         return unsupported("Direct Play and Remux Only is enabled. This selection requires transcoding.")

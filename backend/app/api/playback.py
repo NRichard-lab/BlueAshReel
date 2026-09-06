@@ -35,11 +35,22 @@ def get_playback_manager(request: Request) -> PlaybackManager:
     return request.app.state.playback_manager  # type: ignore[no-any-return]
 
 
+class ClientPlaybackHealth(BaseModel):
+    buffer_seconds: float = Field(ge=0, le=86400, allow_inf_nan=False)
+    buffering: bool = False
+    dropped_frames: int = Field(default=0, ge=0, le=2147483647)
+    total_frames: int = Field(default=0, ge=0, le=2147483647)
+    waits: int = Field(default=0, ge=0, le=2147483647)
+    fullscreen: bool = False
+    playable_ms: int | None = Field(default=None, ge=0, le=300000)
+
+
 class ProgressInput(BaseModel):
     position_seconds: float = Field(ge=0, allow_inf_nan=False)
     playing: bool = False
     reason: Literal["periodic", "playing", "pause", "seek", "exit", "ended", "restart"] = "periodic"
     sequence: int = Field(ge=1, le=2147483647)
+    telemetry: ClientPlaybackHealth | None = None
 
 
 class HistoryPolicy(BaseModel):
@@ -132,6 +143,8 @@ def create_playback(
         position = min(payload.position_seconds, max(0, (file.duration_seconds or 0) - 0.1))
     offset = position if choice.method != "direct" else 0
     if offset:
+        if payload.delivery == "remux":
+            raise HTTPException(422, "Start from the beginning for forced Remux; precise resume requires transcoding.")
         if policy.mode == "direct_only":
             raise HTTPException(
                 422, "Precise seeking in remuxed media requires conversion. Direct Play and Remux Only is enabled."
@@ -291,6 +304,9 @@ def progress(
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
     playback, _file, _source = load_playback(db, principal, session_id, config)
+    if payload.telemetry is not None and payload.sequence > playback.sequence:
+        playback.decision = {**playback.decision, "client_health": payload.telemetry.model_dump(),
+                             "client_health_at": utcnow().isoformat()}
     return save_progress(
         db, playback, payload.position_seconds, payload.playing, payload.reason, payload.sequence, config
     )
@@ -419,6 +435,16 @@ def streams(
                 "method": row.method,
                 "state": row.state,
                 "source_height": video.height if video else None,
+                "source_width": video.width if video else None,
+                "source_bitrate_kbps": file.bitrate / 1000 if file.bitrate else None,
+                "output_width": (
+                    video.width if row.decision.get("video_copy") else
+                    round(video.width * row.decision.get("output_height", 0) / video.height / 2) * 2
+                ) if video and video.width and video.height else None,
+                "subtitle_mode": "WebVTT" if row.subtitle_index is not None else "Off",
+                "started_at": _as_utc(row.started_at).isoformat(),
+                "client_health": row.decision.get("client_health"),
+                "client_health_at": row.decision.get("client_health_at"),
                 "output_height": row.decision.get("output_height"),
                 "bitrate_kbps": row.decision.get("bitrate_kbps"),
                 "observed_bitrate_kbps": job.metrics.get("output_bitrate_kbps") if job else None,
@@ -432,7 +458,7 @@ def streams(
                 "fallback": job.fallback if job else bool(row.decision.get("fallback")),
                 "fallback_reason": job.fallback_reason if job else row.decision.get("fallback_reason"),
                 "elapsed_seconds": max(0, (utcnow() - _as_utc(row.started_at)).total_seconds()),
-                "startup_ms": row.startup_ms,
+                "startup_ms": row.decision.get("client_health", {}).get("playable_ms"),
                 "temp_bytes": owned_size(job.directory) if job else 0,
                 "error": row.error,
             }
@@ -469,8 +495,6 @@ def stream_method(row: PlaybackSession, encoder: str | None) -> str:
         return "Remux"
     if not encoder:
         return "Failed Transcode" if row.state == "failed" else "Starting Transcode"
-    if row.decision.get("fallback"):
-        return "Hardware-to-software fallback"
     if encoder and encoder not in ("copy", "libx264"):
         return "Hardware Transcode"
     return "Software Transcode"

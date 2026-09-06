@@ -110,7 +110,6 @@ export function activeStreamMethod(stream: {
 }): string {
   if (stream.method === 'direct') return 'Direct Play';
   if (stream.method === 'remux') return 'Remux';
-  if (stream.method === 'transcode' && stream.fallback) return 'Hardware-to-software fallback';
   if (stream.method_label) return stream.method_label;
   // Infer only from the actual stream encoder, never the configured policy/GPU list.
   if (stream.method === 'transcode') {

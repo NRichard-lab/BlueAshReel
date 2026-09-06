@@ -182,20 +182,25 @@ def test_probe_success_records_only_actual_tested_codec(owner_context: tuple[Tes
     binary = context.config.app_data_dir / "mock-ffmpeg.exe"
     binary.write_bytes(b"mock bundled binary for probe identity")
     identity = (str(binary), binary.stat().st_size, binary.stat().st_mtime_ns)
+    def probe(directory: Path, command: list[str], _timeout: float, _quota: int) -> Mock:
+        if "-c:v" in command:
+            (directory / "probe.h264").write_bytes(b"synthetic encoded output")
+        return process
     with (
-        patch.object(manager, "_launch", return_value=process) as launch,
+        patch.object(manager, "_launch", side_effect=probe) as launch,
         patch("app.services.transcoding.binary_identity", return_value=identity),
         patch("app.services.transcoding.detected_gpus", return_value=["Intel test adapter"]),
+        patch("app.services.transcoding.advertised_encoders", return_value={"h264_qsv"}),
     ):
         manager.detect_hardware()
-    assert launch.call_count == 3
+    assert launch.call_count == 2
     for call in launch.call_args_list:
         assert call.args[1][0] == context.config.ffmpeg_path
-        assert "testsrc2=size=128x128:rate=10" in call.args[1]
+    assert "testsrc2=size=128x128:rate=10" in launch.call_args_list[0].args[1]
+    assert "-xerror" in launch.call_args_list[1].args[1]
     tests = manager.health()["hardware_tests"]
-    assert all(
-        row["test_status"] == "passed" and row["last_test_at"] and row["available_codecs"] == ["h264"] for row in tests
-    )
+    assert tests[0]["test_status"] == "passed" and tests[0]["available_codecs"] == ["h264"]
+    assert all(row["test_status"] == "failed" for row in tests[1:])
 
 
 @pytest.mark.parametrize(
@@ -255,7 +260,7 @@ def test_startup_fallback_is_per_session_and_required_never_uses_cpu(
         assert calls == (["h264_qsv", "libx264"] if fallback else ["libx264"])
         active = context.client.get("/api/v1/streams").json()["items"][0]
         assert active["encoder"] == "libx264" and active["fallback"] == fallback
-        assert active["method_label"] == ("Hardware-to-software fallback" if fallback else "Software Transcode")
+        assert active["method_label"] == "Software Transcode"
 
 
 def test_device_and_cpu_preset_are_explicit(owner_context: tuple[TestContext, str]) -> None:

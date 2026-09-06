@@ -43,6 +43,7 @@ from app.services.compatibility import PlaybackChoice
 from app.services.media_roots import _ensure_not_protected
 from app.services.paths import assert_no_link_components, native_directory_guard, validate_windows_path_text
 from app.services.playback import load_playback
+from app.services.transcoding_policy import TranscodingPolicy, read_policy
 
 MAX_CHUNK = 131072
 MAX_MANIFEST = 2 * 1048576
@@ -346,6 +347,39 @@ class RemoteMedia:
             kind = "media"
             if op == "status":
                 result = {"health": "ok", "mode": "relay", "remote_media_available": True}
+            elif op in {"transcoding.get", "transcoding.update", "transcoding.test"}:
+                self.owner(authorization)
+                policy = read_policy(db, self.config)
+                if op == "transcoding.update":
+                    if set(args) - {"mode", "preferred_hardware"} or args.get("mode") not in {
+                        "automatic", "hardware_preferred", "software_only"
+                    }:
+                        raise ValueError("Invalid transcoding settings")
+                    policy = TranscodingPolicy.model_validate({**policy.model_dump(), **args})
+                    playback.update_transcoding_policy(policy, principal, db, self.config, self.manager)
+                elif op == "transcoding.test":
+                    if args or policy.mode == "software_only":
+                        raise ValueError("Hardware tests are disabled in Software Only")
+                    self.manager.detect_hardware(policy)
+                health = self.manager.health()
+                return {
+                    "mode": policy.mode, "preferred_hardware": policy.preferred_hardware,
+                    "selected_encoder": health["selected_encoder"], "fallback": health["software_fallback"],
+                    "fallback_reason": health["failure"],
+                    "hardware_tests": [{k: value[k] for k in ("encoder", "test_status", "last_test_at", "failure")}
+                                       for value in health["hardware_tests"]],
+                }
+            elif op == "streams.list":
+                self.owner(authorization)
+                result = playback.streams(principal, db, self.manager)
+                result.pop("health", None)
+                kind = "playback"
+            elif op == "streams.stop":
+                self.owner(authorization)
+                session_id = self.resolve(db, "playback", args["session_id"])
+                playback.owner_stop(session_id, principal, db, self.manager)
+                self.forget_playback(session_id)
+                return {"stopped": True}
             elif op == "catalog.home":
                 result = catalog.home(principal, db)
             elif op == "catalog.list":
@@ -384,6 +418,8 @@ class RemoteMedia:
                 resource = catalog.artwork(self.resolve(db, "artwork", args["artwork_id"]), principal, db, self.config)
                 return self.chunk(Path(resource.path), args, resource.media_type)
             elif op in {"playback.start", "playback.decision"}:
+                if args.get("delivery", "auto") != "auto":
+                    self.owner(authorization)
                 choice_args = {key: value for key, value in args.items() if key not in {"page", "page_size"}}
                 choice_args["file_id"] = self.resolve(db, "file", args["file_id"])
                 if args.get("recovery_from"):

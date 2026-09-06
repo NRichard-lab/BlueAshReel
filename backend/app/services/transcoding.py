@@ -26,6 +26,7 @@ from app.security import _as_utc
 from app.services.compatibility import Decision
 from app.services.hardware import (
     ENCODERS,
+    advertised_encoders,
     binary_identity,
     detected_gpus,
     device_input_options,
@@ -48,6 +49,7 @@ from app.services.transcoding_policy import (
 OWNER_MARKER = "bluereel-playback-v1\n"
 OWNED_NAME = re.compile(r"representation-[0-9a-f]{32}$")
 SEGMENT_NAME = re.compile(r"segment-\d{6}\.ts$")
+HARDWARE_RECHECK_SECONDS = 6 * 60 * 60
 
 
 def no_links(path: Path) -> bool:
@@ -203,6 +205,7 @@ class PlaybackManager:
         self.maintenance_error: str | None = None
         self.storage_maintenance_error: str | None = None
         self.hardware_testing = False
+        self.hardware_checked_at = time.monotonic()
         self.hardware_tests: dict[str, dict[str, Any]] = {
             key: {
                 "encoder": key,
@@ -367,6 +370,8 @@ class PlaybackManager:
         if policy is None:
             with self.factory() as db:
                 policy = read_policy(db, self.config)
+        if policy.mode == "software_only":
+            raise HTTPException(409, "Software Only does not initialize hardware encoders")
         with self.lock:
             if self.stop_event.is_set():
                 raise HTTPException(503, "Local playback is shutting down")
@@ -375,6 +380,7 @@ class PlaybackManager:
             self.hardware_testing = True
         try:
             self.gpus = detected_gpus()
+            advertised = advertised_encoders(self.config.ffmpeg_path)
             identity = binary_identity(self.config.ffmpeg_path)
             self.tested_binary = None
             self.tested_ffmpeg_sha256 = None
@@ -412,10 +418,12 @@ class PlaybackManager:
                     "-threads",
                     "1",
                     "-f",
-                    "null",
-                    "-",
+                    "h264",
+                    str(directory / "probe.h264"),
                 ]
                 try:
+                    if ENCODERS[key] not in advertised or not gpu_hint(key, self.gpus, policy.hardware_device):
+                        raise OSError("Hardware prerequisites unavailable")
                     with self.lock:
                         if self.stop_event.is_set():
                             raise HTTPException(503, "Local playback is shutting down")
@@ -423,7 +431,22 @@ class PlaybackManager:
                         self.auxiliary[directory] = process
                         self.pending.discard(directory)
                     code = process.wait(timeout=12)
-                    self.hardware[key] = "test encode passed" if code == 0 else "test encode unavailable"
+                    output = directory / "probe.h264"
+                    passed = code == 0 and output.is_file() and 0 < output.stat().st_size <= 1048576
+                    if passed:
+                        if process.stdin and not process.stdin.closed:
+                            process.stdin.close()
+                        if process.stdout:
+                            process.stdout.close()
+                        # A successful encode exit alone does not prove usable output.
+                        command = [self.config.ffmpeg_path, "-hide_banner", "-nostdin", "-loglevel", "error",
+                                   "-xerror", "-threads", "1", "-protocol_whitelist", "file,pipe",
+                                   "-i", str(output), "-f", "null", "-"]
+                        with self.lock:
+                            process = self._launch(directory, command, 8, 1048576)
+                            self.auxiliary[directory] = process
+                        passed = process.wait(timeout=12) == 0
+                    self.hardware[key] = "test encode passed" if passed else "test encode unavailable"
                 except (OSError, subprocess.TimeoutExpired):
                     self.hardware[key] = "test encode unavailable"
                 finally:
@@ -460,6 +483,7 @@ class PlaybackManager:
                     break  # Do not stack probes while termination is uncertain.
             if identity == binary_identity(self.config.ffmpeg_path):
                 self.tested_binary = identity
+            self.hardware_checked_at = time.monotonic()
             try:
                 self.encoder, _fallback, _reason = self.select_encoder(policy)
             except HTTPException:
@@ -472,7 +496,10 @@ class PlaybackManager:
         if policy.mode in ("software_only", "direct_only"):
             return "libx264", False, None
         candidates = [policy.preferred_hardware] if policy.preferred_hardware != "auto" else ["qsv", "nvenc", "amf"]
-        verified = self.tested_binary is not None and self.tested_binary == binary_identity(self.config.ffmpeg_path)
+        verified = (
+            self.tested_binary is not None and self.tested_binary == binary_identity(self.config.ffmpeg_path)
+            and time.monotonic() - self.hardware_checked_at < HARDWARE_RECHECK_SECONDS
+        )
         for key in candidates:
             if (
                 verified
@@ -515,6 +542,7 @@ class PlaybackManager:
                 and (
                     self.tested_binary != binary_identity(self.config.ffmpeg_path)
                     or self.tested_device != policy.hardware_device
+                    or time.monotonic() - self.hardware_checked_at >= HARDWARE_RECHECK_SECONDS
                 )
             ):
                 self.detect_hardware(policy)

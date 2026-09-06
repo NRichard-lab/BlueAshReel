@@ -42,7 +42,7 @@ describe('truthful active-stream method labels', () => {
     [{ method: 'transcode', encoder: 'h264_amf' }, 'Hardware Transcode'],
     [{ method: 'transcode', encoder: 'libx264' }, 'Software Transcode'],
     [{ method: 'transcode', encoder: 'aac (audio only)' }, 'Software Transcode'],
-    [{ method: 'transcode', encoder: 'libx264', fallback: true }, 'Hardware-to-software fallback'],
+    [{ method: 'transcode', encoder: 'libx264', fallback: true }, 'Software Transcode'],
     [{ method: 'transcode', encoder: '' }, 'Transcode — encoder not reported'],
     [{ method: 'unexpected' }, 'Playback method not reported'],
   ])('reports actual processing for %j', (stream, expected) => {
