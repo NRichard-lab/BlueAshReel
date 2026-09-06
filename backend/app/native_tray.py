@@ -14,7 +14,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.native_install import write_json
 from app.native_runtime import (
@@ -25,6 +25,7 @@ from app.native_runtime import (
     protect_child_processes,
     write_stop_marker,
 )
+from app.remote.control import queue_action
 from app.services.paths import assert_no_link_components
 from app.services.process_supervisor import lock_file, unlock_file
 
@@ -43,7 +44,7 @@ def command_action(value: Any, *, runtime_id: str, pid: int, now: float) -> str 
     if "maintenance_id" in value and (value.get("runtime_id") != runtime_id or value.get("target_pid") != pid):
         return None
     action = value.get("action")
-    return action if isinstance(action, str) and action in {"exit", "pause", "restart", "reconnect"} else None
+    return action if isinstance(action, str) and action in {"exit", "pause", "restart", "reconnect", "unpair"} else None
 
 
 def connection_label(status: dict[str, Any], *, healthy: bool, paused: bool = False,
@@ -51,17 +52,25 @@ def connection_label(status: dict[str, Any], *, healthy: bool, paused: bool = Fa
     if paused:
         return "Paused"
     if not healthy:
-        return "Agent error"
+        return "Paired but Agent offline" if status.get("paired") else "Error"
     now = time.time() if now is None else now
     if now - float(status.get("updated_at", 0)) > 20:
-        return "Portal unavailable"
+        return "Paired but Agent offline" if status.get("paired") else "Error"
+    states = {
+        "waiting_portal_approval": "Waiting for Portal approval",
+        "waiting_local_confirmation": "Waiting for local confirmation",
+        "revoked": "Revoked", "pairing_expired": "Pairing expired", "pairing_cancelled": "Pairing cancelled",
+        "pairing_failed": "Error", "connection_failed": "Error",
+    }
+    if status.get("state") in states:
+        return states[status["state"]]
     if not status.get("paired"):
-        return "Unpaired"
+        return "Not paired"
     if status.get("state") == "connected_through_relay":
         return "Update available" if status.get("update_available") is True else "Connected"
     if status.get("state") in {"pairing", "reconnecting", "connecting"}:
         return "Connecting"
-    return "Portal unavailable"
+    return "Paired but Agent offline"
 
 
 class Supervisor:
@@ -78,7 +87,7 @@ class Supervisor:
     def control(self) -> Path:
         return self.config.remote_control_dir or self.installation.data_dir / "remote-control"
 
-    def spawn(self, role: str) -> None:
+    def spawn(self, role: Literal["api", "worker"]) -> None:
         installation = self.installation
         python = installation.program_dir / "runtime/python/pythonw.exe"
         command = [str(python), "-I", "-B", "-m"]
@@ -147,18 +156,22 @@ class Supervisor:
             assert_no_link_components(path)
             if path.stat().st_size > 32768:
                 return {}
-            return json.loads(path.read_text(encoding="utf-8"))
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
         except (OSError, ValueError):
             return {}
 
     def publish(self, override: str | None = None) -> None:
         healthy = bool(self.children) and all(child.poll() is None for child in self.children.values())
-        label = override or connection_label(self.remote_status(), healthy=healthy, paused=self.paused)
+        status = self.remote_status()
+        label = override or connection_label(status, healthy=healthy, paused=self.paused)
         write_json(self.installation.state_dir / "tray-status.json", {
             "state": label, "healthy": healthy, "updated_at": time.time(), "pid": os.getpid(),
             "runtime_id": self.runtime_id,
-            "port": self.installation.port, "fingerprint": self.remote_status().get("fingerprint"),
-            "update_version": self.remote_status().get("update_version"),
+            "port": self.installation.port, "fingerprint": status.get("fingerprint"),
+            "fingerprint_short": status.get("fingerprint_short"), "paired": status.get("paired", False),
+            "central_revocation_pending": status.get("central_revocation_pending", False),
+            "update_version": status.get("update_version"),
         })
 
     def run(self) -> int:
@@ -179,6 +192,8 @@ class Supervisor:
                     if action == "exit":
                         clean_exit = True
                         break
+                    if action == "unpair":
+                        queue_action(self.control, "unpair")
                     if action in {"pause", "restart", "reconnect"}:
                         self.publish("Running")
                         self.stop()
@@ -218,7 +233,7 @@ def parent_alive(pid: int) -> bool:
     if not handle:
         return False
     try:
-        return kernel.WaitForSingleObject(handle, 0) == 258
+        return bool(kernel.WaitForSingleObject(handle, 0) == 258)
     finally:
         kernel.CloseHandle(handle)
 

@@ -38,6 +38,11 @@ def fingerprint(public: bytes) -> str:
     return hashlib.sha256(public).hexdigest()
 
 
+def readable_fingerprint(value: str) -> str:
+    """The same 64-bit visual comparison string on the Portal and native tray."""
+    return " ".join(value[index:index + 4].upper() for index in range(0, 16, 4))
+
+
 def canonical(prefix: str, *values: str) -> bytes:
     if any("\n" in value or "\r" in value for value in values):
         raise ValueError("Invalid signed field")

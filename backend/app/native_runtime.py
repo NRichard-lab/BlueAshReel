@@ -124,11 +124,11 @@ def load_configuration(installation: Installation) -> AppConfig:
         if not isinstance(installation.storage, dict):
             raise NativeRuntimeError("The installed per-user storage layout is missing")
         storage = validate_storage(installation.program_dir, installation.data_dir, installation.storage)
-        expected = {
+        expected_storage = {
             "app_data": config.app_data_dir, "artwork": config.artwork_dir, "temp": config.temp_dir,
             "database": Path(config.database_url.removeprefix("sqlite:///")).parent,
         }
-        if any(Path(storage[name]) != path for name, path in expected.items()):
+        if any(Path(storage[name]) != path for name, path in expected_storage.items()):
             raise NativeRuntimeError("The configured storage differs from the installed per-user layout")
     if (
         config.deployment_mode != "native_windows" or config.native_data_dir != installation.data_dir

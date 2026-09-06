@@ -22,6 +22,7 @@ def snapshot(directory: Path | None) -> dict[str, Any]:
     state: dict[str, Any] = {
         "available": directory is not None, "enabled": False, "paired": False, "state": "disabled",
         "account_email": None, "agent_id": None, "name": None, "fingerprint": None,
+        "fingerprint_short": None,
         "last_heartbeat": None, "central_revocation_pending": False,
         "update_available": False, "update_version": None,
         "relay_endpoint": PORTAL_ORIGIN.replace("https:", "wss:") + "/ws/relay/agent",

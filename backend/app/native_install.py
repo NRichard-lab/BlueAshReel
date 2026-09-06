@@ -98,6 +98,7 @@ def _atomic_text_locked(path: Path, value: str) -> None:
                     prepared = True
                 # MoveFileEx needs the guard released to open the directory
                 # for writing. Replacement never truncates a link's target.
+                assert candidate is not None
                 candidate.replace(path)
                 candidate = None
                 return

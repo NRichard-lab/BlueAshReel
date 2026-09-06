@@ -136,9 +136,9 @@ def snapshot(data: Path, *, include_program: bool = False) -> Path:
                 raise ValueError("The Agent database backup failed validation")
     # Copy only private configuration; identity remains at its original location.
     for name in ("installation.json", ".env"):
-        source = data / "configuration" / name
-        assert_no_link_components(source)
-        native_install._atomic_text(recovery / name, source.read_text(encoding="utf-8-sig"))
+        source_path = data / "configuration" / name
+        assert_no_link_components(source_path)
+        native_install._atomic_text(recovery / name, source_path.read_text(encoding="utf-8-sig"))
     approved_roots = config.app_data_dir / "remote-roots.json"
     if approved_roots.exists():
         native_install._private_file(approved_roots)
@@ -230,9 +230,16 @@ def adopt_legacy(program: Path, data: Path, instance: str = "development") -> No
     for name in ("app.db", ".env", "installation.json"):
         native_install._private_file(recovery / name)
     values = dict(dotenv_values(data / "configuration/.env", interpolate=False))
+    required_values: dict[str, str] = {}
+    for name in ("DATABASE_URL", "APP_DATA_DIR", "ARTWORK_DIR", "TEMP_DIR"):
+        configured = values.get(name)
+        if not isinstance(configured, str) or not configured:
+            raise ValueError("A required legacy storage setting is missing")
+        required_values[name] = configured
     storage = {
-        "database": str(Path(values["DATABASE_URL"].removeprefix("sqlite:///")).parent),
-        "app_data": values["APP_DATA_DIR"], "artwork": values["ARTWORK_DIR"], "temp": values["TEMP_DIR"],
+        "database": str(Path(required_values["DATABASE_URL"].removeprefix("sqlite:///")).parent),
+        "app_data": required_values["APP_DATA_DIR"], "artwork": required_values["ARTWORK_DIR"],
+        "temp": required_values["TEMP_DIR"],
         "backups": str(data / "backups"), "logs": str(data / "logs"),
     }
     storage = validate_storage(program, data, storage)

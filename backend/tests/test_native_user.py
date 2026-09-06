@@ -129,10 +129,10 @@ def test_advanced_storage_rejects_overlap_and_existing_data(user_layout: tuple[P
 
 @pytest.mark.parametrize(("status", "healthy", "expected"), [
     ({"paired": True, "state": "connected_through_relay", "updated_at": 99}, True, "Connected"),
-    ({"paired": True, "state": "connected_through_relay", "updated_at": 50}, True, "Portal unavailable"),
+    ({"paired": True, "state": "connected_through_relay", "updated_at": 50}, True, "Paired but Agent offline"),
     ({"paired": True, "state": "reconnecting", "updated_at": 99}, True, "Connecting"),
-    ({"paired": False, "state": "disabled", "updated_at": 99}, True, "Unpaired"),
-    ({"paired": True, "state": "connected_through_relay", "updated_at": 99}, False, "Agent error"),
+    ({"paired": False, "state": "disabled", "updated_at": 99}, True, "Not paired"),
+    ({"paired": True, "state": "connected_through_relay", "updated_at": 99}, False, "Paired but Agent offline"),
 ])
 def test_tray_connected_requires_fresh_authenticated_tunnel(status: dict, healthy: bool, expected: str) -> None:
     assert connection_label(status, healthy=healthy, now=100) == expected
@@ -195,7 +195,10 @@ def test_folder_denial_and_expiration_never_become_approval(user_layout: tuple[P
         assert asyncio.run(native_consent.request_confirmation(config, "Confirm fingerprint")) is False
 
 
-def test_legacy_adoption_preserves_storage_and_requires_new_user_pairing(user_layout: tuple[Path, Path]) -> None:
+@pytest.mark.parametrize("missing_setting", [None, "DATABASE_URL", "APP_DATA_DIR", "ARTWORK_DIR", "TEMP_DIR"])
+def test_legacy_adoption_preserves_storage_and_requires_new_user_pairing(
+    user_layout: tuple[Path, Path], missing_setting: str | None,
+) -> None:
     program, data = user_layout
     for name in native_install.STATE_DIRECTORIES:
         (data / name).mkdir(parents=True, exist_ok=True)
@@ -214,6 +217,18 @@ def test_legacy_adoption_preserves_storage_and_requires_new_user_pairing(user_la
     secret = dotenv_values(data / "configuration/.env")["APP_SECRET_KEY"]
     sentinel = data / "database/app.db"
     sentinel.write_bytes(b"preserved database sentinel")
+    if missing_setting:
+        configured = data / "configuration/.env"
+        configured.write_text("\n".join(
+            line for line in configured.read_text().splitlines() if not line.startswith(missing_setting + "=")),
+            encoding="utf-8")
+        before = configured.read_bytes()
+        with pytest.raises(ValueError, match="required legacy storage setting"):
+            native_user_install.adopt_legacy(program, data)
+        assert configured.read_bytes() == before
+        assert json.loads((data / "configuration/installation.json").read_text()) == record
+        assert sentinel.read_bytes() == b"preserved database sentinel"
+        return
     native_user_install.adopt_legacy(program, data)
     after = json.loads((data / "configuration/installation.json").read_text())
     assert after["requires_user_pairing"] is True

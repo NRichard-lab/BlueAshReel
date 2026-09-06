@@ -181,7 +181,7 @@ def _install_native_socket_wrappers() -> None:
             if not allowed or len(allowed) > 32:
                 raise OutboundConnectionDisabled("Canonical Portal destination unavailable")
             _portal_ips.clear()
-            _portal_ips.update(item[4][0] for item in allowed)
+            _portal_ips.update(str(item[4][0]) for item in allowed)
             return allowed
         return original_getaddrinfo(
             _numeric_loopback(host, family), port, family, type, proto, flags | socket.AI_NUMERICHOST,

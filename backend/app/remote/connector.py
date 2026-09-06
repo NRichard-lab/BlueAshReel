@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import contextlib
 import datetime as dt
+import hashlib
 import json
 import logging
 import re
@@ -23,7 +24,16 @@ from websockets.exceptions import ConnectionClosed
 
 from app.remote.control import PORTAL_ORIGIN
 from app.remote.network import pin_resolution
-from app.remote.protocol import MAX_FRAME, MAX_SESSIONS, EncryptedSession, canonical, decode, encode, fingerprint
+from app.remote.protocol import (
+    MAX_FRAME,
+    MAX_SESSIONS,
+    EncryptedSession,
+    canonical,
+    decode,
+    encode,
+    fingerprint,
+    readable_fingerprint,
+)
 from app.remote.storage import protect_directory, protect_secret, read_json, unprotect_secret, write_json
 
 BROKER_URL = PORTAL_ORIGIN.replace("https:", "wss:") + "/ws/agent"
@@ -112,7 +122,8 @@ class Connector:
             if self.credentials.get("agent_id"):
                 uuid.UUID(self.credentials["agent_id"])
         self.connection: asyncio.Task[None] | None = None
-        self.state = "disabled"
+        self.state = "revoked" if read_json(identity / "revoked.json").get("revoked") is True else "disabled"
+        self.pairing_expires_at = 0.0
         self.last_heartbeat: str | None = None
         self.retry_at = 0.0
         self.attempt = 0
@@ -159,6 +170,7 @@ class Connector:
             "enabled": self.enabled(), "paired": self.paired, "state": self.state,
             "agent_id": self.credentials.get("agent_id"), "account_email": self.credentials.get("account_email"),
             "name": self.credentials.get("name"), "fingerprint": fingerprint(public) if public else None,
+            "fingerprint_short": readable_fingerprint(fingerprint(public)) if public else None,
             "last_heartbeat": self.last_heartbeat, "updated_at": time.time(),
             "central_revocation_pending": (self.identity / "revocation.json").exists(),
             "remote_media_available": self.media is not None,
@@ -183,19 +195,41 @@ class Connector:
             raise ValueError("Invalid pairing code")
         if self.media is not None and command.get("local_confirmed") is not True:
             raise ValueError("Native local fingerprint confirmation required")
+        binding: dict[str, str] = {}
+        if self.media is not None or any(key in command for key in ("code_verifier", "state", "nonce", "callback")):
+            for key in ("code_verifier", "state", "nonce"):
+                value = command.get(key)
+                if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", value):
+                    raise ValueError("Missing browser authorization binding")
+                binding[key] = value
+            callback = command.get("callback")
+            if not isinstance(callback, str) or not re.fullmatch(
+                r"http://127\.0\.0\.1:([1-9][0-9]{3,4})/portal/callback", callback
+            ) or not 1024 <= int(callback.split(":")[2].split("/")[0]) <= 65535:
+                raise ValueError("Invalid browser callback binding")
+            binding["callback"] = callback
         self.prepare_identity(name)
         assert self.private_key is not None
         public = encode(self.private_key.public_key().public_bytes_raw())
         self.state = "pairing"
         self.publish()
-        signature = encode(self.private_key.sign(canonical(
-            "blueashreel-pair-v1", code, public, name, OS_CATEGORY, self.version
-        )))
+        challenge = encode(hashlib.sha256(binding["code_verifier"].encode("ascii")).digest()) if binding else None
+        transcript = canonical("blueashreel-pair-v1", code, public, name, OS_CATEGORY, self.version)
+        if binding:
+            assert challenge is not None
+            transcript = canonical("blueashreel-pair-v2", code, public, name, OS_CATEGORY, self.version,
+                                   binding["state"], binding["nonce"], challenge, binding["callback"])
+        signature = encode(self.private_key.sign(transcript))
         result = await asyncio.to_thread(post_control, "/api/agents/pair", {
             "code": code, "public_key": public, "name": name, "os": OS_CATEGORY,
             "version": self.version, "signature": signature,
-            **{key: command[key] for key in ("code_verifier", "state", "nonce") if key in command},
+            **binding,
         })
+        if binding and any(result.get(key) != value for key, value in {
+            "state": binding["state"], "nonce": binding["nonce"],
+            "code_challenge": challenge, "callback": binding["callback"],
+        }.items()):
+            raise ValueError("Pairing authorization binding rejected")
         received_id = str(uuid.UUID(result["agent_id"]))
         scoped_origin = PORTAL_ORIGIN.replace("https:", "wss:")
         if (
@@ -215,13 +249,19 @@ class Connector:
             "account_email": result["account_email"],
         })
         write_json(self.identity / "identity.json", self.credentials)
+        (self.identity / "revoked.json").unlink(missing_ok=True)
         if self.media:
             self.media.bind(result["agent_id"], result["user_id"])
         self.state = "reconnecting"
+        self.pairing_expires_at = 0
         self.attempt = 0
         self.retry_at = 0
 
     def remove_identity(self, *, central_already_revoked: bool = False) -> None:
+        if central_already_revoked:
+            write_json(self.identity / "revoked.json", {"revoked": True})
+        else:
+            (self.identity / "revoked.json").unlink(missing_ok=True)
         if self.paired and not central_already_revoked:
             assert self.private_key is not None
             agent_id = self.credentials["agent_id"]
@@ -233,7 +273,8 @@ class Connector:
         self.credentials = {}
         self.private_key = None
         write_json(self.control / "desired.json", {"enabled": False})
-        self.state = "revoked" if central_already_revoked else "disabled"
+        self.state = "revoked" if central_already_revoked else "unpaired"
+        self.pairing_expires_at = 0
         self.last_heartbeat = None
 
     async def retry_revocation(self) -> None:
@@ -480,6 +521,8 @@ class Connector:
         # complete local destruction before any reconnection is considered.
         if (self.identity / "revocation.json").exists():
             self.remove_identity()
+        elif read_json(self.identity / "revoked.json").get("revoked") is True:
+            self.remove_identity(central_already_revoked=True)
         try:
             while True:
                 for command in sorted(self.control.glob("command-*.json"))[:4]:
@@ -499,12 +542,19 @@ class Connector:
                         self.state = "reconnecting"
                     self.retry_at = time.monotonic() + reconnect_delay(self.attempt)
                     self.attempt += 1
+                if self.state in {"waiting_portal_approval", "waiting_local_confirmation"} and (
+                    self.pairing_expires_at <= time.time()
+                ):
+                    self.state = "pairing_expired"
+                pairing_states = {"waiting_portal_approval", "waiting_local_confirmation", "pairing_expired",
+                                  "pairing_cancelled", "pairing_failed", "revoked"}
                 if not self.enabled():
                     await self.stop_connection()
-                    if self.state not in {"pairing_failed", "revoked"}:
+                    if self.state not in pairing_states:
                         self.state = "disabled"
                 elif not self.paired:
-                    self.state = "unpaired"
+                    if self.state not in pairing_states:
+                        self.state = "unpaired"
                 elif self.paired and self.connection is None and time.monotonic() >= self.retry_at:
                     self.state = "reconnecting"
                     self.connection = asyncio.create_task(self.connected())

@@ -46,6 +46,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     manager = PlaybackManager(local_config, sessionmaker(bind=local_engine, expire_on_commit=False))
     _app.state.playback_manager = manager
     connector_task = None
+    callback_listener = None
     try:
         manager.start()
         if (
@@ -53,6 +54,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             and local_config.native_data_dir
             and local_config.remote_control_dir
         ):
+            from app.remote.callback_server import CallbackListener
             from app.remote.connector import Connector
             from app.remote.media import RemoteMedia
 
@@ -65,9 +67,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             _app.state.portal_connector = connector
             _app.state.portal_pending = {}
             _app.state.portal_status_sessions = {}
+            callback_listener = CallbackListener(_app)
+            await callback_listener.start()
+            _app.state.portal_callback_origin = callback_listener.origin
             connector_task = asyncio.create_task(connector.run())
         yield
     finally:
+        if callback_listener:
+            await callback_listener.close()
         if connector_task:
             connector_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse
 from sqlalchemy import delete, select, update
 
 from app.api import catalog, playback
@@ -97,13 +98,13 @@ class RemoteMedia:
             db.flush()
         if row.revoked:
             raise HTTPException(404, "Unavailable")
-        return row.id
+        return identifier(row.id)
 
     def resolve(self, db: Any, kind: str, opaque: Any) -> str:
         row = db.get(RemoteObject, identifier(opaque))
         if row is None or row.agent_id != self.agent_id or row.kind != kind or row.revoked:
             raise HTTPException(404, "Unavailable")
-        return row.local_id
+        return identifier(row.local_id)
 
     def external(self, db: Any, value: Any, kind: str = "media") -> Any:
         if isinstance(value, list):
@@ -389,10 +390,12 @@ class RemoteMedia:
                     choice_args["recovery_from"] = self.resolve(db, "playback", args["recovery_from"])
                 choice = PlaybackChoice.model_validate(choice_args)
                 if op == "playback.decision":
-                    result = playback.decision(choice, principal, db, self.config)
+                    result = jsonable_encoder(playback.decision(choice, principal, db, self.config))
                 else:
-                    result = playback.create_playback(choice, principal, db, self.config, self.manager)
-                    result["resource"] = "file" if result["decision"].method == "direct" else "manifest"
+                    result = jsonable_encoder(
+                        playback.create_playback(choice, principal, db, self.config, self.manager)
+                    )
+                    result["resource"] = "file" if result["decision"]["method"] == "direct" else "manifest"
                 kind = "playback"
             elif op in {
                 "playback.bytes",
@@ -758,5 +761,7 @@ class RemoteMedia:
             if segment is None or segment[0] != session_id:
                 raise HTTPException(404, "Unavailable")
             response = playback.hls_file(session_id, segment[1], principal, db, self.config, self.manager)
+            if not isinstance(response, FileResponse):
+                raise HTTPException(404, "Unavailable")
             return self.chunk(Path(response.path), args, "video/mp2t")
         raise HTTPException(404, "Unavailable")

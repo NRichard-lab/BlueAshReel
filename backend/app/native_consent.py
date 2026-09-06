@@ -63,6 +63,8 @@ async def _request(config: AppConfig, kind: str, fields: dict[str, Any], *, time
                 if response.stat().st_size > 16384:
                     raise ValueError("Invalid local confirmation response")
                 value = json.loads(response.read_text(encoding="utf-8-sig"))
+                if not isinstance(value, dict):
+                    raise ValueError("Invalid local confirmation response")
                 if value.get("id") != request_id or value.get("approved") is not True:
                     return {}
                 return value

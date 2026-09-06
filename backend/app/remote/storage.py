@@ -116,6 +116,7 @@ def _write_json_locked(path: Path, value: dict[str, Any]) -> None:
                     if os.name != "nt":
                         os.chmod(temporary, 0o600)
                     prepared = True
+                assert temporary is not None
                 os.replace(temporary, path)
                 temporary = None
                 break

@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.remote.connector import post_control
 from app.remote.control import PORTAL_ORIGIN, queue_action, snapshot
-from app.remote.protocol import canonical, encode
+from app.remote.protocol import canonical, encode, readable_fingerprint
 
 router = APIRouter(prefix="/portal", include_in_schema=False)
 COOKIE = "bluereel_portal_handoff"
@@ -23,13 +23,18 @@ STATUS_COOKIE = "bluereel_portal_status"
 
 
 def local_host(request: Request) -> str:
+    server = request.scope.get("server")
     if (
         request.url.hostname != "127.0.0.1"
+        or request.url.scheme != "http"
+        or request.url.port is None
+        or not 1024 <= request.url.port <= 65535
         or request.client is None
         or request.client.host not in {"127.0.0.1", "::1", "testclient"}
+        or (server is not None and server[1] != request.url.port)
     ):
         raise HTTPException(403, "Use the Agent loopback address")
-    return f"http://127.0.0.1:{request.url.port or 80}"
+    return f"http://127.0.0.1:{request.url.port}"
 
 
 def state(request: Request) -> tuple[Any, dict[str, Any], dict[str, Any]]:
@@ -42,6 +47,7 @@ def state(request: Request) -> tuple[Any, dict[str, Any], dict[str, Any]]:
 @router.get("/start")
 async def start(request: Request, purpose: str = "status") -> RedirectResponse:
     origin = local_host(request)
+    callback_origin = getattr(request.app.state, "portal_callback_origin", origin)
     connector, pending, _sessions = state(request)
     if purpose not in {"pair", "status"}:
         raise HTTPException(422, "Invalid authorization purpose")
@@ -49,9 +55,21 @@ async def start(request: Request, purpose: str = "status") -> RedirectResponse:
         purpose = "pair"
     elif purpose == "pair":
         raise HTTPException(409, "This Agent is paired. Revoke the existing pairing before changing accounts.")
+    if (connector.identity / "revocation.json").exists():
+        raise HTTPException(409, "Unpairing is still reaching the Portal. Reconnect to the network and try again.")
     for key, value in list(pending.items()):
         if value["expires_at"] < time.time():
             del pending[key]
+    # A double-click, refresh or a reopened browser returns to the same pending
+    # authorization. Never replace its cookie or strand a second approval.
+    for key, value in pending.items():
+        if value["purpose"] == purpose and value["callback"] == callback_origin + "/portal/callback" and (
+            purpose == "pair" or request.cookies.get(COOKIE) == key
+        ):
+            parameters = {key: item for key, item in value.items() if key not in {"verifier", "expires_at"}}
+            return authorization_redirect(parameters, max_age=max(1, int(value["expires_at"] - time.time())))
+    if purpose == "pair" and connector.state in {"waiting_local_confirmation", "pairing"}:
+        raise HTTPException(409, "Confirm the fingerprint on the Agent workstation to finish pairing.")
     if len(pending) >= 8:
         raise HTTPException(429, "Too many authorization requests")
     browser_state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
@@ -60,7 +78,7 @@ async def start(request: Request, purpose: str = "status") -> RedirectResponse:
         "state": browser_state,
         "nonce": nonce,
         "code_challenge": encode(hashlib.sha256(verifier.encode("ascii")).digest()),
-        "callback": origin + "/portal/callback",
+        "callback": callback_origin + "/portal/callback",
     }
     if purpose == "pair":
         identity = connector.prepare_identity("Blue Ash Reel Agent")
@@ -68,14 +86,26 @@ async def start(request: Request, purpose: str = "status") -> RedirectResponse:
     else:
         parameters["agent_id"] = connector.credentials["agent_id"]
     pending[browser_state] = {**parameters, "verifier": verifier, "expires_at": time.time() + 300}
-    result = RedirectResponse(PORTAL_ORIGIN + "/agent/authorize?" + urlencode(parameters), status_code=303)
-    result.set_cookie(COOKIE, browser_state, httponly=True, samesite="lax", max_age=300, path="/portal")
+    if purpose == "pair":
+        connector.state = "waiting_portal_approval"
+        connector.pairing_expires_at = pending[browser_state]["expires_at"]
+        connector.publish()
+    return authorization_redirect(parameters)
+
+
+def authorization_redirect(parameters: dict[str, str], *, max_age: int = 300) -> RedirectResponse:
+    result = RedirectResponse(PORTAL_ORIGIN + "/agent/authorize#" + urlencode(parameters), status_code=303)
+    result.set_cookie(COOKIE, parameters["state"], httponly=True, samesite="lax", max_age=max_age, path="/portal")
+    result.headers["Cache-Control"] = "no-store"
+    result.headers["Referrer-Policy"] = "no-referrer"
     return result
 
 
 @router.get("/callback")
 async def callback_page(request: Request) -> HTMLResponse:
-    local_host(request)
+    origin = local_host(request)
+    if origin != getattr(request.app.state, "portal_callback_origin", origin):
+        raise HTTPException(403, "Use the authorization callback opened by the Portal")
     # The short-lived code is delivered in a fragment, never an HTTP access log.
     csp_nonce = secrets.token_urlsafe(20)
     result = HTMLResponse(
@@ -89,9 +119,10 @@ async def callback_page(request: Request) -> HTMLResponse:
 const parameters=new URLSearchParams(location.hash.slice(1));history.replaceState(null,'','/portal/callback');
 try {const response=await fetch('/portal/callback',{method:'POST',credentials:'same-origin',
 headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(parameters))});
-if(!response.ok)throw new Error();const result=await response.json();location.replace(result.redirect);
-}catch{document.getElementById('status').textContent=
-'Authorization expired or was rejected. Open Blue Ash Reel from the tray to retry.'}
+const result=await response.json();if(!response.ok)throw new Error(result.detail||'Authorization was rejected.');
+if(result.redirect)location.replace(result.redirect);else document.getElementById('status').textContent=result.message;
+}catch(error){document.getElementById('status').textContent=
+(error.message||'Authorization expired or was rejected.')+' Open Blue Ash Reel from the tray to retry.'}
 })();</script></body></html>"""
     )
     result.headers["Content-Security-Policy"] = (
@@ -99,6 +130,7 @@ if(!response.ok)throw new Error();const result=await response.json();location.re
         "frame-ancestors 'none'; base-uri 'none'"
     )
     result.headers["Referrer-Policy"] = "no-referrer"
+    result.headers["Cache-Control"] = "no-store"
     return result
 
 
@@ -115,36 +147,65 @@ async def callback(request: Request) -> JSONResponse:
 
     try:
         payload = json.loads(body)
-        if not isinstance(payload, dict) or set(payload) != {"code", "state", "nonce"}:
+        if not isinstance(payload, dict) or set(payload) not in (
+            {"code", "state", "nonce"}, {"error", "state", "nonce"}
+        ):
             raise ValueError()
         browser_state = payload["state"]
         cookie = request.cookies.get(COOKIE, "")
         if not isinstance(browser_state, str) or not cookie or not secrets.compare_digest(cookie, browser_state):
             raise ValueError()
         value = pending.pop(browser_state, None)  # Consume before any asynchronous work.
-        if (
-            value is None
-            or value["expires_at"] <= time.time()
-            or not secrets.compare_digest(value["nonce"], payload["nonce"])
-        ):
+        if value is None:
             raise ValueError()
-        if not isinstance(payload["code"], str) or not 16 <= len(payload["code"]) <= 256:
+        if value["expires_at"] <= time.time():
+            if value["purpose"] == "pair":
+                connector.state = "pairing_expired"
+                connector.publish()
+            raise ValueError()
+        if not isinstance(payload["nonce"], str) or not secrets.compare_digest(value["nonce"], payload["nonce"]):
+            if value["purpose"] == "pair":
+                connector.state = "pairing_failed"
+                connector.publish()
+            raise ValueError()
+        if value["callback"] != origin + "/portal/callback":
+            raise ValueError()
+        if "error" in payload:
+            if payload["error"] != "access_denied":
+                raise ValueError()
+        elif not isinstance(payload["code"], str) or not 16 <= len(payload["code"]) <= 256:
             raise ValueError()
     except (ValueError, KeyError, TypeError):
         raise HTTPException(403, "Expired or replayed callback") from None
+    if "error" in payload:
+        if value["purpose"] == "pair":
+            connector.state = "pairing_cancelled"
+            connector.publish()
+        response = JSONResponse({"message": "Authorization cancelled. You can close this page."})
+        response.delete_cookie(COOKIE, path="/portal")
+        response.headers["Cache-Control"] = "no-store"
+        return response
     if value["purpose"] == "pair":
         if connector.paired or connector.prepare_identity(value["name"])["fingerprint"] != value["fingerprint"]:
             raise HTTPException(403, "Agent identity changed")
         from app.native_consent import request_confirmation
 
+        connector.state = "waiting_local_confirmation"
+        connector.publish()
         approved = await request_confirmation(
             connector.media.config,
             "Pair Blue Ash Reel with the signed-in Portal account? Compare this Agent fingerprint with the browser:\n\n"
-            + value["fingerprint"]
+            + readable_fingerprint(value["fingerprint"])
             + "\n\nApprove only if the fingerprints match and you requested pairing.",
         )
         if not approved:
+            connector.state = "pairing_cancelled"
+            connector.publish()
             raise HTTPException(403, "Local confirmation was declined")
+        if value["expires_at"] <= time.time():
+            connector.state = "pairing_expired"
+            connector.publish()
+            raise HTTPException(403, "Pairing expired. Start again from the Agent tray.")
         queue_action(
             connector.control,
             "pair",
@@ -154,6 +215,7 @@ async def callback(request: Request) -> JSONResponse:
                 "code_verifier": value["verifier"],
                 "state": browser_state,
                 "nonce": value["nonce"],
+                "callback": value["callback"],
                 "local_confirmed": True,
             },
         )
@@ -169,7 +231,8 @@ async def callback(request: Request) -> JSONResponse:
         agent_id = connector.credentials["agent_id"]
         assert connector.private_key is not None
         signed = canonical(
-            "blueashreel-local-exchange-v1", agent_id, payload["code"], browser_state, value["nonce"], value["verifier"]
+            "blueashreel-local-exchange-v2", agent_id, payload["code"], browser_state, value["nonce"],
+            value["verifier"], value["callback"]
         )
         result = await asyncio.to_thread(
             post_control,
@@ -178,6 +241,7 @@ async def callback(request: Request) -> JSONResponse:
                 "agent_id": agent_id,
                 **payload,
                 "code_verifier": value["verifier"],
+                "callback": value["callback"],
                 "signature": encode(connector.private_key.sign(signed)),
             },
         )
@@ -186,6 +250,8 @@ async def callback(request: Request) -> JSONResponse:
             or result.get("agent_id") != agent_id
             or result.get("state") != browser_state
             or result.get("nonce") != value["nonce"]
+            or result.get("callback") != value["callback"]
+            or result.get("code_challenge") != value["code_challenge"]
             or result.get("purpose") != "status"
             or result.get("expires_at", 0) <= time.time()
         ):
@@ -212,6 +278,9 @@ async def callback(request: Request) -> JSONResponse:
 async def status_page(request: Request) -> Any:
     local_host(request)
     connector, _pending, sessions = state(request)
+    if not connector.paired:
+        sessions.clear()
+        return RedirectResponse("/portal/start", status_code=303)
     token = request.cookies.get(STATUS_COOKIE, "")
     authorization = sessions.get(hashlib.sha256(token.encode()).hexdigest())
     if not authorization or authorization["expires_at"] <= time.time():

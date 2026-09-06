@@ -407,7 +407,7 @@ def test_local_status_pkce_cookie_agent_binding_and_callback_replay(owner_contex
     base = "http://127.0.0.1:18080"
     response = context.client.get(base + "/portal/start", follow_redirects=False)
     assert response.status_code == 303
-    query = {key: values[0] for key, values in parse_qs(urlsplit(response.headers["location"]).query).items()}
+    query = {key: values[0] for key, values in parse_qs(urlsplit(response.headers["location"]).fragment).items()}
     assert query["agent_id"] == auth["agent_id"] and len(query["code_challenge"]) == 43
     assert "verifier" not in response.headers["location"]
     payload = {"state": query["state"], "nonce": query["nonce"], "code": "synthetic-code-with-entropy"}
@@ -424,6 +424,8 @@ def test_local_status_pkce_cookie_agent_binding_and_callback_replay(owner_contex
         "purpose": "status",
         "state": query["state"],
         "nonce": query["nonce"],
+        "callback": query["callback"],
+        "code_challenge": query["code_challenge"],
     }
     with patch("app.remote.local_auth.post_control", return_value=result):
         response = context.client.post(base + "/portal/callback", json=payload, headers=headers)

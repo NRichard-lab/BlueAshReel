@@ -9,15 +9,26 @@ must be global addresses. No arbitrary HTTP proxy or filesystem API is exposed.
 
 ## Authorization and pairing
 
-The tray opens `/portal/start?purpose=pair` or `purpose=status`. The Agent creates
+The tray opens `/portal/start?purpose=pair` or `purpose=status`. Each native runtime
+also exclusively binds an OS-selected random port on `127.0.0.1` for the Portal
+callback and authenticated local status routes; this listener exposes no media
+or ordinary API routes and closes with the runtime. The Agent creates
 a random state, nonce, PKCE verifier, and HttpOnly browser-binding cookie. Only
-the S256 challenge goes to the Portal. A pairing request includes the Agent's
+the S256 challenge goes to the Portal. Authorization request fields travel in
+a URL fragment that the Portal immediately removes while retaining the request
+in browser memory. A pairing request includes the Agent's
 locally generated public key and fingerprint. The Portal authenticates the user,
 requires completed MFA (email in the new flow, existing TOTP retained during migration), and issues a single-use code bound to that key.
 The local callback accepts the code in a URL fragment, immediately removes that
 fragment, and POSTs to the loopback callback with exact Origin validation.
 It consumes local state before network activity and requires the native tray's
-fingerprint confirmation before redeeming a pairing code. Codes, passwords,
+fingerprint confirmation before redeeming a pairing code. Both surfaces display
+the first 16 SHA-256 hex digits in four uppercase groups, while the complete
+fingerprint remains the cryptographic identity binding. The v2 pairing proof
+signs the code, public key, friendly name, OS/version, state, nonce, S256 challenge
+and exact callback; the Agent checks returned state/nonce/challenge/callback
+before persisting the account association. Local status exchange signs its exact
+callback with its other one-use bindings as well. Codes, passwords,
 private keys, and PKCE verifiers never enter HTTP access logs.
 
 The private key uses current-user DPAPI on Windows. Pairing preserves an existing
@@ -27,6 +38,17 @@ fresh signed validation on each view; logout or membership revocation therefore
 rejects the next view. Temporary callback state is memory-only and cleared at
 shutdown. Pairing commands use the private per-user spool and are removed after
 consumption or shutdown.
+
+Refreshing or reopening the local start route reuses a still-pending request,
+and local confirmation is consumed once. Portal Cancel invalidates the bound
+authorization and returns a state/nonce-bound cancellation fragment. Declined
+local confirmation never queues an exchange. Pending requests expire after five
+minutes, including while native confirmation is open. The tray distinguishes
+Portal approval, local confirmation, connection, expiry, cancellation and
+revocation. If an already-approved browser callback was interrupted, choose
+Reconnect in the tray, then Pair Agent to create a fresh authorization. A durable
+nonsecret revocation marker preserves the Revoked label across restart and
+completes private-key destruction if the process stops midway through revocation.
 
 The connector authenticates both the broker and relay with device signatures.
 It reports connected only after both authenticated sockets are active. Scoped
