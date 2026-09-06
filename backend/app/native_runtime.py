@@ -293,6 +293,8 @@ def watch_service(
             request_stop()
             return True
         good = check()
+        if stop.is_set():
+            return True
         if good:
             ready, failures = True, 0
         elif ready:

@@ -120,6 +120,25 @@ def test_native_watchdog_honors_stop_marker_before_health(installation: native_r
     assert requested == [True]
 
 
+def test_native_watchdog_does_not_overwrite_final_heartbeat_after_slow_probe(
+    installation: native_runtime.Installation,
+) -> None:
+    stop = threading.Event()
+    requested: list[bool] = []
+
+    def finishing_probe() -> bool:
+        # The API finished and wrote its final state while this probe was busy.
+        stop.set()
+        native_runtime.heartbeat(installation, "api", "stopped")
+        return True
+
+    assert native_runtime.watch_service(
+        installation, "api", stop, finishing_probe, lambda: requested.append(True), interval=0,
+    )
+    assert not requested
+    assert json.loads((installation.state_dir / "heartbeat-api.json").read_text())["status"] == "stopped"
+
+
 def test_child_commands_use_bundled_tools_without_secret_arguments_or_inherited_node_options(
     installation: native_runtime.Installation, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

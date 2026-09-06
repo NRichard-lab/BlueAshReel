@@ -3,12 +3,29 @@
 This records the current change, not a completed release. The published
 Owner-only unsigned installer remains **0.1.0-development.4**. Development.5
 is the current source/candidate and must not replace it until acceptance passes.
-No new Portal deployment or development.5 publication is recorded at this
-checkpoint. Existing production data, Agent data and unrelated services must
-remain preserved throughout the remaining work.
+The Portal was deployed on September 6 at commit
+`e225d2d38acf5a83ee0d7bc2707f9b8b669a4b96`; development.5 remains unpublished.
+Existing production data, Agent data and unrelated services must remain preserved
+throughout the remaining work.
 
 ## Evidence recorded
 
+- Final Windows concurrency correction: 693 tests passed with real FFmpeg/Caddy,
+  four platform skips, and Ruff passed. Both state writers coordinate one target
+  with a bounded Windows mutex and retry sharing/lock conflicts across the entire
+  atomic operation. Access-denied and path-validation errors still fail immediately.
+  A late health probe cannot overwrite the final stopped heartbeat. Mixed process
+  writers, bounded lock waits and abandoned-owner recovery have regressions.
+  The corrected source probe passed 56 healthy observations across restart and
+  shutdown with no orphan temporary files. The first clean development.5 installer
+  was rejected after exposing the race; a rebuilt candidate needs its own acceptance.
+- Portal deployment applied additive schema d491730fe212 after a protected backup
+  and complete dry restore. Only API, broker, relay and frontend were recreated;
+  the database and seven unrelated containers retained identity and configuration.
+  Accounts/sessions, secrets, TLS certificate and development.4 metadata were
+  preserved. Trusted public HTTPS, health, anonymous download rejection and
+  uninvited registration rejection passed. Real Owner/mail/Agent checks remain
+  pending; no email MFA was enabled.
 - September 6 resumed regression: 676 Agent/backend/packaging/script tests passed
   with the bundled FFmpeg and Caddy; four platform/privilege skips. Ruff passed.
   A subsequent 38-test remote-media run passed after adding abandoned-session

@@ -389,6 +389,7 @@ def test_signed_update_check_is_hourly_and_optional(tmp_path):
     assert connector.update_available
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Exercises Windows sharing failure retry")
 def test_remote_atomic_status_write_retries_transient_windows_share_denial(tmp_path):
     original = os.replace
     attempts = 0
@@ -397,11 +398,48 @@ def test_remote_atomic_status_write_retries_transient_windows_share_denial(tmp_p
         nonlocal attempts
         attempts += 1
         if attempts < 3:
-            raise PermissionError("Synthetic temporary sharing denial")
+            error = PermissionError("Synthetic temporary sharing denial")
+            error.winerror = 32
+            raise error
         return original(source, target)
 
     with patch("app.remote.storage.os.replace", side_effect=replace):
         write_json(tmp_path / "status.json", {"state": "connected_through_relay"})
     assert attempts == 3
     assert read_json(tmp_path / "status.json")["state"] == "connected_through_relay"
+    assert not list(tmp_path.glob(".pending-*"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Exercises Windows directory sharing during temporary creation")
+def test_remote_atomic_write_retries_temporary_creation_conflict(tmp_path):
+    from app.remote import storage
+
+    original = storage.tempfile.mkstemp
+    attempts = 0
+
+    def create(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            error = PermissionError("Synthetic directory sharing conflict")
+            error.winerror = 32
+            raise error
+        return original(**kwargs)
+
+    with patch("app.remote.storage.tempfile.mkstemp", side_effect=create):
+        write_json(tmp_path / "desired.json", {"enabled": False})
+    assert attempts == 3
+    assert read_json(tmp_path / "desired.json") == {"enabled": False}
+    assert not list(tmp_path.glob(".pending-*"))
+
+
+def test_remote_atomic_write_does_not_retry_access_denied_or_lose_prior_state(tmp_path):
+    target = tmp_path / "desired.json"
+    write_json(target, {"enabled": True})
+    error = PermissionError("Synthetic access denial")
+    error.winerror = 5
+    with patch("app.remote.storage.os.replace", side_effect=error) as replace, pytest.raises(PermissionError):
+        write_json(target, {"enabled": False})
+    assert replace.call_count == 1
+    assert read_json(target) == {"enabled": True}
     assert not list(tmp_path.glob(".pending-*"))

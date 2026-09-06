@@ -30,6 +30,7 @@ from typing import Any
 from dotenv import dotenv_values
 
 from app.config import AppConfig, get_product_config
+from app.remote.storage import state_write_lock
 from app.services.paths import (
     assert_no_link_components,
     is_link_or_reparse,
@@ -54,36 +55,64 @@ def write_json(path: Path, value: object) -> None:
     _atomic_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def _wait_for_windows_sharing(error: OSError, deadline: float) -> bool:
+    # Access denied and validation failures are not transient sharing conflicts.
+    if os.name != "nt" or getattr(error, "winerror", None) not in {32, 33}:
+        return False
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    time.sleep(min(0.025, remaining))
+    return True
+
+
 def _atomic_text(path: Path, value: str) -> None:
+    with state_write_lock(path):
+        _atomic_text_locked(path, value)
+
+
+def _atomic_text_locked(path: Path, value: str) -> None:
     # Mutable state can be written by service identities. Never truncate an
     # existing path (or predictable .new sibling) with elevated privileges.
     # Pin ancestors and create a unique file exclusively; replacement changes
     # the directory entry, not the target of a pre-existing hard link.
     candidate: Path | None = None
+    prepared = False
+    deadline = time.monotonic() + 0.5
     try:
-        with native_directory_guard(path.parent):
-            assert_no_link_components(path.parent)
-            descriptor, name = tempfile.mkstemp(prefix=".bluereel-", dir=path.parent)
-            candidate = Path(name)
-            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
-                output.write(value)
-        # MoveFileEx reopens the destination directory for write access, which
-        # conflicts with a directory guard. All content writes are complete;
-        # replacing an existing link never opens/truncates its external target.
-        _private_file(candidate)
-        for attempt in range(20):
+        while True:
             try:
+                if not prepared:
+                    if candidate is not None:
+                        candidate.unlink(missing_ok=True)
+                        candidate = None
+                    # Other writers' replacements can also briefly conflict
+                    # with acquiring the guard or creating the temporary file.
+                    with native_directory_guard(path.parent):
+                        assert_no_link_components(path.parent)
+                        descriptor, name = tempfile.mkstemp(prefix=".bluereel-", dir=path.parent)
+                        candidate = Path(name)
+                        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
+                            output.write(value)
+                    _private_file(candidate)
+                    prepared = True
+                # MoveFileEx needs the guard released to open the directory
+                # for writing. Replacement never truncates a link's target.
                 candidate.replace(path)
-                break
-            except PermissionError:
-                if os.name != "nt" or attempt == 19:
+                candidate = None
+                return
+            except OSError as error:
+                if not _wait_for_windows_sharing(error, deadline):
                     raise
-                # Readers and Windows executable/antimalware verification may
-                # briefly deny replacement. Never discard committed prior state.
-                time.sleep(0.025)
     finally:
         if candidate is not None:
-            candidate.unlink(missing_ok=True)
+            while True:
+                try:
+                    candidate.unlink(missing_ok=True)
+                    break
+                except OSError as error:
+                    if not _wait_for_windows_sharing(error, deadline):
+                        raise
 
 
 def validate_layout(program: Path, data: Path) -> tuple[Path, Path]:

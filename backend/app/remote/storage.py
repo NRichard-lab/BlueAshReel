@@ -3,13 +3,58 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import hashlib
 import json
 import os
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+
+@contextmanager
+def state_write_lock(path: Path) -> Iterator[None]:
+    """Coordinate Windows atomic replacements of one destination across processes."""
+    if os.name != "nt":
+        yield
+        return
+    from ctypes import wintypes
+
+    # Resolve only the parent: replacing a link must never follow its leaf.
+    # Local namespace and the process token's default DACL keep this within the
+    # interactive user session. No lock file or host path is exposed by the name.
+    canonical = os.path.normcase(str(path.parent.resolve(strict=False) / path.name))
+    name = "Local\\BlueAshReel-State-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.ReleaseMutex.argtypes = [wintypes.HANDLE]
+    kernel.ReleaseMutex.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.CreateMutexW(None, False, name)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    acquired = False
+    try:
+        result = kernel.WaitForSingleObject(handle, 500)
+        if result == 0x102:
+            raise TimeoutError("Agent state writer remained busy beyond the bounded wait")
+        if result not in {0, 0x80}:  # WAIT_OBJECT_0 or an abandoned owner's mutex.
+            raise ctypes.WinError(ctypes.get_last_error())
+        acquired = True
+        yield
+    finally:
+        try:
+            if acquired and not kernel.ReleaseMutex(handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            kernel.CloseHandle(handle)
 
 
 def protect_directory(path: Path) -> None:
@@ -44,26 +89,39 @@ def protect_directory(path: Path) -> None:
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
     """Replace atomically; never expose an incompletely written credential or command."""
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    descriptor, temporary = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
+    with state_write_lock(path):
+        _write_json_locked(path, value)
+
+
+def _write_json_locked(path: Path, value: dict[str, Any]) -> None:
+    temporary: Path | None = None
+    prepared = False
+    deadline = time.monotonic() + 0.5
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=True, separators=(",", ":"))
-            stream.flush()
-            os.fsync(stream.fileno())
-        if os.name != "nt":
-            os.chmod(temporary, 0o600)
-        # Windows scanners/readers can transiently deny delete sharing. Keep the
-        # atomic replacement and retry only that sharing failure for <=500ms.
-        deadline = time.monotonic() + 0.5
         while True:
             try:
+                if not prepared:
+                    if temporary is not None:
+                        temporary.unlink(missing_ok=True)
+                        temporary = None
+                    # A different destination's native directory guard can
+                    # briefly conflict before replacement, including creation.
+                    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    descriptor, name = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
+                    temporary = Path(name)
+                    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                        json.dump(value, stream, ensure_ascii=True, separators=(",", ":"))
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    if os.name != "nt":
+                        os.chmod(temporary, 0o600)
+                    prepared = True
                 os.replace(temporary, path)
+                temporary = None
                 break
-            except PermissionError:
-                if time.monotonic() >= deadline:
+            except OSError as error:
+                if not _wait_for_windows_sharing(error, deadline):
                     raise
-                time.sleep(0.025)
         if os.name != "nt":
             directory = os.open(path.parent, getattr(os, "O_DIRECTORY", 0))
             try:
@@ -71,7 +129,24 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
             finally:
                 os.close(directory)
     finally:
-        Path(temporary).unlink(missing_ok=True)
+        if temporary is not None:
+            while True:
+                try:
+                    temporary.unlink(missing_ok=True)
+                    break
+                except OSError as error:
+                    if not _wait_for_windows_sharing(error, deadline):
+                        raise
+
+
+def _wait_for_windows_sharing(error: OSError, deadline: float) -> bool:
+    if os.name != "nt" or getattr(error, "winerror", None) not in {32, 33}:
+        return False
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    time.sleep(min(0.025, remaining))
+    return True
 
 
 def read_json(path: Path) -> dict[str, Any]:
