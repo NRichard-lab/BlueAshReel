@@ -68,9 +68,27 @@ Three gaps remain explicitly marked `upstream_full_license_text_missing`:
 
 These are transitive frontend framework dependencies. Their original package
 metadata, README and complete published tarballs are retained; no copyright
-statement is invented. Their presence is an explicit attribution limitation for
-this private development artifact. A public release should resolve these
-upstream omissions or remove the relevant dependency paths after runtime tests.
+statement is invented. `license_sources.py` additionally pins the full canonical
+[SPDX MIT reference text](https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/MIT.txt)
+from license-list-data v3.27.0, SHA-256
+`b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5`.
+It is copied unchanged to `licenses/references/SPDX-MIT-v3.27.0-REFERENCE.txt`;
+the adjacent explanation and component-manifest row identify the three exact
+packages and label the text as a reference. The literal copyright placeholders
+are preserved and explained. This adds the full text of the license named in
+the original metadata; it is not a recovered package copyright notice and does
+not clear the upstream-gap flags. npm documents the SPDX license field as the
+[publisher's permitted-use declaration](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#license).
+No redistribution-prohibiting terms were found in these exact package sources.
+
+The app's `next/image` use reaches `@unpic/react`, `@unpic/core`, and `unpic`,
+so removing the image dependencies is not supported by the runtime evidence.
+`css-box-shadow` is pulled in through `@vercel/og` and `satori`, and its source
+is also embedded in `@vercel/og`; deleting only the standalone package would
+leave those copies. No app Open Graph image-generation use was found, but
+excluding that complete dependency path would require a reviewed rebuild and
+runtime validation. The missing original notices remain an explicit attribution
+limitation; the canonical reference does not claim to resolve their provenance.
 
 The current [Inno license](https://jrsoftware.org/files/is/license.txt) permits
 redistribution with original notices retained. Although the unregistered

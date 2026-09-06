@@ -43,6 +43,54 @@ def test_offline_source_cache_rejects_corruption(tmp_path: Path) -> None:
     assert source.read_bytes() == b"tampered"
 
 
+def test_mit_reference_pin_and_package_scope_are_explicit() -> None:
+    reference = licensing.MIT_LICENSE_REFERENCE
+    assert reference["url"] == "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/MIT.txt"
+    assert reference["sha256"] == "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    assert reference["packages"] == ["css-box-shadow@1.0.0-3", "unpic@4.2.2", "@unpic/core@1.0.3"]
+    assert reference["reference_only"] is True
+    assert reference["upstream_package_notice"] is False
+    assert reference["role"] == "license_text_reference"
+
+
+def test_mit_reference_preserves_source_bytes_and_existing_upstream_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"MIT License\n\nCopyright (c) <year> <copyright holders>\n\nReference fixture.\n"
+    reference = {**licensing.MIT_LICENSE_REFERENCE, "sha256": hashlib.sha256(payload).hexdigest()}
+    monkeypatch.setattr(licensing, "MIT_LICENSE_REFERENCE", reference)
+    cache, stage = tmp_path / "cache", tmp_path / "stage"
+    cache.mkdir()
+    (cache / reference["filename"]).write_bytes(payload)
+    originals = {}
+    for identity in reference["packages"]:
+        metadata = stage / "licenses/npm" / identity.replace("/", "__") / "package.json"
+        metadata.parent.mkdir(parents=True)
+        originals[metadata] = json.dumps({"license": "MIT", "name": identity}).encode()
+        metadata.write_bytes(originals[metadata])
+    rows = licensing.stage_license_references(cache, stage, offline=True)
+    assert rows == licensing.stage_license_references(cache, stage, offline=True)
+    assert len(rows) == 1 and rows[0]["packages"] == reference["packages"]
+    assert (stage / rows[0]["notices"][0]).read_bytes() == payload
+    explanation = (stage / rows[0]["notices"][1]).read_text()
+    assert "not a recovered original package copyright notice" in explanation
+    assert "upstream_full_license_text_missing:true" in explanation
+    assert "<year>" in explanation and "<copyright holders>" in explanation
+    for path, original in originals.items():
+        assert path.read_bytes() == original
+        assert not (path.parent / "LICENSE").exists()
+
+
+def test_mit_reference_requires_verified_offline_cache(tmp_path: Path) -> None:
+    cache, stage = tmp_path / "cache", tmp_path / "stage"
+    with pytest.raises(licensing.LicenseSourceError, match="Missing offline"):
+        licensing.stage_license_references(cache, stage, offline=True)
+    (cache / licensing.MIT_LICENSE_REFERENCE["filename"]).write_bytes(b"unverified replacement")
+    with pytest.raises(licensing.LicenseSourceError, match="checksum mismatch"):
+        licensing.stage_license_references(cache, stage, offline=True)
+    assert not stage.exists()
+
+
 @pytest.mark.parametrize("path", ["../LICENSE", "/LICENSE", "C:/LICENSE", r"..\LICENSE", "notice\x00"])
 def test_archive_member_paths_must_remain_relative(path: str) -> None:
     with pytest.raises(licensing.LicenseSourceError):

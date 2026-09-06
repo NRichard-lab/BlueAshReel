@@ -1,4 +1,4 @@
-"""Stage checksum-pinned Caddy/Go/WinSW dependency notices and source evidence."""
+"""Stage pinned dependency notices, source evidence, and labeled license references."""
 
 from __future__ import annotations
 
@@ -16,6 +16,19 @@ from typing import Any
 
 LOCK = Path(__file__).with_name("additional-components.json")
 NOTICE_PREFIXES = ("license", "licence", "copying", "notice", "copyright", "patents", "authors")
+MIT_LICENSE_REFERENCE = {
+    "id": "spdx_mit_reference",
+    "name": "SPDX MIT license text reference",
+    "version": "license-list-data-v3.27.0",
+    "filename": "SPDX-MIT-v3.27.0-REFERENCE.txt",
+    "url": "https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/MIT.txt",
+    "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+    "license": "MIT",
+    "role": "license_text_reference",
+    "packages": ["css-box-shadow@1.0.0-3", "unpic@4.2.2", "@unpic/core@1.0.3"],
+    "reference_only": True,
+    "upstream_package_notice": False,
+}
 
 
 class LicenseSourceError(RuntimeError):
@@ -98,6 +111,41 @@ def copy_file(source: Path, destination: Path) -> None:
             raise LicenseSourceError("A different license-source payload already exists")
         return
     shutil.copy2(source, destination)
+
+
+def stage_license_references(downloads: Path, stage: Path, *, offline: bool = False) -> list[dict[str, Any]]:
+    """Supply the declared license text without inventing an upstream copyright notice."""
+    no_links(stage)
+    reference = MIT_LICENSE_REFERENCE
+    source = fetch(reference, downloads, offline)
+    destination = stage / "licenses/references"
+    copy_file(source, destination / reference["filename"])
+    explanation = (
+        "MIT license text reference\n\n"
+        "The following exact npm packages declare MIT but their published archives and reviewed "
+        "upstream sources do not supply a separate full original copyright/license notice:\n"
+        + "".join(f"- {package}\n" for package in reference["packages"])
+        + "\nThe adjacent SPDX-MIT-v3.27.0-REFERENCE.txt reproduces the canonical SPDX MIT "
+        "license text byte for byte. It is a reference to the license named by the publishers, "
+        "not a recovered original package copyright notice. Its literal <year> and "
+        "<copyright holders> placeholders belong to that reference template; no author, "
+        "copyright holder, or year has been substituted or inferred.\n\n"
+        "Each package's original package.json, README, and complete published source archive "
+        "remain under licenses/npm and source/npm. The component manifest retains "
+        "upstream_full_license_text_missing:true for those packages. Other packages' notices "
+        "are not relabeled as theirs. Preserve both the upstream evidence and this reference "
+        "when redistributing.\n\n"
+        f"Reference source: {reference['url']}\n"
+        f"Reference SHA-256: {reference['sha256']}\n"
+    )
+    _write_notice(destination, "README-MIT-REFERENCE.txt", explanation.encode("utf-8"))
+    return [{
+        **reference,
+        "notices": [
+            f"licenses/references/{reference['filename']}",
+            "licenses/references/README-MIT-REFERENCE.txt",
+        ],
+    }]
 
 
 def _write_notice(destination: Path, name: str, payload: bytes) -> str:
@@ -242,4 +290,5 @@ def stage_additional_components(downloads: Path, stage: Path, *, offline: bool =
         })
     for source in (LOCK, Path(__file__)):
         copy_file(source, stage / "source/packaging" / source.name)
+    rows.extend(stage_license_references(downloads, stage, offline=offline))
     return rows
