@@ -1,52 +1,43 @@
-# Current limitations and deferred work
+# Current limitations and acceptance boundaries
 
-Implemented: household roles/assignments, local movie/TV browsing and indexed search,
-authenticated direct playback, per-user resume/watch history, embedded text subtitles,
-explicit audio selection, progressive HLS remux, software conversion, quality limits
-and Owner active-stream controls.
+The source now implements the Windows per-user tray Agent and encrypted Portal
+media interface. Remote browsing, library administration and playback are no
+longer deferred architectural placeholders. See [encrypted Portal media](encrypted-portal-agent.md)
+for the supported operations and [current acceptance](portal-tray-acceptance.md)
+for what has actually been verified.
 
-The separate Blue Ash Reel portal adds PostgreSQL accounts, MFA, device pairing,
-an authenticated outbound connection and encrypted diagnostics. The optional local
-connector is disabled until Owner consent. See [remote access](remote-access.md)
-for its isolation requirements and current deployment validation limits.
+The currently published Owner-only unsigned installer remains development.4.
+Development.5 packaging/migration/tray acceptance and real Portal/email deployment
+are separate gates. The latest Portal Linux run passed 132 tests with synthetic
+accounts/mail; real SMTP delivery and current Owner authentication are unresolved.
+No new installer publication or production deployment is recorded here.
 
 Current limitations:
 
-- The native Windows installer is unsigned and development-only. Windows 11 was
-  exercised on this workstation; Windows 10, a second clean Windows machine,
-  reboot/sign-out, and other GPU/driver combinations need separate validation.
-- Native upgrade creates and validates a backup and retains prior program/config
-  files. Automatic rollback is not implemented; recovery is explicitly manual.
-- Native hardware acceleration covers verified H.264 encoding. Decode, AAC audio
-  and text subtitle conversion remain on the CPU. No hardware result is inferred
-  from a GPU name alone.
-- Caddy's administration API is disabled. Native API, worker and web stop
-  cooperatively; the stateless proxy is terminated, not gracefully drained.
-- Network shares are an advanced case requiring service-account access and a
-  reviewed network policy; the strict-local native profile does not enable them.
-- Bundled dependency provenance, notice gaps and the WinSW/log4net development
-  risk are recorded in [native packaging](native-windows.md#components-and-licenses).
-- Image-based subtitle burn-in is unsupported; choose a text track or turn subtitles off.
-- Single selected quality, not an automatic adaptive-bitrate ladder.
-- HLS seeks create a precise local transcode from the requested position.
-- Separate sidecar-subtitle discovery is not provided; embedded text styling is stripped.
-- Chromium was tested locally; Safari/Firefox and production GPU/driver combinations need workstation validation.
-- One API process and one scan worker. Completed output is reusable while referenced, then deleted.
-- Forced browser termination may lose the final 15-second checkpoint.
-- Docker Desktop/WSL2 container playback, recovery and no-egress were validated with synthetic media; see [the validation scope](container-validation.md). Long household files and other browser/GPU combinations still need operator testing.
+- Windows service-to-user migration has backup/rollback machinery, but successful
+  source/unit tests do not prove the real development.4 upgrade, logoff lifecycle
+  or rollback on every workstation. Preserve existing ProgramData and identity.
+- Runtime uses the signed-in Windows user's drive/share permissions. Readability,
+  network-share behavior, endpoint policy and logoff must be checked on the actual
+  workstation; source media is application-read-only, not rewritten NTFS ACLs.
+- Existing Docker keeps its local UI/household accounts and optional isolated
+  diagnostic connector. It is distinct from the Portal-required Windows workflow.
+- Hardware acceleration requires an actual successful encode on the installed
+  GPU/driver. H.264 hardware encoding does not imply hardware decode or AAC/text
+  subtitle acceleration. Other GPU/browser/Windows combinations remain unverified.
+- Image-based subtitle burn-in, external sidecar subtitle discovery and an
+  adaptive bitrate ladder are unsupported. Text styling is stripped for WebVTT.
+- Forced browser termination may lose the final progress checkpoint. Reconnection,
+  seeking and expiry behavior require browser acceptance with the final build.
+- The relay has scoped routing, bounded buffers/rates/TTL and draining; the
+  four-Agent smoke test is not multi-host failover or a capacity guarantee.
+- SMTP delivery is at least once with bounded retries; a crash after SMTP
+  acceptance can duplicate an email, while codes/invitation tokens remain one use.
 
-The following remain deliberately deferred:
-- remote media browsing/playback, direct transport, and router automation;
-- IMDb, TMDB, TVDB, or any other metadata-provider calls and matching;
-- downloading remote posters, backgrounds, subtitles, or trailers;
-- recommendations, discovery feeds, social features, or analytics;
-- live television, tuners, electronic program guides, recording, and DVR;
-- Google TV or other native television/mobile applications;
-- integration with the separate existing Blue Ash portal;
-- cloud media storage, remote media backup, and hosted crash reporting;
-- email reset/invitations for local household accounts, federation, or external identity providers;
-- multi-node media-server operation, PostgreSQL for media, Redis, Kubernetes, or a distributed queue;
-- unattended upgrades and destructive automated restore; and
-- general unauthenticated server-filesystem browsing.
-
-Interfaces and normalized identifiers make several later additions possible, but a placeholder schema or extension point is not a claim that the feature exists. New outbound functionality must follow the opt-in and audit requirements in [privacy and outbound connections](privacy-and-outbound.md).
+The following remain outside this change: signed/public installer release,
+automatic router configuration, direct peer transport, ownership transfer,
+unattended destructive upgrades/restores, metadata-provider calls, remote poster/
+subtitle/trailer downloads, recommendations/social/analytics, live TV/DVR,
+native TV/mobile apps, cloud media storage or backup, and unauthenticated
+filesystem browsing. Local Docker household-account email recovery is not replaced
+by Portal account email. No media database moves into PostgreSQL or Redis.

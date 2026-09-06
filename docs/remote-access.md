@@ -1,3 +1,19 @@
+# Portal media access and legacy connector reference
+
+The new Windows per-user Agent implements the encrypted Portal media workflow:
+Portal sign-in/MFA, locally confirmed pairing, library administration, paginated
+catalog/search, artwork, direct ranges/HLS, tracks and progress. Use
+[the current protocol](encrypted-portal-agent.md) and
+[acceptance status](portal-tray-acceptance.md). The Portal is required for ordinary
+Windows Agent access; the loopback URL is protected status/callback only.
+
+The reference below describes the preserved optional diagnostic-only Docker and
+service-era connector. Its isolation, local account UI, 120/30-second diagnostic
+limits and installation commands apply to that legacy path, not the new native
+media Agent. Keep existing Docker workloads/data unchanged.
+
+## Legacy connector reference
+
 # Remote access foundation
 
 Blue Ash Reel keeps the local media server and the public control plane separate.

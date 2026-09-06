@@ -1,3 +1,5 @@
+> Historical service/Docker-era record. It is preserved as evidence for earlier builds, not acceptance for the per-user development.5 Agent. See [current installation](native-windows.md) and [current acceptance](portal-tray-acceptance.md).
+
 # Native Windows installer — resume checkpoint
 
 Paused at the user's explicit request on September 1, 2026 (America/Denver).

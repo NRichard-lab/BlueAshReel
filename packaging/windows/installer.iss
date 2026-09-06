@@ -1,27 +1,25 @@
-; Brand values are supplied from config/product.json by build_native.py.
+; Brand and verified payload supplied by build_native.py.
 #ifndef BrandName
-  #error Build with build_native.py to load the central product identity
+  #error Build with build_native.py to load the product identity
 #endif
-; Build input is a verified onedir payload, never the developer checkout.
 #ifndef PayloadDir
-  #error PayloadDir must name the verified native payload directory
+  #error PayloadDir must name the verified native payload
 #endif
 #ifndef OutputDir
   #define OutputDir "..\..\artifacts\native-dev"
 #endif
 #ifndef ProductVersion
-  #define ProductVersion "0.1.0-development.4"
+  #define ProductVersion "0.1.0-development.5"
 #endif
 #ifndef FileVersion
-  #define FileVersion "0.1.0.4"
+  #define FileVersion "0.1.0.5"
 #endif
 #ifndef BuildChannel
   #define BuildChannel "development"
 #endif
 #if BuildChannel == "stable"
   #define ProductName BrandName
-  #define DataName "BlueReel"
-  #define InstallDirectoryName "BlueReel"
+  #define DataName "BlueAshReel"
   #define ServicePrefix "BlueReel"
   #define DefaultPort "8080"
   #define ProductId "{{78EF44D3-F1FC-4F2A-92D2-80921F170DEF}"
@@ -29,7 +27,6 @@
 #else
   #define ProductName BrandName + " Development"
   #define DataName "BlueAshReel-Development"
-  #define InstallDirectoryName "BlueAshReel Development"
   #define ServicePrefix "BlueReelDevelopment"
   #define DefaultPort "18080"
   #define ProductId "{{5E41781A-6BE6-4505-B5D9-177F592ED611}"
@@ -43,24 +40,21 @@ AppVersion={#ProductVersion}
 AppVerName={#ProductName} {#ProductVersion} (unsigned)
 AppPublisher={#BrandName}
 AppPublisherURL=https://{#ProductDomain}
-AppSupportURL=https://{#ProductDomain}/security
-; Preserve registered/retained instance locations and all established IDs.
 DefaultDirName={code:GetDefaultProgramDir}
 DefaultGroupName={#ProductName}
 DisableProgramGroupPage=yes
-DisableDirPage=yes
-PrivilegesRequired=admin
+DisableDirPage=no
+PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19045
 WizardStyle=modern
 SetupLogging=yes
 UninstallLogging=yes
-UninstallDisplayName={#ProductName}
 VersionInfoVersion={#FileVersion}
 VersionInfoProductVersion={#FileVersion}
 VersionInfoProductTextVersion={#ProductVersion}
-VersionInfoDescription=Unsigned {#BrandName} native Windows development installer
+VersionInfoDescription=Unsigned {#BrandName} per-user Windows Agent
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputName}
 Compression=lzma2/normal
@@ -68,58 +62,36 @@ SolidCompression=yes
 CloseApplications=no
 RestartApplications=no
 AlwaysRestart=no
-UsePreviousAppDir=yes
-UsePreviousGroup=yes
+UsePreviousAppDir=no
 InfoBeforeFile=development-notice.txt
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#PayloadDir}\support\install.ps1"; DestName: "upgrade-install.ps1"; Flags: dontcopy
-Source: "{#PayloadDir}\support\install-remote.ps1"; Flags: dontcopy
+
+[Tasks]
+Name: startup; Description: "Start Blue Ash Reel when I sign in to Windows"; Flags: checkedonce
 
 [Registry]
-Root: HKLM; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "ProgramDir"; ValueData: "{app}"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "DataDir"; ValueData: "{code:GetDataDir}"
-Root: HKLM; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "Port"; ValueData: "{code:GetPort}"
+Root: HKCU; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "ProgramDir"; ValueData: "{app}"
+Root: HKCU; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "DataDir"; ValueData: "{code:GetDataDir}"
+Root: HKCU; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "Port"; ValueData: "{code:GetPort}"
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#ServicePrefix}Tray"; ValueData: """{app}\BlueAshReelAgent.exe"" --data-dir ""{code:GetDataDir}"""; Tasks: startup; Flags: uninsdeletevalue
 
 [Icons]
-Name: "{group}\Open {#ProductName}"; Filename: "{code:GetApplicationURL}"
-Name: "{group}\Create backup"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:GetBackupShortcut}"; Flags: runminimized
-Name: "{group}\Validate backup (does not restore)"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:GetValidateShortcut}"; Flags: runminimized
-Name: "{group}\Configure approved media folders"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:GetMediaShortcut}"; Flags: runminimized
-Name: "{group}\Configure private-LAN access"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:GetNetworkShortcut}"; Flags: runminimized
+Name: "{group}\{#ProductName}"; Filename: "{app}\BlueAshReelAgent.exe"; Parameters: "--data-dir ""{code:GetDataDir}"""
+Name: "{group}\Open Blue Ash Reel Portal"; Filename: "https://{#ProductDomain}"
 Name: "{group}\Open-source notices"; Filename: "{app}\OPEN-SOURCE-NOTICES.txt"
 Name: "{group}\Uninstall {#ProductName}"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{code:GetApplicationURL}"; Description: "Open {#ProductName} and set up the Owner account"; Flags: shellexec nowait postinstall skipifsilent runasoriginaluser; Check: WasSuccessful
-
-[UninstallDelete]
-; Only installer-generated program files. Never ProgramData or source media.
-Type: files; Name: "{app}\services\{#ServicePrefix}API.exe"
-Type: files; Name: "{app}\services\{#ServicePrefix}API.xml"
-Type: files; Name: "{app}\services\{#ServicePrefix}Worker.exe"
-Type: files; Name: "{app}\services\{#ServicePrefix}Worker.xml"
-Type: files; Name: "{app}\services\{#ServicePrefix}Web.exe"
-Type: files; Name: "{app}\services\{#ServicePrefix}Web.xml"
-Type: files; Name: "{app}\services\{#ServicePrefix}Proxy.exe"
-Type: files; Name: "{app}\services\{#ServicePrefix}Proxy.xml"
-Type: files; Name: "{app}\services\{#ServicePrefix}Remote.exe"
-Type: files; Name: "{app}\services\{#ServicePrefix}Remote.xml"
+Filename: "https://{#ProductDomain}"; Description: "Sign in to Blue Ash Reel to pair this Agent and add libraries"; Flags: shellexec nowait postinstall skipifsilent runasoriginaluser; Check: WasSuccessful
 
 [Code]
 var
-  NetworkPage: TInputQueryWizardPage;
-  MediaPage: TWizardPage;
-  MediaMemo: TNewMemo;
-  BrowseButton: TNewButton;
-  MediaCaption: TNewStaticText;
-  RootsFile: String;
-  ExistingInstallation: Boolean;
-  InstallSuccessful: Boolean;
-  PreparedUpgrade: Boolean;
-  PreservedReinstall: Boolean;
-  ResolvedDataDir: String;
+  RuntimePage, LocationsPage, CachePage: TInputQueryWizardPage;
+  AdvancedPage: TInputOptionWizardPage;
+  ExistingUser, LegacyMigration, InstallSuccessful, PreservedReinstall: Boolean;
+  ResolvedDataDir, SavedPort, ValidationProgramDir: String;
 
 function HasInstanceMarker(const Directory: String): Boolean;
 begin
@@ -127,118 +99,55 @@ begin
     DirExists(AddBackslash(Directory) + '.bluereel-native-instance');
 end;
 
-function GetDataDir(Param: String): String;
-var
-  Registered, Fresh, Legacy: String;
+function Quoted(const Value: String): String;
 begin
-  if ResolvedDataDir = '' then begin
-    Fresh := ExpandConstant('{commonappdata}\{#DataName}');
-    Legacy := Fresh;
-#if BuildChannel == "development"
-    Legacy := ExpandConstant('{commonappdata}\BlueReel-Development');
-    if HasInstanceMarker(Fresh) and HasInstanceMarker(Legacy) then
-      RaiseException('Both current and legacy development data exist. Resolve the instance identity before installing; no data was changed.');
-#endif
-    Registered := '';
-    if RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'DataDir', Registered) then begin
-      if not HasInstanceMarker(Registered) then
-        RaiseException('Registered instance data is missing or incomplete. Existing registration was preserved.');
-      if (HasInstanceMarker(Fresh) and (CompareText(Registered, Fresh) <> 0)) or
-        (HasInstanceMarker(Legacy) and (CompareText(Registered, Legacy) <> 0)) then
-        RaiseException('Registered and retained development data disagree. No instance was selected.');
-      ResolvedDataDir := Registered;
-    end else if HasInstanceMarker(Legacy) then
-      ResolvedDataDir := Legacy
-    else
-      ResolvedDataDir := Fresh;
-  end;
-  Result := ResolvedDataDir;
+  if Pos('"', Value) <> 0 then RaiseException('Invalid installation argument.');
+  Result := '"' + Value + '"';
 end;
 
 function GetDefaultProgramDir(Param: String): String;
 begin
-  if RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'ProgramDir', Result) then Exit;
-  Result := ExpandConstant('{autopf}\{#InstallDirectoryName}');
-#if BuildChannel == "development"
-  if CompareText(GetDataDir(''), ExpandConstant('{commonappdata}\BlueReel-Development')) = 0 then
-    Result := ExpandConstant('{autopf}\BlueReel Development');
-#endif
+  if not RegQueryStringValue(HKCU,'Software\BlueReel\{#BuildChannel}','ProgramDir',Result) then
+    Result := ExpandConstant('{localappdata}\Programs\{#DataName}');
 end;
 
-function Quoted(const Value: String): String;
+function GetDataDir(Param: String): String;
 begin
-  { Windows path names cannot contain a quote; never pass shell command text. }
-  if Pos('"', Value) <> 0 then
-    RaiseException('An invalid quote was found in an installation argument.');
-  Result := '"' + Value + '"';
+  if ResolvedDataDir = '' then begin
+    if not RegQueryStringValue(HKCU, 'Software\BlueReel\{#BuildChannel}', 'DataDir', ResolvedDataDir) then
+      if not RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'DataDir', ResolvedDataDir) then
+        ResolvedDataDir := ExpandConstant('{localappdata}\{#DataName}');
+  end;
+  Result := ResolvedDataDir;
 end;
 
 function GetPort(Param: String): String;
 begin
-  Result := NetworkPage.Values[0];
-end;
-
-function GetApplicationURL(Param: String): String;
-begin
-  Result := 'http://127.0.0.1:' + GetPort('') + '/';
+  Result := SavedPort;
+  if Result = '' then begin
+    if not RegQueryStringValue(HKCU, 'Software\BlueReel\{#BuildChannel}', 'Port', Result) then
+      if not RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'Port', Result) then Result := '{#DefaultPort}';
+  end;
 end;
 
 function CommonArguments: String;
 begin
-  Result := ' -ProgramDir ' + Quoted(ExpandConstant('{app}')) +
-    ' -DataDir ' + Quoted(GetDataDir('')) +
-    ' -Instance {#BuildChannel}';
+  Result := ' -ProgramDir ' + Quoted(ExpandConstant('{app}')) + ' -DataDir ' + Quoted(GetDataDir('')) +
+    ' -Instance {#BuildChannel} -UserAccount ' + Quoted(GetEnv('USERDOMAIN') + '\' + GetUserNameString);
 end;
 
-function MaintenanceShortcut(const Action: String): String;
+function RunMaintenance(const Action, Extra: String; Elevated: Boolean): Boolean;
+var Arguments: String; ExitCode: Integer;
 begin
-  Result := '-NoProfile -ExecutionPolicy Bypass -File ' +
-    Quoted(ExpandConstant('{app}\support\maintenance.ps1')) +
-    ' -Action ' + Action + CommonArguments;
-end;
-
-function GetBackupShortcut(Param: String): String;
-begin
-  Result := MaintenanceShortcut('Backup');
-end;
-
-function GetValidateShortcut(Param: String): String;
-begin
-  Result := MaintenanceShortcut('ValidateBackup');
-end;
-
-function GetMediaShortcut(Param: String): String;
-begin
-  Result := MaintenanceShortcut('ConfigureMedia');
-end;
-
-function GetNetworkShortcut(Param: String): String;
-begin
-  Result := MaintenanceShortcut('ConfigureNetwork');
-end;
-
-function RunMaintenance(const Action, Extra: String): Boolean;
-var
-  ExitCode: Integer;
-  Arguments, Helper: String;
-begin
-  Helper := ExpandConstant('{app}\support\install.ps1');
-  if Action = 'PrepareUpgrade' then begin
-    { Use the new installer helpers even when the old installation predates
-      automatic connector upgrades. Existing runtime performs its safe backup. }
-    ExtractTemporaryFile('upgrade-install.ps1');
-    ExtractTemporaryFile('install-remote.ps1');
-    Helper := ExpandConstant('{tmp}\upgrade-install.ps1');
-  end;
   Arguments := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
-    Quoted(Helper) + ' -Action ' + Action +
-    CommonArguments + Extra;
-  Log('Running {#BrandName} maintenance action: ' + Action);
-  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    Arguments, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Quoted(ExpandConstant('{app}\support\user-install.ps1')) + ' -Action ' + Action + CommonArguments + Extra;
+  if Elevated then
+    Result := ShellExec('runas',ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),Arguments,
+      ExpandConstant('{app}'),SW_HIDE,ewWaitUntilTerminated,ExitCode)
+  else
+    Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),Arguments,
+      ExpandConstant('{app}'),SW_HIDE,ewWaitUntilTerminated,ExitCode);
   Result := Result and (ExitCode = 0);
-  if not Result then
-    Log('{#BrandName} maintenance action failed with exit code ' + IntToStr(ExitCode));
 end;
 
 function WriteExistingDataValidator(const ScriptPath: String): Boolean;
@@ -269,7 +178,8 @@ begin
     Script.Add('  NoReparse $Root');
     Script.Add('  if (-not (Test-Path -LiteralPath $Root)) { return 0 }');
     Script.Add('  $pending = [Collections.Generic.Queue[string]]::new()');
-    Script.Add('  $pending.Enqueue($Root); $files = 0');
+    Script.Add('  $extended = if ($Root.StartsWith(''\\'')) { ''\\?\UNC\'' + $Root.Substring(2) } else { ''\\?\'' + $Root }');
+    Script.Add('  $pending.Enqueue($extended); $files = 0');
     Script.Add('  while ($pending.Count) {');
     Script.Add('    $item = Get-Item -LiteralPath $pending.Dequeue() -Force');
     Script.Add('    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ''Unsafe data tree'' }');
@@ -295,9 +205,11 @@ begin
     Script.Add('  if ($port -lt 1024 -or $port -gt 65533 -or [int]$metadata.api_port -ne ($port + 1) -or [int]$metadata.web_port -ne ($port + 2)) { throw ''Invalid saved port'' }');
     Script.Add('  if ($Preserved) {');
     Script.Add('    if ($programFiles -ne 0) { throw ''Partial old program payload remains'' }');
+    Script.Add('    if (-not ($metadata.PSObject.Properties.Name -contains ''runtime_mode'') -or $metadata.runtime_mode -ne ''per_user'') {');
     Script.Add('    if (Test-Path -LiteralPath (''HKLM:\Software\BlueReel\'' + $Channel)) { throw ''Old product registration remains'' }');
     Script.Add('    foreach ($role in @(''API'',''Worker'',''Web'',''Proxy'')) {');
     Script.Add('      if (Test-Path -LiteralPath (''HKLM:\SYSTEM\CurrentControlSet\Services\'' + $Prefix + $role)) { throw ''Old service registration remains'' }');
+    Script.Add('    }');
     Script.Add('    }');
     Script.Add('  }');
     Script.Add('  NoReparse $PortFile');
@@ -321,11 +233,14 @@ begin
   PortFile := ExpandConstant('{tmp}\validated-instance-port.txt');
   if not WriteExistingDataValidator(ScriptPath) then Exit;
   Arguments := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + Quoted(ScriptPath) +
-    ' -ProgramDir ' + Quoted(ExpandConstant('{app}')) +
+    ' -ProgramDir ' + Quoted(ValidationProgramDir) +
     ' -DataDir ' + Quoted(GetDataDir('')) +
     ' -Prefix {#ServicePrefix} -Channel {#BuildChannel} -PortFile ' + Quoted(PortFile);
   if RequireUninstalled then Arguments := Arguments + ' -Preserved';
-  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+  if LegacyMigration then begin
+    if not ShellExec('runas',ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      Arguments, ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) then Exit;
+  end else if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     Arguments, ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) then Exit;
   if ExitCode <> 0 then Exit;
   if not LoadStringsFromFile(PortFile, PortLines) then Exit;
@@ -336,166 +251,116 @@ begin
   Result := True;
 end;
 
-procedure BrowseMedia(Sender: TObject);
-var
-  Directory: String;
-begin
-  Directory := '';
-  if BrowseForFolder('Choose one approved media root (source files are never changed)', Directory, False) then begin
-    if MediaMemo.Text <> '' then
-      MediaMemo.Text := MediaMemo.Text + #13#10;
-    MediaMemo.Text := MediaMemo.Text + Directory;
-  end;
-end;
 
 procedure InitializeWizard;
-var
-  PreviousPort: String;
-  MediaListFile: String;
-  Lines: TArrayOfString;
-  Index: Integer;
+var Registered: String;
 begin
-  InstallSuccessful := False;
-  PreparedUpgrade := False;
-  PreservedReinstall := False;
-  ExistingInstallation := HasInstanceMarker(GetDataDir(''));
-  PreviousPort := '{#DefaultPort}';
-  RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'Port', PreviousPort);
-  NetworkPage := CreateInputQueryPage(wpSelectDir, 'Local access',
-    'Localhost only is the recommended default.',
-    'No router, UPnP, public access, telemetry or metadata-provider configuration is performed.' + #13#10 +
-    'Private-LAN access is an explicit Owner/administrator choice. Enter only the exact private IPv4 address of this PC.');
-  NetworkPage.Add('Web port (also reserves the next two ports for internal services):', False);
-  NetworkPage.Add('Bind address (127.0.0.1 for local-only):', False);
-  NetworkPage.Values[0] := ExpandConstant('{param:PORT|' + PreviousPort + '}');
-  NetworkPage.Values[1] := ExpandConstant('{param:BINDADDRESS|127.0.0.1}');
-  MediaPage := CreateCustomPage(NetworkPage.ID, 'Approved media folders',
-    'Add existing Windows folders, or type one absolute path per line.');
-  MediaCaption := TNewStaticText.Create(MediaPage);
-  MediaCaption.Parent := MediaPage.Surface;
-  MediaCaption.SetBounds(0, 0, MediaPage.SurfaceWidth, ScaleY(48));
-  MediaCaption.AutoSize := False;
-  MediaCaption.WordWrap := True;
-  MediaCaption.Caption := 'Only these roots are visible in {#BrandName}. Source media is never moved, modified, or deleted. ' +
-    'Services use LocalService: ensure it can read the selected folders. Network shares need advanced service-account configuration.';
-  MediaMemo := TNewMemo.Create(MediaPage);
-  MediaMemo.Parent := MediaPage.Surface;
-  MediaMemo.SetBounds(0, ScaleY(58), MediaPage.SurfaceWidth, ScaleY(120));
-  MediaMemo.ScrollBars := ssVertical;
-  BrowseButton := TNewButton.Create(MediaPage);
-  BrowseButton.Parent := MediaPage.Surface;
-  BrowseButton.SetBounds(0, ScaleY(190), ScaleX(145), ScaleY(25));
-  BrowseButton.Caption := 'Add folder...';
-  BrowseButton.OnClick := @BrowseMedia;
-  MediaListFile := ExpandConstant('{param:MEDIAROOTSLIST|}');
-  if MediaListFile <> '' then begin
-    if not LoadStringsFromFile(MediaListFile, Lines) then
-      RaiseException('The approved media-root list could not be read.');
-    for Index := 0 to GetArrayLength(Lines) - 1 do
-      MediaMemo.Lines.Add(Lines[Index]);
-  end;
+  ExistingUser := RegQueryStringValue(HKCU,'Software\BlueReel\{#BuildChannel}','ProgramDir',Registered);
+  LegacyMigration := (not ExistingUser) and RegQueryStringValue(HKLM,'Software\BlueReel\{#BuildChannel}','ProgramDir',Registered);
+  SavedPort := GetPort('');
+  RuntimePage := CreateInputQueryPage(wpSelectDir, 'Agent runtime', 'Runs only while you are signed in to Windows.',
+    'Sign in to blueashreel.com after installation to pair the Agent. Libraries and access are managed from the authenticated Portal.');
+  RuntimePage.Add('Application-data directory:',False);
+  RuntimePage.Add('Local Agent port:',False);
+  RuntimePage.Add('Maximum concurrent transcodes (1-8):',False);
+  RuntimePage.Add('CPU threads per transcode (1-16):',False);
+  RuntimePage.Values[0] := ExpandConstant('{param:DATADIR|' + GetDataDir('') + '}');
+  RuntimePage.Values[1] := ExpandConstant('{param:PORT|' + SavedPort + '}');
+  RuntimePage.Values[2] := '2'; RuntimePage.Values[3] := '2';
+  AdvancedPage := CreateInputOptionPage(RuntimePage.ID,'Advanced storage','Safe separate locations are provided.',
+    'Choose Advanced to change database, artwork/cache, temporary transcodes, backup and log directories. Existing locations are always preserved during upgrades.',True,False);
+  AdvancedPage.Add('Use recommended locations'); AdvancedPage.Add('Advanced: choose individual storage locations'); AdvancedPage.SelectedValueIndex := 0;
+  LocationsPage := CreateInputQueryPage(AdvancedPage.ID,'Advanced storage','Database and artwork/cache',
+    'Leave blank to use dedicated subdirectories inside the application-data location. Program files and mutable data must remain separate.');
+  LocationsPage.Add('SQLite database directory:',False); LocationsPage.Add('Artwork/cache directory:',False);
+  CachePage := CreateInputQueryPage(LocationsPage.ID,'Advanced storage','Temporary files, backups and logs',
+    'Leave blank to use separate temp, backups and logs subdirectories. Source media is read-only.');
+  CachePage.Add('Temporary transcode directory:',False); CachePage.Add('Backup directory:',False); CachePage.Add('Log directory:',False);
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  { Repair/upgrade preserve the saved port, LAN setting, roots and secrets. }
-  Result := ExistingInstallation and ((PageID = NetworkPage.ID) or (PageID = MediaPage.ID));
+  Result := ((ExistingUser or LegacyMigration) and ((PageID = RuntimePage.ID) or (PageID = AdvancedPage.ID) or
+    (PageID = LocationsPage.ID) or (PageID = CachePage.ID))) or
+    ((AdvancedPage.SelectedValueIndex = 0) and ((PageID = LocationsPage.ID) or (PageID = CachePage.ID)));
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  PortNumber: Integer;
+var PortNumber: Integer;
 begin
   Result := True;
-  if CurPageID = NetworkPage.ID then begin
-    PortNumber := StrToIntDef(NetworkPage.Values[0], 0);
-    if (PortNumber < 1024) or (PortNumber > 65533) then begin
-      MsgBox('Choose a port between 1024 and 65533. Two adjacent internal ports are also required.', mbError, MB_OK);
-      Result := False;
-    end;
+  if CurPageID = RuntimePage.ID then begin
+    PortNumber := StrToIntDef(RuntimePage.Values[1],0);
+    Result := (PortNumber >= 1024) and (PortNumber <= 65533) and
+      (StrToIntDef(RuntimePage.Values[2],0) >= 1) and (StrToIntDef(RuntimePage.Values[2],0) <= 8) and
+      (StrToIntDef(RuntimePage.Values[3],0) >= 1) and (StrToIntDef(RuntimePage.Values[3],0) <= 16);
+    if not Result then MsgBox('Choose a port from 1024 to 65533 and resource limits within the displayed ranges.',mbError,MB_OK);
   end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  ProgramFiles, SavedPort: String;
-  Lines: TArrayOfString;
-  Index: Integer;
 begin
   Result := '';
-  ProgramFiles := AddBackslash(ExpandConstant('{autopf}'));
-  if CompareText(Copy(AddBackslash(ExpandFileName(WizardDirValue)), 1, Length(ProgramFiles)), ProgramFiles) <> 0 then begin
-    Result := 'Service executables must be installed in a protected Program Files directory.';
-    Exit;
+  if not (ExistingUser or LegacyMigration) then begin
+    ResolvedDataDir := RuntimePage.Values[0]; SavedPort := RuntimePage.Values[1];
   end;
-  if ExistingInstallation and not PreparedUpgrade then begin
-    PreservedReinstall := not FileExists(ExpandConstant('{app}\support\install.ps1'));
+  ValidationProgramDir := ExpandConstant('{app}');
+  if LegacyMigration then RegQueryStringValue(HKLM,'Software\BlueReel\{#BuildChannel}','ProgramDir',ValidationProgramDir);
+  if ExistingUser or LegacyMigration or HasInstanceMarker(GetDataDir('')) then begin
+    PreservedReinstall := not FileExists(AddBackslash(ValidationProgramDir) + 'runtime\python\python.exe');
     if not ValidateExistingData(PreservedReinstall, SavedPort) then begin
-      Result := 'Existing data could not be safely identified as this instance, or an incomplete old installation remains. Restore the prior application before retrying; existing data was not changed.';
+      Result := 'Retained data or program files could not be safely identified. No installation files were replaced.';
       Exit;
     end;
-    NetworkPage.Values[0] := SavedPort;
-    if not PreservedReinstall then begin
-      if not RunMaintenance('PrepareUpgrade', '') then begin
-        Result := 'The validated backup or graceful service shutdown failed. No program files were replaced. Check the protected {#BrandName} logs before retrying.';
-        Exit;
-      end;
-    end else begin
-      Log('Validated clean uninstall with preserved same-instance data. Backup will run with the new runtime before migration.');
+    RuntimePage.Values[1] := SavedPort;
+    if ExistingUser and not PreservedReinstall then begin
+      if not RunMaintenance('PrepareUpgrade','',False) then
+        Result := 'The existing Agent could not stop or its backup could not be validated. Existing files were preserved.';
     end;
-    PreparedUpgrade := True;
   end;
-  RootsFile := ExpandConstant('{tmp}\approved-media-roots.txt');
-  SetArrayLength(Lines, MediaMemo.Lines.Count);
-  for Index := 0 to MediaMemo.Lines.Count - 1 do
-    Lines[Index] := MediaMemo.Lines[Index];
-  if not SaveStringsToUTF8File(RootsFile, Lines, False) then
-    Result := 'Unable to stage the approved media-root list.';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  Extra: String;
+var Extra: String; ExitCode: Integer; Launched: Boolean;
 begin
   if CurStep = ssPostInstall then begin
-    if PreservedReinstall and not RunMaintenance('Backup', '') then
-      RaiseException('The preserved-data backup could not be validated. Migration and service installation were not started; retained data was not replaced. Automatic rollback is not provided.');
-    Extra := ' -Port ' + GetPort('') + ' -BindAddress ' + Quoted(NetworkPage.Values[1]) +
-      ' -RootsFile ' + Quoted(RootsFile);
-    if not RunMaintenance('Install', Extra) then
-      RaiseException('{#BrandName} services did not install or become healthy. Persistent data and upgrade backups were preserved. Automatic rollback is not provided; see the native Windows recovery instructions.');
+    if PreservedReinstall and not RunMaintenance('Backup','',False) then
+      RaiseException('The retained-data backup failed validation. Migrations were not started.');
+    Extra := ' -Port ' + GetPort('') + ' -MaxProcesses ' + RuntimePage.Values[2] + ' -Threads ' + RuntimePage.Values[3];
+    if not (ExistingUser or LegacyMigration) then Extra := Extra +
+      ' -DatabaseDir ' + Quoted(LocationsPage.Values[0]) + ' -ArtworkDir ' + Quoted(LocationsPage.Values[1]) +
+      ' -TempDir ' + Quoted(CachePage.Values[0]) + ' -BackupsDir ' + Quoted(CachePage.Values[1]) + ' -LogsDir ' + Quoted(CachePage.Values[2]);
+    if not RunMaintenance('Install',Extra,LegacyMigration) then begin
+      if LegacyMigration then RunMaintenance('RollbackMigration','',True);
+      if ExistingUser and not PreservedReinstall then RunMaintenance('RollbackUser','',False);
+      RaiseException('Agent setup did not complete. Existing data and validated recovery backups were preserved.');
+    end;
+    Launched := ExecAsOriginalUser(ExpandConstant('{app}\BlueAshReelAgent.exe'),'--data-dir ' + Quoted(GetDataDir('')),
+      ExpandConstant('{app}'),SW_SHOWNORMAL,ewNoWait,ExitCode);
+    if not Launched or not RunMaintenance('Health','',False) then begin
+      if LegacyMigration then RunMaintenance('RollbackMigration','',True);
+      if ExistingUser and not PreservedReinstall then RunMaintenance('RollbackUser','',False);
+      RaiseException('The per-user Agent did not become healthy. Legacy migration was rolled back when available.');
+    end;
+    if LegacyMigration and not RunMaintenance('FinalizeMigration','',True) then
+      RaiseException('The new Agent is healthy but legacy service retirement needs recovery review.');
     InstallSuccessful := True;
   end;
 end;
 
 function WasSuccessful: Boolean;
-begin
-  Result := InstallSuccessful;
-end;
+begin Result := InstallSuccessful; end;
 
 function GetCustomSetupExitCode: Integer;
-begin
-  if InstallSuccessful then Result := 0 else Result := 1;
-end;
+begin if InstallSuccessful then Result := 0 else Result := 1; end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  RemoveData: Boolean;
-  Extra, SavedPort: String;
 begin
-  if CurUninstallStep = usUninstall then begin
-    if HasInstanceMarker(GetDataDir('')) then begin
-      if not ValidateExistingData(False, SavedPort) then
-        RaiseException('The retained instance identity is invalid or unsafe. No service, firewall, or data removal was attempted.');
-    end;
-    RemoveData := ExpandConstant('{param:PURGEDATA|}') = ExtractFileName(GetDataDir(''));
-    if not UninstallSilent then
-      RemoveData := MsgBox('Permanently delete this {#ProductName} instance''s database, accounts, configuration, artwork, history and backups?' + #13#10 +
-        'Choose No to preserve all data (recommended). Source media is never removed.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
-    Extra := '';
-    if RemoveData then
-      Extra := ' -RemoveData -ConfirmDataRemoval ' + Quoted(ExtractFileName(GetDataDir('')));
-    if not RunMaintenance('Remove', Extra) then
-      RaiseException('Services or firewall rules could not be removed safely. Uninstallation was stopped; inspect the protected instance logs.');
+  if CurUninstallStep = usUninstall then
+  begin
+    ValidationProgramDir := ExpandConstant('{app}');
+    if not ValidateExistingData(False, SavedPort) then RaiseException('The retained instance could not be safely identified.');
+    if not RunMaintenance('Stop','',False) then RaiseException('The Agent could not finish stopping. Uninstall was stopped.');
   end;
+  { Preserve every database, setting, cache, backup and identity on uninstall. }
 end;

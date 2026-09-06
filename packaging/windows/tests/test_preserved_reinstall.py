@@ -91,6 +91,16 @@ def test_preserved_reinstall_accepts_absent_old_program_directory(tmp_path: Path
     assert not program.exists()
 
 
+def test_preflight_reads_long_nested_backup_paths(tmp_path: Path) -> None:
+    program, data, _metadata = instance(tmp_path)
+    path = Path("\\\\?\\" + str(data / "backups" / ("dependency-" * 9) / ("source-" * 10) / "notice.txt"))
+    path.parent.mkdir(parents=True)
+    path.write_text("retained source notice")
+    result = validate(tmp_path, program, data)
+    assert result.returncode == 0, result.stderr
+    assert path.read_text() == "retained source notice"
+
+
 @pytest.mark.parametrize("kind", ["runtime", "maintenance", "uninstaller", "unexpected"])
 def test_preserved_reinstall_rejects_any_remaining_program_file(tmp_path: Path, kind: str) -> None:
     program, data, _metadata = instance(tmp_path)
@@ -165,15 +175,14 @@ def test_installer_routes_backup_before_migrate_and_never_silently_purges() -> N
     source = INSTALLER.read_text(encoding="utf-8")
     prepare = source.split("function PrepareToInstall", 1)[1].split("procedure CurStepChanged", 1)[0]
     assert prepare.index("ValidateExistingData(PreservedReinstall, SavedPort)") < prepare.index("RunMaintenance('PrepareUpgrade'")
-    assert "NetworkPage.Values[0] := SavedPort" in prepare
-    assert "if not PreservedReinstall then begin" in prepare
+    assert "RuntimePage.Values[1] := SavedPort" in prepare
+    assert "if ExistingUser and not PreservedReinstall then begin" in prepare
     post_install = source.split("procedure CurStepChanged", 1)[1].split("function WasSuccessful", 1)[0]
     assert post_install.index("RunMaintenance('Backup'") < post_install.index("RunMaintenance('Install'")
     uninstall = source.split("procedure CurUninstallStepChanged", 1)[1]
-    assert uninstall.index("ValidateExistingData(False, SavedPort)") < uninstall.index("RunMaintenance('Remove'")
-    assert "ExpandConstant('{param:PURGEDATA|}') = ExtractFileName(GetDataDir(''))" in uninstall
-    assert "MB_DEFBUTTON2" in uninstall
-    assert "if RemoveData then" in uninstall
+    assert uninstall.index("ValidateExistingData(False, SavedPort)") < uninstall.index("RunMaintenance('Stop'")
+    assert "RemoveData" not in uninstall and "PURGEDATA" not in uninstall
+    assert "preserves" in source.lower() or "preserve" in uninstall.lower()
 
 
 def test_current_inno_compiler_accepts_full_installer_source(tmp_path: Path) -> None:

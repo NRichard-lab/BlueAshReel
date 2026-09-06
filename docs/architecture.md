@@ -1,5 +1,26 @@
 # Architecture overview
 
+The Windows product uses the public Portal as its interface and a per-user tray
+Agent for local media work. Accounts/MFA/invitations/coarse memberships live in
+Portal PostgreSQL; libraries/catalog/artwork/progress/local grants live in Agent
+SQLite. Browser-to-Agent frames remain encrypted through the public relay.
+
+```mermaid
+flowchart LR
+    Browser[Authenticated Portal browser] --> Control[Portal account API]
+    Browser <-->|Encrypted frames| Relay[Opaque Portal relay]
+    Tray[Windows user tray Agent] <-->|Outbound authenticated tunnel| Relay
+    Tray --> Local[(Local SQLite and artwork)]
+    Tray --> FFmpeg[Local FFmpeg]
+    FFmpeg --> Media[(Read-only source media)]
+```
+
+See [encrypted authorization/media](encrypted-portal-agent.md) and
+[current acceptance](portal-tray-acceptance.md). The local website and household
+accounts below remain a separate Docker/legacy deployment.
+
+## Preserved Docker architecture
+
 Blue Ash Reel keeps HTTP work, background media inspection, source media, and mutable application state separated. The Docker topology is:
 
 ```mermaid

@@ -118,42 +118,22 @@ def test_native_program_and_all_persistent_state_are_protected(tmp_path: Path) -
             validate_media_directory(str(target), configured)
 
 
-def test_native_folder_access_is_owner_only_and_uses_windows_platform(
+def test_native_folder_access_requires_portal_even_with_legacy_owner_cookie(
     owner_context: tuple[TestContext, str],
 ) -> None:
     context, csrf = owner_context
     context.config.deployment_mode = "native_windows"
-    root_response = context.client.get("/api/v1/media-roots")
-    assert root_response.json()["platform"] == "windows"
-    assert context.client.get("/api/v1/media-storage").json()["platform"] == "windows"
-    root = root_response.json()["items"][0]
-    assert root["internal_path"] == str(context.media_root)
-    browse = context.client.post(
-        "/api/v1/media-folders/browse", headers={"X-CSRF-Token": csrf},
-        json={"selection_id": root["selection_id"]},
-    )
-    assert browse.status_code == 200
-    assert browse.json()["platform"] == "windows"
-    created = context.client.post(
-        "/api/v1/users", headers={"X-CSRF-Token": csrf},
-        json={"username": "native-admin", "password": "local native account password", "role": "Administrator"},
-    )
-    assert created.status_code == 201
-    context.client.cookies.clear()
-    login = context.client.post(
-        "/api/v1/auth/login", json={"username": "native-admin", "password": "local native account password"},
-    )
-    admin_csrf = login.json()["csrf_token"]
-    assert context.client.get("/api/v1/media-roots").status_code == 403
-    assert context.client.get("/api/v1/media-storage").status_code == 403
-    assert context.client.post(
-        "/api/v1/media-folders/browse", headers={"X-CSRF-Token": admin_csrf},
-        json={"selection_id": root["selection_id"]},
-    ).status_code == 403
-    assert context.client.post(
-        "/api/v1/media-folders/validate", headers={"X-CSRF-Token": admin_csrf},
-        json={"path": str(context.media_root)},
-    ).status_code == 403
+    for authenticated in (True, False):
+        if not authenticated:
+            context.client.cookies.clear()
+        for route in ("/api/v1/media-roots", "/api/v1/media-storage"):
+            response = context.client.get(route, follow_redirects=False)
+            assert response.status_code == 303 and response.headers["location"] == "/portal/start"
+            assert str(context.media_root) not in response.text
+        for route in ("/api/v1/media-folders/browse", "/api/v1/media-folders/validate", "/api/v1/users"):
+            response = context.client.post(route, headers={"X-CSRF-Token": csrf},
+                json={"path": str(context.media_root)}, follow_redirects=False)
+            assert response.status_code == 303 and response.headers["location"] == "/portal/start"
 
 
 def firewall_payload(config: AppConfig) -> dict[str, Any]:

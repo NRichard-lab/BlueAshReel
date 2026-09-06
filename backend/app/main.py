@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import traceback
 import uuid
@@ -10,7 +12,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import sessionmaker
 
 from app.api.catalog import router as catalog_router
@@ -22,6 +24,7 @@ from app.api.router import router
 from app.config import get_config, get_product_config
 from app.database import create_database_engine
 from app.logging_config import configure_logging
+from app.remote.local_auth import router as portal_local_router
 from app.services.temp_cleanup import cleanup_stale_temp
 from app.services.transcoding import PlaybackManager
 
@@ -42,10 +45,35 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     local_engine = create_database_engine(local_config.database_url)
     manager = PlaybackManager(local_config, sessionmaker(bind=local_engine, expire_on_commit=False))
     _app.state.playback_manager = manager
+    connector_task = None
     try:
         manager.start()
+        if (
+            local_config.deployment_mode == "native_windows"
+            and local_config.native_data_dir
+            and local_config.remote_control_dir
+        ):
+            from app.remote.connector import Connector
+            from app.remote.media import RemoteMedia
+
+            connector = Connector(
+                local_config.remote_control_dir,
+                local_config.native_data_dir / "remote-identity",
+                product.version,
+                media=RemoteMedia(local_config, sessionmaker(bind=local_engine, expire_on_commit=False), manager),
+            )
+            _app.state.portal_connector = connector
+            _app.state.portal_pending = {}
+            _app.state.portal_status_sessions = {}
+            connector_task = asyncio.create_task(connector.run())
         yield
     finally:
+        if connector_task:
+            connector_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await connector_task
+            _app.state.portal_pending.clear()
+            _app.state.portal_status_sessions.clear()
         manager.close()
         local_engine.dispose()
 
@@ -65,6 +93,7 @@ app.include_router(household_router, prefix=product.api_prefix)
 app.include_router(media_roots_router, prefix=product.api_prefix)
 app.include_router(playback_router, prefix=product.api_prefix)
 app.include_router(remote_access_router, prefix=product.api_prefix)
+app.include_router(portal_local_router)
 
 
 @app.middleware("http")
@@ -76,6 +105,15 @@ async def request_context(request: Request, call_next: Callable[[Request], Await
     except (ValueError, AttributeError):
         request_id = str(uuid.uuid4())
     request.state.request_id = request_id
+    local_config = app.dependency_overrides.get(get_config, get_config)()
+    if local_config.deployment_mode == "native_windows" and not (
+        request.url.path.startswith("/portal/")
+        or request.url.path
+        in {f"{product.api_prefix}/health/live", f"{product.api_prefix}/health/ready", f"{product.api_prefix}/version"}
+    ):
+        # Native ordinary access is exclusively Portal-authenticated. The old
+        # setup/password/media APIs are retained for existing container installs.
+        return RedirectResponse("/portal/start", status_code=303)
     if (
         config.deployment_mode == "native_windows"
         and config.native_data_dir is not None

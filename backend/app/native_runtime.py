@@ -51,6 +51,8 @@ class Installation:
     api_port: int
     web_port: int
     bind_address: str
+    runtime_mode: str = "legacy_service"
+    storage: dict[str, str] | None = None
 
     @property
     def state_dir(self) -> Path:
@@ -74,6 +76,7 @@ def load_installation(data_dir: Path) -> Installation:
             program_dir=Path(raw["program_dir"]), data_dir=Path(raw["data_dir"]),
             service_prefix=raw["service_prefix"], port=int(raw["port"]),
             api_port=int(raw["api_port"]), web_port=int(raw["web_port"]), bind_address=raw["bind_address"],
+            runtime_mode=raw.get("runtime_mode", "legacy_service"), storage=raw.get("storage"),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise NativeRuntimeError("The native installation record is incomplete") from exc
@@ -115,15 +118,28 @@ def load_configuration(installation: Installation) -> AppConfig:
         else:
             explicit[name] = field.get_default(call_default_factory=True)
     config = AppConfig(_env_file=None, **explicit)
+    if installation.runtime_mode == "per_user":
+        from app.native_user_install import validate_storage
+
+        if not isinstance(installation.storage, dict):
+            raise NativeRuntimeError("The installed per-user storage layout is missing")
+        storage = validate_storage(installation.program_dir, installation.data_dir, installation.storage)
+        expected = {
+            "app_data": config.app_data_dir, "artwork": config.artwork_dir, "temp": config.temp_dir,
+            "database": Path(config.database_url.removeprefix("sqlite:///")).parent,
+        }
+        if any(Path(storage[name]) != path for name, path in expected.items()):
+            raise NativeRuntimeError("The configured storage differs from the installed per-user layout")
     if (
         config.deployment_mode != "native_windows" or config.native_data_dir != installation.data_dir
         or config.native_program_dir != installation.program_dir
         or config.windows_service_prefix != installation.service_prefix
     ):
         raise NativeRuntimeError("The private configuration does not match this native instance")
+    approved = set((installation.storage or {}).values()) if installation.runtime_mode == "per_user" else set()
     for path in (config.app_data_dir, config.temp_dir, config.artwork_dir):
         if (
-            not path.is_absolute() or not path.is_relative_to(installation.data_dir)
+            not path.is_absolute() or (not path.is_relative_to(installation.data_dir) and str(path) not in approved)
             or path == installation.data_dir or ".." in path.parts
         ):
             raise NativeRuntimeError("Mutable application storage must remain within the native data directory")
@@ -133,7 +149,8 @@ def load_configuration(installation: Installation) -> AppConfig:
     database_path = Path(config.database_url.removeprefix("sqlite:///"))
     if (
         not config.database_url.startswith("sqlite:///") or not database_path.is_absolute()
-        or not database_path.is_relative_to(installation.data_dir) or ".." in database_path.parts
+        or (not database_path.is_relative_to(installation.data_dir) and str(database_path.parent) not in approved)
+        or ".." in database_path.parts
     ):
         raise NativeRuntimeError("The native database must remain within the isolated data directory")
     if os.name == "nt":
@@ -217,15 +234,14 @@ def protect_child_processes() -> None:
 
 
 def heartbeat(installation: Installation, role: Role, status: str) -> None:
+    from app.native_install import write_json
+
     target = installation.state_dir / f"heartbeat-{role}.json"
-    temporary = installation.state_dir / f"heartbeat-{role}.{os.getpid()}.tmp"
-    for candidate in (target, temporary):
-        if candidate.exists() and is_link_or_reparse(candidate):
-            raise NativeRuntimeError("Protected runtime state cannot contain links")
-    temporary.write_text(json.dumps({
+    if target.exists() and is_link_or_reparse(target):
+        raise NativeRuntimeError("Protected runtime state cannot contain links")
+    write_json(target, {
         "role": role, "status": status, "checked_at": datetime.now(UTC).isoformat(),
-    }), encoding="utf-8")
-    temporary.replace(target)
+    })
 
 
 def write_stop_marker(installation: Installation, role: Role) -> None:
@@ -237,7 +253,10 @@ def write_stop_marker(installation: Installation, role: Role) -> None:
 
 
 def http_healthy(port: int, route: str, host: str = "127.0.0.1") -> bool:
-    connection = http.client.HTTPConnection(host, port, timeout=2)
+    # Readiness launches the bundled ffprobe and ffmpeg on first use. Windows
+    # executable verification can take several seconds after install/restart.
+    # A two-second deadline incorrectly marked a healthy workstation failed.
+    connection = http.client.HTTPConnection(host, port, timeout=15)
     try:
         connection.request("GET", route)
         response = connection.getresponse()
@@ -357,7 +376,7 @@ def run_child(installation: Installation, role: Role) -> int:
 def run_python(installation: Installation, config: AppConfig, role: Role) -> int:
     from app.services.outbound import install_native_network_guard
 
-    install_native_network_guard(config)
+    install_native_network_guard(config, allow_portal=(role == "api" and installation.runtime_mode == "per_user"))
     stop = threading.Event()
     finished = threading.Event()
     result = [True]
@@ -366,14 +385,18 @@ def run_python(installation: Installation, config: AppConfig, role: Role) -> int
         import uvicorn
 
         server = uvicorn.Server(uvicorn.Config(
-            "app.main:app", host="127.0.0.1", port=installation.api_port,
+            "app.main:app", host="127.0.0.1",
+            port=installation.port if installation.runtime_mode == "per_user" else installation.api_port,
             log_config=None, access_log=False, timeout_graceful_shutdown=20,
         ))
 
         def request_stop() -> None:
             server.should_exit = True
 
-        check = lambda: http_healthy(installation.api_port, "/api/v1/health/ready")  # noqa: E731
+        check = lambda: http_healthy(  # noqa: E731
+            installation.port if installation.runtime_mode == "per_user" else installation.api_port,
+            "/api/v1/health/ready",
+        )
         run = lambda: server.run()  # noqa: E731
     else:
         from app.worker import run_worker
@@ -423,6 +446,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         config = load_configuration(installation)
         activate_configuration(installation, config)
+        if installation.runtime_mode == "per_user":
+            logs = Path((installation.storage or {}).get("logs", installation.data_dir / "logs"))
+            assert_no_link_components(logs)
+            log_file = logs / (role + ".log")
+            if log_file.exists():
+                assert_no_link_components(log_file)
+            configure_logging(config.log_level, native_log_file=log_file)
         protect_child_processes()
         lock_path = installation.state_dir / f"service-{role}.lock"
         if (lock_path.exists() or lock_path.is_symlink()) and is_link_or_reparse(lock_path):

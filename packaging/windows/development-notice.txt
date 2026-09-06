@@ -1,29 +1,35 @@
-Blue Ash Reel Development — unsigned native Windows installer
+Blue Ash Reel Development - unsigned per-user Windows Agent
 
-This is an installation-testing build, not a final public release. Windows may
-show an unknown-publisher or SmartScreen warning because it is not code-signed.
-Do not disable Windows security protections to install it.
+This development build is unsigned. Windows may display an unknown-publisher
+or SmartScreen notice. Keep Windows security protections enabled.
 
-The development identity uses a separate Program Files directory, separate
-ProgramData directory, port 18080, services, secrets, database and firewall rules.
-It does not migrate, replace or reconfigure an existing Docker installation.
+The Agent runs in your Windows system tray while you are signed in. It uses
+your existing access to drives and authorized network shares. Fresh installs
+do not require administrator rights, services, Docker or additional runtimes.
+The inbox Windows .NET Framework runs the native tray; all media runtimes
+are bundled. Supported: 64-bit Windows 10 22H2 and Windows 11.
 
-All required application runtimes are bundled. Supported systems are 64-bit
-Windows 10 22H2 and Windows 11; their inbox .NET Framework runs the service host.
-No Docker, WSL, Python, Node.js, FFmpeg, Caddy or developer tools are prerequisites.
-Administrator elevation is required to install services and app-specific rules.
+Program files default to your LocalAppData Programs directory. Database,
+artwork/cache, temporary transcodes, backups and logs use separate directories
+under LocalAppData\BlueAshReel-Development. The Advanced pages allow separate
+locations. Existing storage settings survive repair and upgrade.
 
-Localhost only is the default. Private-LAN access is optional and never changes
-router settings. Strict-local outbound blocking applies only to Blue Ash Reel's
-installed executables, without changing global Windows Firewall policy.
+Installation configures runtime settings only. After installation sign in at
+https://blueashreel.com, complete email MFA, and confirm Agent pairing locally.
+Create libraries in the authenticated Portal and approve folders using the
+native picker on this workstation. Source media is read-only.
 
-Source media is never modified. LocalService needs read access to approved media
-folders; this installer does not automatically change their permissions.
+Loopback is the only local listener. Media-provider network integrations stay
+disabled. The device connector connects outbound to the canonical Portal over
+TLS and carries application-layer encrypted browser/Agent sessions.
 
-Repair and upgrades preserve persistent data. Upgrades first create and validate
-a backup and retain the previous application for manual recovery. Automatic
-rollback is not implemented. Uninstall preserves user data unless you separately
-and explicitly choose permanent removal.
+Migration of a previous service installation needs Windows elevation only
+for backup, stopping legacy services, and granting your Windows account access
+to its retained data. A validated backup and old configuration/permissions
+are preserved. Legacy service program files remain available for rollback; registrations are removed
+only after the new tray Agent is healthy. Service-bound DPAPI identity material
+is retained; fresh user-confirmed pairing is required when it cannot safely be
+used by your Windows account. A failed health check triggers legacy rollback.
 
-Included third-party components and their redistribution notices are available
-in included-components.json, OPEN-SOURCE-NOTICES.txt, licenses and source.
+Uninstall stops this Agent and preserves all data, settings and backups.
+Third-party notices and corresponding source are included in the package.

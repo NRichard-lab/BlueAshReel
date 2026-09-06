@@ -1,3 +1,5 @@
+> Historical service/Docker-era record. It is preserved as evidence for earlier builds, not acceptance for the per-user development.5 Agent. See [current installation](native-windows.md) and [current acceptance](portal-tray-acceptance.md).
+
 # Native Windows development installer validation
 
 Installation-testing phase, September 1–2, 2026. This is an unsigned development

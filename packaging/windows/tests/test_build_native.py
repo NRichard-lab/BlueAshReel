@@ -32,7 +32,7 @@ def locked_artifact(content: bytes = b"pinned dependency") -> dict[str, str]:
 
 def test_repository_component_pins_are_complete() -> None:
     lock = builder.load_lock()
-    assert lock["version"] == "0.1.0-development.4"
+    assert lock["version"] == "0.1.0-development.5"
     assert {item["id"] for item in lock["artifacts"]} >= {"python", "node", "winsw", "caddy", "inno"}
     assert {item["id"] for item in lock["ffmpeg_sources"]} == {
         "ffmpeg", "x264", "nv-codec-headers", "amf", "libvpl",

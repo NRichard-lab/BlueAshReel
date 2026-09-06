@@ -1,8 +1,4 @@
-"""Outbound-only remote connector. Run with its own account/container and zero media mounts.
-
-This module intentionally imports no application configuration, database, media or
-HTTP routing modules. It has no listening sockets and no generic request forwarder.
-"""
+"""Outbound, canonical-origin connector. Optional native media dispatch stays local."""
 from __future__ import annotations
 
 import argparse
@@ -51,7 +47,9 @@ def tls_context() -> ssl.SSLContext:
 
 
 def post_control(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if path != "/api/agents/pair" and not re.fullmatch(r"/api/agents/[0-9a-f-]{36}/revoke", path):
+    if path not in {"/api/agents/pair", "/api/agent-authorizations/exchange"} and not re.fullmatch(
+        r"/api/agents/[0-9a-f-]{36}/(?:revoke|challenge|session/validate|local-session/validate|updates)", path
+    ):
         raise ValueError("Unsupported public control request")
     # Ignore proxy environment variables and reject redirects: credentials go only
     # to the fixed, certificate-validated canonical origin on TLS port 443.
@@ -76,8 +74,27 @@ def reconnect_delay(attempt: int) -> float:
     return min(60.0, 2.0 ** min(max(attempt, 0), 6)) * (0.75 + secrets.randbelow(251) / 1000)
 
 
+def newer_version(candidate: str, current: str) -> bool:
+    """SemVer precedence, including numeric prerelease parts; build data is ignored."""
+    def parsed(value: str) -> tuple[Any, ...]:
+        if not isinstance(value, str) or len(value) > 40:
+            raise ValueError("Invalid software version")
+        match = re.fullmatch(
+            r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+            r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", value)
+        if not match:
+            raise ValueError("Invalid software version")
+        parts = (match[4] or "").split(".") if match[4] else []
+        if any(part.isdigit() and len(part) > 1 and part[0] == "0" for part in parts):
+            raise ValueError("Invalid prerelease version")
+        prerelease = tuple((0, int(part)) if part.isdigit() else (1, part) for part in parts)
+        return int(match[1]), int(match[2]), int(match[3]), not bool(parts), prerelease
+    return parsed(candidate) > parsed(current)
+
+
 class Connector:
-    def __init__(self, control: Path, identity: Path, version: str, *, preprotected_native: bool = False) -> None:
+    def __init__(self, control: Path, identity: Path, version: str, *, preprotected_native: bool = False,
+                 media: Any = None) -> None:
         if control.resolve() == identity.resolve() or control.resolve() in identity.resolve().parents:
             raise ValueError("The identity directory must be separate from the shared control spool")
         if not re.fullmatch(r"[A-Za-z0-9.+_-]{1,40}", version):
@@ -101,10 +118,37 @@ class Connector:
         self.attempt = 0
         self.tombstone_retry_at = 0.0
         self.tombstone_attempt = 0
+        self.media = media
+        self.next_update_check = 0.0
+        self.update_available = False
+        self.update_version: str | None = None
+        # Integrated native mode does not use main()'s process-wide log disable.
+        # Never let debug socket logging serialize authentication frames.
+        logging.getLogger("websockets.client").setLevel(logging.CRITICAL + 1)
+        if self.media and self.paired:
+            self.media.bind(self.credentials["agent_id"], self.credentials["user_id"])
+
+    def prepare_identity(self, name: str) -> dict[str, str]:
+        if self.paired or (self.identity / "revocation.json").exists():
+            raise ValueError("Existing pairing must be explicitly revoked")
+        if not self.private_key:
+            self.private_key = Ed25519PrivateKey.generate()
+            self.credentials = {"secret": protect_secret(self.private_key.private_bytes_raw()), "name": name}
+            write_json(self.identity / "identity.json", self.credentials)
+        public = self.private_key.public_key().public_bytes_raw()
+        return {"public_key": encode(public), "fingerprint": fingerprint(public), "name": self.credentials["name"]}
 
     @property
     def paired(self) -> bool:
         return bool(self.credentials.get("agent_id") and self.private_key)
+
+    @property
+    def broker_url(self) -> str:
+        return PORTAL_ORIGIN.replace("https:", "wss:") + f"/ws/broker/{self.credentials['agent_id']}"
+
+    @property
+    def relay_url(self) -> str:
+        return PORTAL_ORIGIN.replace("https:", "wss:") + f"/ws/relay/{self.credentials['agent_id']}/agent"
 
     def enabled(self) -> bool:
         return read_json(self.control / "desired.json").get("enabled") is True
@@ -117,6 +161,8 @@ class Connector:
             "name": self.credentials.get("name"), "fingerprint": fingerprint(public) if public else None,
             "last_heartbeat": self.last_heartbeat, "updated_at": time.time(),
             "central_revocation_pending": (self.identity / "revocation.json").exists(),
+            "remote_media_available": self.media is not None,
+            "update_available": self.update_available, "update_version": self.update_version,
         })
 
     async def stop_connection(self) -> None:
@@ -135,10 +181,11 @@ class Connector:
             raise ValueError("Invalid friendly name")
         if not isinstance(code, str) or not re.fullmatch(r"[A-Z2-7]{26}", code):
             raise ValueError("Invalid pairing code")
-        self.private_key = Ed25519PrivateKey.generate()
+        if self.media is not None and command.get("local_confirmed") is not True:
+            raise ValueError("Native local fingerprint confirmation required")
+        self.prepare_identity(name)
+        assert self.private_key is not None
         public = encode(self.private_key.public_key().public_bytes_raw())
-        self.credentials = {"secret": protect_secret(self.private_key.private_bytes_raw()), "name": name}
-        write_json(self.identity / "identity.json", self.credentials)
         self.state = "pairing"
         self.publish()
         signature = encode(self.private_key.sign(canonical(
@@ -147,10 +194,14 @@ class Connector:
         result = await asyncio.to_thread(post_control, "/api/agents/pair", {
             "code": code, "public_key": public, "name": name, "os": OS_CATEGORY,
             "version": self.version, "signature": signature,
+            **{key: command[key] for key in ("code_verifier", "state", "nonce") if key in command},
         })
+        received_id = str(uuid.UUID(result["agent_id"]))
+        scoped_origin = PORTAL_ORIGIN.replace("https:", "wss:")
         if (
-            result.get("protocol") != 1 or result.get("broker_url") != BROKER_URL
-            or result.get("relay_url") != RELAY_URL
+            result.get("protocol") != 1 or result.get("broker_url") not in {
+                BROKER_URL, scoped_origin + f"/ws/broker/{received_id}"}
+            or result.get("relay_url") not in {RELAY_URL, scoped_origin + f"/ws/relay/{received_id}/agent"}
             or result.get("fingerprint") != fingerprint(decode(public, 32))
         ):
             raise ValueError("Invalid pairing identity or endpoints")
@@ -164,6 +215,8 @@ class Connector:
             "account_email": result["account_email"],
         })
         write_json(self.identity / "identity.json", self.credentials)
+        if self.media:
+            self.media.bind(result["agent_id"], result["user_id"])
         self.state = "reconnecting"
         self.attempt = 0
         self.retry_at = 0
@@ -262,9 +315,68 @@ class Connector:
             self.publish()
             await asyncio.sleep(20)
 
+    async def check_updates(self) -> None:
+        if not self.paired or time.monotonic() < self.next_update_check:
+            return
+        # Reserve the interval before network work, including failure/reconnect.
+        self.next_update_check = time.monotonic() + 3600
+        try:
+            agent_id = self.credentials["agent_id"]
+            challenge = await asyncio.to_thread(
+                post_control, f"/api/agents/{agent_id}/challenge", {"purpose": "update"})
+            nonce = challenge["nonce"]
+            assert self.private_key is not None
+            signature = encode(self.private_key.sign(canonical(
+                "blueashreel-agent-update-v1", agent_id, self.version, nonce)))
+            result = await asyncio.to_thread(post_control, f"/api/agents/{agent_id}/updates", {
+                "version": self.version, "nonce": nonce, "signature": signature})
+            if result.get("available") is False and result.get("version") is None:
+                self.update_available, self.update_version = False, None
+            elif result.get("available") is True and isinstance(result.get("version"), str):
+                available = newer_version(result["version"], self.version)
+                self.update_available = available
+                self.update_version = result["version"] if available else None
+            else:
+                return
+            self.publish()
+        except Exception:
+            # Optional approved-version metadata never affects tunnel health.
+            return
+
+    async def update_loop(self) -> None:
+        while True:
+            await self.check_updates()
+            await asyncio.sleep(60)
+
     async def relay_loop(self, socket: Any) -> None:
         sessions: dict[str, EncryptedSession] = {}
+        queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
+        workers: dict[str, asyncio.Task[None]] = {}
+        authorizations: dict[str, dict[str, Any]] = {}
         next_heartbeat = 0.0
+        async def process(sid: str, authorization: dict[str, Any]) -> None:
+            try:
+                while sid in sessions:
+                    request = await queues[sid].get()
+                    reply = await self.media.dispatch(request, authorization)
+                    if sid in sessions:
+                        await self.send(socket, sessions[sid].seal(reply))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                sessions.pop(sid, None)
+                await self.send(socket, {"type": "close", "sid": sid})
+
+        def discard(sid: str, *, revoked: bool = False) -> None:
+            authorization = authorizations.pop(sid, None)
+            if revoked and authorization:
+                authorization.update(expires_at=0, revoked=True)
+                asyncio.create_task(asyncio.to_thread(self.media.release, authorization))
+            sessions.pop(sid, None)
+            queues.pop(sid, None)
+            task = workers.pop(sid, None)
+            if task:
+                task.cancel()
         try:
             while True:
                 if time.monotonic() >= next_heartbeat:
@@ -272,7 +384,7 @@ class Connector:
                     next_heartbeat = time.monotonic() + 20
                 for existing_sid, session in list(sessions.items()):
                     if session.expired():
-                        del sessions[existing_sid]
+                        discard(existing_sid)
                         await self.send(socket, {"type": "close", "sid": existing_sid})
                 try:
                     frame = json.loads(await asyncio.wait_for(socket.recv(), timeout=1))
@@ -290,21 +402,52 @@ class Connector:
                         if sid in sessions or len(sessions) >= MAX_SESSIONS:
                             raise ValueError("Session limit exceeded")
                         assert self.private_key is not None
+                        authorization = await self.validate_offer(frame) if self.media else None
                         session, reply = EncryptedSession.accept(frame, self.private_key, self.credentials["agent_id"])
                         sessions[sid] = session
+                        if authorization:
+                            authorizations[sid] = authorization
+                            queues[sid] = asyncio.Queue(maxsize=4)
+                            workers[sid] = asyncio.create_task(process(sid, authorization))
                         await self.send(socket, reply)
                     elif frame.get("type") == "data" and sid in sessions:
-                        reply = sessions[sid].respond(frame, name=self.credentials["name"], version=self.version)
-                        await self.send(socket, reply)
+                        if self.media:
+                            queues[sid].put_nowait(sessions[sid].open(frame))
+                        else:
+                            reply = sessions[sid].respond(frame, name=self.credentials["name"], version=self.version)
+                            await self.send(socket, reply)
                     elif frame.get("type") == "close":
-                        sessions.pop(sid, None)
+                        discard(sid, revoked=frame.get("reason") == "revoked")
                     else:
                         raise ValueError("Unknown session")
                 except Exception:
-                    sessions.pop(sid, None)
+                    discard(sid)
                     await self.send(socket, {"type": "close", "sid": sid})
         finally:
-            sessions.clear()
+            for sid in list(sessions):
+                discard(sid)
+
+    async def validate_offer(self, frame: dict[str, Any]) -> dict[str, Any]:
+        agent_id = self.credentials["agent_id"]
+        if frame.get("mfa_verified") is not True or frame.get("agent_id") != agent_id:
+            raise ValueError("MFA-bound authorization required")
+        challenge = await asyncio.to_thread(post_control, f"/api/agents/{agent_id}/challenge", {"purpose": "access"})
+        nonce = challenge["nonce"]
+        assert self.private_key is not None
+        signature = encode(self.private_key.sign(canonical("blueashreel-session-validate-v1", agent_id,
+            frame["sid"], frame["user_id"], frame["session_id"], frame["browser_key"], nonce)))
+        payload = {key: frame[key] for key in ("sid", "user_id", "session_id", "browser_key")}
+        result = await asyncio.to_thread(post_control, f"/api/agents/{agent_id}/session/validate",
+                                        {**payload, "nonce": nonce, "signature": signature})
+        if (result.get("authorized") is not True or result.get("agent_id") != agent_id
+                or result.get("user_id") != frame["user_id"] or result.get("role") != frame["role"]
+                or not time.time() < result.get("expires_at", 0) <= time.time() + 901):
+            raise ValueError("Invalid Agent authorization")
+        result["session_id"] = frame["session_id"]
+        # Reject before handshake if no matching, locally approved grant exists.
+        with self.media.factory() as db:
+            self.media.principal(db, result)
+        return result
 
     async def connected(self) -> None:
         options: dict[str, Any] = {
@@ -313,7 +456,7 @@ class Connector:
             "ping_interval": 20, "ping_timeout": 20, "compression": None,
         }
         try:
-            async with connect(BROKER_URL, **options) as broker, connect(RELAY_URL, **options) as relay:
+            async with connect(self.broker_url, **options) as broker, connect(self.relay_url, **options) as relay:
                 await self.authenticate(broker, "broker")
                 await self.authenticate(relay, "relay")
                 self.state = "connected_through_relay"
@@ -322,6 +465,7 @@ class Connector:
                 async with asyncio.TaskGroup() as group:
                     group.create_task(self.broker_loop(broker))
                     group.create_task(self.relay_loop(relay))
+                    group.create_task(self.update_loop())
         except* ConnectionClosed as errors:
             if errors.subgroup(
                 lambda error: isinstance(error, ConnectionClosed)
@@ -357,6 +501,10 @@ class Connector:
                     self.attempt += 1
                 if not self.enabled():
                     await self.stop_connection()
+                    if self.state not in {"pairing_failed", "revoked"}:
+                        self.state = "disabled"
+                elif not self.paired:
+                    self.state = "unpaired"
                 elif self.paired and self.connection is None and time.monotonic() >= self.retry_at:
                     self.state = "reconnecting"
                     self.connection = asyncio.create_task(self.connected())
@@ -367,6 +515,9 @@ class Connector:
                 await asyncio.sleep(0.5)
         finally:
             await self.stop_connection()
+            for pending in self.control.glob("command-*.json"):
+                if read_json(pending).get("action") == "pair":
+                    pending.unlink(missing_ok=True)
             self.state = "agent_offline" if self.enabled() else "disabled"
             self.publish()
 

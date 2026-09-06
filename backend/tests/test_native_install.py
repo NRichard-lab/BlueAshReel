@@ -343,7 +343,7 @@ def test_health_does_not_use_environment_proxy_and_clears_only_this_instances_ma
     with patch.object(native_install.urllib.request, "build_opener", return_value=opener) as build:
         assert native_install.health(data, seconds=1)
     assert build.call_args.args[0].proxies == {}
-    opener.open.assert_called_once_with("http://127.0.0.1:18080/api/v1/health/ready", timeout=2)
+    opener.open.assert_called_once_with("http://127.0.0.1:18080/api/v1/health/ready", timeout=15)
     assert not maintenance.exists()
 
 

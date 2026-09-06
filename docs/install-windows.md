@@ -3,8 +3,9 @@
 There are two deployment options sharing the same application:
 
 - [Native Windows development installer](native-windows.md): self-contained,
-  delayed-start Windows services, no Docker/WSL requirement. The development
-  identity uses port 18080 and separate storage so Docker remains untouched.
+  per-user tray runtime and Portal authentication, with no Docker/WSL requirement.
+  The development identity defaults to port 18080 and preserves separate storage.
+  Development.5 acceptance is pending; the published installer is still development.4.
 - Docker Desktop: the advanced/development path documented below, using port
   8080 by default. Its prerequisites apply only to this path.
 

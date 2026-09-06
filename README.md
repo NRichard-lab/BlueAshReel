@@ -2,136 +2,110 @@
 
 **A Blue Ash Application.**
 
-Blue Ash Reel is a private, local-first home-media streaming website. Native Windows and Docker share one FastAPI backend, React/TypeScript frontend, SQLite schema, scanner, playback engine, household permissions, and backup format. The first unsigned Windows development installer is an installation-test build, not a public release.
+Blue Ash Reel uses [blueashreel.com](https://blueashreel.com) for sign-in, MFA,
+Agent selection, invitations, library management, browsing and playback. Its
+Windows Agent runs in the signed-in user's system tray and keeps the media
+catalog, source files, artwork, watch progress and FFmpeg processing on that
+workstation. Browser-to-Agent requests and media travel through the Portal as
+application-layer encrypted frames.
 
-The base product name, subtitle, application version, and API prefix live in [`config/product.json`](config/product.json). The Windows component lock additionally identifies its development package/build number. Do not duplicate branding in deployment secrets.
+This repository contains the Agent, shared local media engine, Windows installer
+and preserved Docker deployment. The [Portal repository](https://github.com/NRichard-lab/BlueAshReelPortal)
+contains the public interface and account/control services. Docker's existing
+local website and household-account workflow remain available as a separate
+legacy/development deployment; they are not the Windows Agent's primary interface.
 
-## Quick start
+## Windows Agent
 
-### Native Windows development installer
+The development.5 source replaces the service runtime with a native tray host,
+per-user startup and Portal authentication. Setup configures program/data paths,
+separate database/artwork/temp/backup/log locations, a loopback port and resource
+limits. It does not create application users, select media libraries, scan media
+or pair an Agent in the wizard. Runtime uses the installing Windows user's normal
+permissions, including authorized drives/shares. No Docker, WSL or separately
+installed Python, Node or FFmpeg is required on the target workstation.
 
-See [native Windows installation and builds](docs/native-windows.md) and the
-[installation test report](docs/native-windows-validation.md). The self-contained
-development package uses **Blue Ash Reel Development**, port **18080**, and separate
-Program Files/ProgramData, services, secrets, and firewall rules. It does not
-require Docker, WSL, Python, Node, FFmpeg, or development tools on the target PC.
-An administrator installs the services; normal use is through the local browser.
-The unsigned development installer is built locally, not published as a release.
+After installation, the tray opens the Portal. Sign in, complete MFA, compare
+fingerprints, approve pairing locally, then add libraries in the Portal. Folder
+selection requires a native confirmation on the Agent workstation. Local status
+also requires a short-lived Portal authorization. Device identity remains separate
+from browser login sessions.
 
-### Docker Compose
+See [native installation and migration](docs/native-windows.md),
+[encrypted media and local authorization](docs/encrypted-portal-agent.md), and
+[acceptance status](docs/portal-tray-acceptance.md).
 
-Prerequisites are Docker Desktop on Windows or Docker Engine with Compose v2 on Linux. The bootstrap scripts detect missing prerequisites, preserve existing configuration, generate a secure application secret, validate all bind-mounted paths, start the stack, and wait for readiness.
+The **currently published** Owner-only unsigned development installer remains
+`0.1.0-development.4`. The development.5 source/candidate must pass acceptance
+before replacing it. No public GitHub Release is created. At this documentation
+checkpoint the new Portal changes have not been deployed and a new installer has
+not been published; real SMTP delivery and current Owner authentication remain
+blocked. Historical validation records do not establish acceptance for this change.
 
-Windows PowerShell:
+## Preserved Docker deployment
+
+Docker Desktop or Docker Engine with Compose v2 is required only for this path.
+Bootstrap preserves existing configuration, validates bind-mounted paths and starts
+the local stack. Source media is mounted read-only.
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\bootstrap.ps1
 ```
-
-Ubuntu/Linux:
 
 ```sh
 sh scripts/bootstrap.sh --media-path /srv/media
 ```
 
-An interactive first run offers media-root selection (a native folder dialog on Windows, with typed fallback). You can approve multiple folders or explicitly skip and configure them later; skipped/non-interactive installations retain an empty local `media/` directory. Source media is mounted read-only. The application is available at [http://localhost:8080](http://localhost:8080), where Step 3 of protected first-run setup provides a folder browser. See [approved media storage](docs/media-storage.md) for explicit path arguments and reconfiguration.
-
-The default bind is `127.0.0.1`; no firewall, router, or public-access setting is changed. For household LAN access, deliberately set `BIND_ADDRESS` in `.env` to this computer's RFC1918 address and restart. The optional isolated [remote connector](docs/remote-access.md) supports account pairing and encrypted diagnostics through [blueashreel.com](https://blueashreel.com), with remote media access deferred. Local playback works independently of it.
-
-## Docker operations
+The legacy local interface defaults to [http://localhost:8080](http://localhost:8080).
+Its local household setup/media-root options belong to Docker, not the new Windows
+installer. Its optional isolated connector supports the earlier diagnostic protocol;
+the new native Agent owns the Portal media workflow. Existing Docker configuration,
+volumes, users, media and services are preserved.
 
 ```sh
-# Status and privacy-safe local logs
 docker compose ps
-docker compose logs --tail 200
-
-# Stop without deleting persistent data
 docker compose down
-
-# Start again
 docker compose up --detach
-
-# Create and validate an online backup
 sh scripts/backup.sh
-
-# Upgrade the already-checked-out source with backup + migration safeguards
 sh scripts/upgrade.sh
 ```
 
-PowerShell users can run `scripts\backup.ps1`. Never use `docker compose down --volumes` as a troubleshooting shortcut; persistent application state is intentionally kept in configured host directories.
+Stopping Compose without `--volumes` preserves application state. Backups include
+sensitive local database/configuration and optional artwork; protect them and
+validate a restore before relying on them. See [Docker installation](docs/install-linux.md)
+and [backup and restore](docs/backup-and-restore.md).
 
-Health and API discovery:
+## Media and privacy
 
-- Liveness: `GET /api/v1/health/live`
-- Readiness: `GET /api/v1/health/ready`
-- Version: `GET /api/v1/version`
-- OpenAPI schema: `/api/v1/openapi.json` (the interactive CDN-backed UI is disabled)
+The implemented Portal interface includes paginated movies/TV/search, Continue
+Watching, details/artwork, audio/text-subtitle selection, progress and next episode.
+The Agent serves bounded direct-play ranges or locally produced HLS remux/transcode
+output. Opaque random IDs are Agent-scoped and still require authorization. Library
+and media permissions are checked locally; accepting an invitation alone cannot
+reveal a library. Real GPU support must be established by an actual test encode.
 
-Health responses are intentionally narrow and do not include users, media titles, full filesystem paths, tokens, or secrets.
+PostgreSQL holds account/control records, not a synchronized media catalog. Media
+names, paths, searches, artwork and payloads are encrypted before the relay. They
+may be displayed temporarily in the authorized browser. No central media cache,
+metadata-provider calls, analytics, remote fonts or cloud transcoding are added.
+Source media is application-read-only on Windows and mounted read-only in Docker.
 
-## Documentation
+## Development and documentation
 
-- [Architecture overview](docs/architecture.md)
+Branding/base version lives in `config/product.json`; the Windows component lock
+also records the development package number. Do not commit runtime secrets,
+databases, media, artwork, logs, backups or installer binaries.
+
+- [Architecture and deployment boundaries](docs/architecture.md)
+- [Current acceptance checklist](docs/portal-tray-acceptance.md)
+- [Windows configuration, migration and recovery](docs/native-windows.md)
+- [Encrypted Portal media protocol](docs/encrypted-portal-agent.md)
+- [Privacy and outbound policy](docs/privacy-and-outbound.md)
 - [Local development](docs/local-development.md)
-- [Windows installation](docs/install-windows.md)
-- [Native Windows architecture, installer and recovery](docs/native-windows.md)
-- [Native Windows installation test report](docs/native-windows-validation.md)
-- [Native Windows security boundary](docs/native-runtime-security.md)
-- [Ubuntu/Linux installation](docs/install-linux.md)
-- [Configuration reference](docs/configuration.md)
-- [Approved media storage and folder browser](docs/media-storage.md)
-- [Privacy and outbound connections](docs/privacy-and-outbound.md)
-- [Optional remote access, identity and isolation](docs/remote-access.md)
-- [Product rename and preserved installation identifiers](docs/product-rename.md)
-- [Control-plane phase validation and public acceptance status](docs/phase3-validation.md)
-- [Backup and restore](docs/backup-and-restore.md)
-- [Upgrade procedure](docs/upgrades.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Household users and permissions](docs/household-users.md)
-- [Playback and history](docs/playback.md)
-- [Local conversion and hardware](docs/transcoding.md)
-- [Playback modes and transcoding controls](docs/transcoding-settings.md)
-- [API reference](docs/api.md)
-- [Phase 2 validation and workstation checklist](docs/phase2-validation.md)
-- [Docker validation and local handoff](docs/container-validation.md)
+- [Playback and transcoding](docs/transcoding-settings.md)
 - [Current limitations](docs/not-implemented.md)
-- [Architecture decision record](docs/adr/0001-local-first-foundation.md)
+- [Historical Windows service validation](docs/native-windows-validation.md)
 
-## Repository map
-
-```text
-backend/     FastAPI application, durable worker, migrations, and tests
-config/      Central product identity
-docker/      Production-style container images and Caddy configuration
-docs/        Architecture, operations, privacy, and recovery guidance
-frontend/    React and TypeScript streaming website and administration
-packaging/   Windows installer, pinned components, build and acceptance tools
-scripts/     Bootstrap, online backup, and restore-validation tools
-compose.yml  Local runtime topology and hardening
-```
-
-## Privacy posture
-
-In Docker, backend, worker and frontend use an internal network with no outbound route.
-Caddy's startup guard applies deny-by-default rules in its own network namespace,
-permitting only replies, local health checks and the two internal upstreams.
-Only Caddy publishes a host port, bound to loopback by default. No host
-firewall rules are changed by Docker deployment. Native Windows installs five
-application-specific outbound block rules plus pre-DNS Python/Node guards. It
-does not alter global firewall policy. Its optional LAN rule is limited to the
-chosen private address, port, Private profile and local subnet. The Privacy page
-checks effective Windows rules rather than trusting a saved preference.
-Native media access is application-read-only, not a claim of read-only NTFS ACLs;
-Docker media mounts enforce read-only access. Inspection and artwork handling
-occur locally. There are no analytics, advertising, remote fonts, tracking pixels,
-external crash reporting or metadata-provider calls. Outbound integrations remain
-disabled and unavailable. See the [network boundary](docs/privacy-and-outbound.md).
-
-Backups contain the database, local configuration (including the application secret), application data, and optionally cached artwork. Treat them as sensitive household data.
-
-## Development status
-
-Phase 2 includes assigned-library Home rails, paginated movie/search/TV views, local artwork, Owner/Administrator/Viewer management, authenticated range playback, text subtitles, explicit audio/quality changes, resume/watch history, progressive HLS remuxing, software H.264/AAC conversion, optional tested hardware encoders, and Owner stream monitoring. Image-subtitle burn-in is honestly unsupported in this build. Docker/workstation and cross-browser validation status is recorded separately from native tests; see [validation](docs/phase2-validation.md) and [limitations](docs/not-implemented.md).
-
-Blue Ash Reel is not deployed publicly by this repository.
+The Portal's latest isolated Linux backend run passed 152 tests. Native tray,
+installer, browser/media and production acceptance are tracked separately; passing
+API tests does not certify a Windows installer or real email delivery.

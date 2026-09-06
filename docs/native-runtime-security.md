@@ -1,3 +1,5 @@
+> Historical service/Docker-era record. It is preserved as evidence for earlier builds, not acceptance for the per-user development.5 Agent. See [current installation](native-windows.md) and [current acceptance](portal-tray-acceptance.md).
+
 # Native Windows runtime security
 
 The native installer uses the same application, schema, scanner, job queue, and

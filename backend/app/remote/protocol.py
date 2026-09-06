@@ -1,4 +1,4 @@
-"""Blue Ash Reel v1. Application traffic is restricted to synthetic diagnostics."""
+"""Bounded, replay-resistant browser to Agent authenticated encryption."""
 from __future__ import annotations
 
 import base64
@@ -16,8 +16,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 PROTOCOL = 1
-MAX_FRAME = 16384
-MAX_PLAINTEXT = 4096
+MAX_FRAME = 524288
+MAX_PLAINTEXT = 262144
 MAX_SESSIONS = 4
 
 
@@ -77,6 +77,10 @@ class EncryptedSession:
         cls, offer: dict[str, Any], identity: Ed25519PrivateKey, agent_id: str
     ) -> tuple[EncryptedSession, dict[str, Any]]:
         expected = {"type", "protocol", "sid", "ticket_id", "user_id", "session_id", "agent_id", "browser_key"}
+        if "role" in offer:
+            expected |= {"role", "mfa_verified"}
+            if offer["role"] not in {"owner", "manager", "viewer"} or offer.get("mfa_verified") is not True:
+                raise ValueError("MFA and Agent membership required")
         if set(offer) != expected or offer["type"] != "offer" or offer["protocol"] != PROTOCOL:
             raise ValueError("Invalid session offer")
         for field in ("sid", "ticket_id", "user_id", "session_id", "agent_id"):
@@ -104,9 +108,13 @@ class EncryptedSession:
 
     def expired(self) -> bool:
         now = time.monotonic()
-        return now - self.created_at > 120 or now - self.last_active > 30
+        return now - self.created_at > 900 or now - self.last_active > 180
 
     def respond(self, frame: dict[str, Any], *, name: str, version: str) -> dict[str, Any]:
+        request = self.open(frame)
+        return self.seal(diagnostic(request, name=name, version=version))
+
+    def open(self, frame: dict[str, Any]) -> dict[str, Any]:
         if set(frame) != {"type", "sid", "seq", "ciphertext"} or frame["type"] != "data":
             raise ValueError("Invalid encrypted frame")
         sequence = frame["seq"]
@@ -123,14 +131,19 @@ class EncryptedSession:
         request = json.loads(plain)
         if not isinstance(request, dict):
             raise ValueError("Invalid diagnostic")
-        response = diagnostic(request, name=name, version=version)
+        self.receive_sequence += 1
+        self.last_active = time.monotonic()
+        return request
+
+    def seal(self, response: dict[str, Any]) -> dict[str, Any]:
+        if self.expired() or self.send_sequence >= 2**32:
+            raise ValueError("Expired encrypted session")
         outbound = json.dumps(response, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(outbound) > MAX_PLAINTEXT:
             raise ValueError("Oversized response")
         seq = self.send_sequence.to_bytes(8, "big")
         encrypted = AESGCM(self.outbound_key).encrypt(b"\0" * 4 + seq, outbound, self.digest + b"\1" + seq)
         result = {"type": "data", "sid": self.sid, "seq": self.send_sequence, "ciphertext": encode(encrypted)}
-        self.receive_sequence += 1
         self.send_sequence += 1
         self.last_active = time.monotonic()
         return result

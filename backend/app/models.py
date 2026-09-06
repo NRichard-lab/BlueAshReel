@@ -47,6 +47,28 @@ class ApplicationSetting(Base):
     )
 
 
+class PortalGrant(Base):
+    """Only opaque Portal identities and locally approved permissions live here."""
+    __tablename__ = "portal_grants"
+    portal_user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    local_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    access_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class RemoteObject(Base):
+    """Random, Agent-scoped revocable aliases; never disclose local database IDs."""
+    __tablename__ = "remote_objects"
+    __table_args__ = (UniqueConstraint("agent_id", "kind", "local_id", name="uq_remote_object"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    agent_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    local_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
 class Role(Base):
     __tablename__ = "roles"
 

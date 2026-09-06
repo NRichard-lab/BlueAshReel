@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,17 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
             os.fsync(stream.fileno())
         if os.name != "nt":
             os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
+        # Windows scanners/readers can transiently deny delete sharing. Keep the
+        # atomic replacement and retry only that sharing failure for <=500ms.
+        deadline = time.monotonic() + 0.5
+        while True:
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.025)
         if os.name != "nt":
             directory = os.open(path.parent, getattr(os, "O_DIRECTORY", 0))
             try:

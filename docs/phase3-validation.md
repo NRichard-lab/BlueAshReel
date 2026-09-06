@@ -1,3 +1,5 @@
+> Historical service/Docker-era record. It is preserved as evidence for earlier builds, not acceptance for the per-user development.5 Agent. See [current installation](native-windows.md) and [current acceptance](portal-tray-acceptance.md).
+
 # Blue Ash Reel foundation validation — September 5, 2026
 
 The Agent and public portal are separate repositories. This record describes

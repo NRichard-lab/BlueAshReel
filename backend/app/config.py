@@ -92,7 +92,8 @@ class AppConfig(BaseSettings):
     media_roots: str = ""
     media_root_definitions: str = ""
     outbound_integrations_enabled: bool = False
-    # Separate service control spool only. The media backend never connects to the portal.
+    # Private connector/tray spool. Per-user native mode serves encrypted media
+    # through its outbound canonical Portal connection; media data stays local.
     remote_control_dir: Path | None = None
     log_level: str = "INFO"
     ffprobe_path: str = "ffprobe"
@@ -164,6 +165,14 @@ class AppConfig(BaseSettings):
             ApprovedMediaRoot(id=root.id, display_name=root.display_name, path=root.path.expanduser().absolute())
             for root in roots
         )
+        # A native user confirms these roots on the workstation. The file is
+        # private Agent state, read afresh so the scan worker sees approvals.
+        if self.deployment_mode == "native_windows":
+            from app.remote.storage import read_json
+            approved = read_json(self.app_data_dir / "remote-roots.json").get("roots", [])
+            known = {str(root.path.resolve(strict=False)) for root in normalized}
+            normalized += tuple(ApprovedMediaRoot.model_validate(root) for root in approved
+                                if str(Path(root["path"]).resolve(strict=False)) not in known)
         if len({root.id for root in normalized}) != len(normalized):
             raise ValueError("Approved media root identifiers must be unique")
         canonical_paths = tuple(root.path.resolve(strict=False) for root in normalized)

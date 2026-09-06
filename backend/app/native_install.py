@@ -71,7 +71,16 @@ def _atomic_text(path: Path, value: str) -> None:
         # conflicts with a directory guard. All content writes are complete;
         # replacing an existing link never opens/truncates its external target.
         _private_file(candidate)
-        candidate.replace(path)
+        for attempt in range(20):
+            try:
+                candidate.replace(path)
+                break
+            except PermissionError:
+                if os.name != "nt" or attempt == 19:
+                    raise
+                # Readers and Windows executable/antimalware verification may
+                # briefly deny replacement. Never discard committed prior state.
+                time.sleep(0.025)
     finally:
         if candidate is not None:
             candidate.unlink(missing_ok=True)
@@ -270,7 +279,8 @@ def change_network(data: Path, bind: str) -> None:
     write_json(data / "configuration" / "installation.json", metadata)
 
 
-def configure(program: Path, data: Path, instance: str, port: int, bind: str, roots: list[str]) -> dict[str, Any]:
+def configure(program: Path, data: Path, instance: str, port: int, bind: str, roots: list[str],
+              *, runtime_mode: str = "legacy_service") -> dict[str, Any]:
     program, data = validate_layout(program, data)
     if program != _executing_program_dir():
         raise NativeInstallError("The requested program location differs from the executing protected installation")
@@ -281,8 +291,9 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
             raise NativeInstallError("Existing data belongs to a different installation; it will not be reused")
         # Repair/upgrade must never generate a new secret or replace the approved roots.
         validate_ports(int(previous["port"]), str(previous["bind_address"]))
-        render_services(previous)
-        render_proxy(previous)
+        if runtime_mode == "legacy_service":
+            render_services(previous)
+            render_proxy(previous)
         return previous
     # The elevated wrapper may precreate empty, ACL-protected state folders.
     if data.exists() and any(
@@ -339,6 +350,7 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
         "bind_address": bind,
         "created_at": datetime.now(UTC).isoformat(),
         "strict_local": True,
+        "runtime_mode": runtime_mode,
     }
     environment = data / "configuration" / ".env"
     with environment.open("x", encoding="utf-8", newline="\n") as output:
@@ -346,8 +358,9 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
             output.write(f"{key}={json.dumps(value, ensure_ascii=False)}\n")
     write_json(data / "configuration" / "installation.json", metadata)
     (data / MARKER).write_text(prefix + "\n", encoding="utf-8")
-    render_services(metadata)
-    render_proxy(metadata)
+    if runtime_mode == "legacy_service":
+        render_services(metadata)
+        render_proxy(metadata)
     return metadata
 
 
@@ -546,7 +559,7 @@ def health(data: Path, seconds: int = 60) -> bool:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
-            with opener.open(url, timeout=2) as response:  # noqa: S310 - fixed loopback origin
+            with opener.open(url, timeout=15) as response:  # noqa: S310 - fixed loopback origin
                 payload = json.load(response)
                 if response.status == 200 and payload.get("status") in {"ready", "ok"}:
                     (data / "state" / "maintenance").unlink(missing_ok=True)

@@ -25,9 +25,9 @@ from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
 from app.models import AuditEvent
-from app.remote.connector import BROKER_URL, RELAY_URL, Connector, post_control, reconnect_delay
+from app.remote.connector import BROKER_URL, RELAY_URL, Connector, newer_version, post_control, reconnect_delay
 from app.remote.control import queue_action, snapshot
-from app.remote.protocol import EncryptedSession, decode, diagnostic, encode, fingerprint
+from app.remote.protocol import MAX_PLAINTEXT, EncryptedSession, decode, diagnostic, encode, fingerprint
 from app.remote.storage import protect_directory, protect_secret, read_json, unprotect_secret, write_json
 
 
@@ -137,9 +137,10 @@ def test_remote_application_allowlist_rejects_media_and_paths(op: str) -> None:
 def test_frames_are_bounded_and_sessions_expire() -> None:
     session, incoming, _, _, _, _ = browser_session()
     with pytest.raises(ValueError, match="Oversized"):
-        session.respond({"type": "data", "sid": session.sid, "seq": 0, "ciphertext": encode(b"a" * 4200)},
-                        name="Synthetic", version="0.1.0")
-    session.last_active -= 31
+        session.respond(
+            {"type": "data", "sid": session.sid, "seq": 0, "ciphertext": encode(b"a" * (MAX_PLAINTEXT + 17))},
+            name="Synthetic", version="0.1.0")
+    session.last_active -= 181
     with pytest.raises(ValueError, match="Expired"):
         session.respond(encrypted_request(session, incoming, {"id": "a", "op": "status"}),
                         name="Synthetic", version="0.1.0")
@@ -317,6 +318,8 @@ def test_connector_import_and_container_data_network_boundaries() -> None:
     root = Path(__file__).parents[2]
     modules = root / "backend/app/remote"
     for module in modules.glob("*.py"):
+        if module.name in {"media.py", "local_auth.py"}:
+            continue  # Explicit native dispatch only; isolated container connector never imports these.
         tree = ast.parse(module.read_text(encoding="utf-8"))
         imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
         assert not any(item.startswith(("app.database", "app.models", "app.services", "app.config", "app.api"))
@@ -333,3 +336,72 @@ def test_connector_import_and_container_data_network_boundaries() -> None:
     assert 'iptables -D OUTPUT -o lo -j ACCEPT' in source
     image = (root / "docker/remote-connector.Dockerfile").read_text()
     assert "COPY backend/app/remote/" in image and "COPY backend/ " not in image
+
+
+@pytest.mark.parametrize(("candidate", "current", "expected"), [
+    ("0.1.0-development.10", "0.1.0-development.9", True),
+    ("0.1.0-development.4", "0.1.0-development.5", False),
+    ("0.1.0", "0.1.0-development.5", True),
+    ("0.1.0-development.6", "0.1.0", False),
+    ("0.1.0+build.2", "0.1.0+build.1", False),
+    ("0.1.0-development.5", "0.1.0-development.5", False),
+    ("0.2.0-development.1", "0.1.0", True),
+])
+def test_approved_update_versions_use_semantic_precedence(candidate, current, expected):
+    assert newer_version(candidate, current) is expected
+
+
+@pytest.mark.parametrize("value", ["latest", "0.1.0-development.05", "00.1.0", "0.1.0\n", "0.1.0" + "x" * 40])
+def test_invalid_published_update_version_is_rejected(value):
+    with pytest.raises(ValueError):
+        newer_version(value, "0.1.0")
+
+
+def test_signed_update_check_is_hourly_and_optional(tmp_path):
+    connector = Connector(tmp_path / "control", tmp_path / "identity", "0.1.0-development.5")
+    connector.prepare_identity("Synthetic")
+    agent_id = str(uuid.uuid4())
+    connector.credentials["agent_id"] = agent_id
+    connector.state = "connected_through_relay"
+
+    def response(path, payload):
+        if path.endswith("/challenge"):
+            assert payload == {"purpose": "update"}
+            return {"nonce": "one-use-update-nonce"}
+        assert path == f"/api/agents/{agent_id}/updates"
+        assert set(payload) == {"version", "nonce", "signature"}
+        transcript = f"blueashreel-agent-update-v1\n{agent_id}\n0.1.0-development.5\none-use-update-nonce".encode()
+        connector.private_key.public_key().verify(decode(payload["signature"]), transcript)
+        return {"available": True, "version": "0.1.0-development.6"}
+
+    with patch("app.remote.connector.post_control", side_effect=response) as network:
+        asyncio.run(connector.check_updates())
+        asyncio.run(connector.check_updates())
+        assert network.call_count == 2
+    assert connector.update_available and connector.update_version == "0.1.0-development.6"
+    assert read_json(connector.control / "status.json")["update_available"]
+    connector.next_update_check = 0
+    with patch("app.remote.connector.post_control", side_effect=ConnectionError("Unavailable")) as network:
+        asyncio.run(connector.check_updates())
+        asyncio.run(connector.check_updates())
+        assert network.call_count == 1
+    assert connector.state == "connected_through_relay"
+    assert connector.update_available
+
+
+def test_remote_atomic_status_write_retries_transient_windows_share_denial(tmp_path):
+    original = os.replace
+    attempts = 0
+
+    def replace(source, target):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("Synthetic temporary sharing denial")
+        return original(source, target)
+
+    with patch("app.remote.storage.os.replace", side_effect=replace):
+        write_json(tmp_path / "status.json", {"state": "connected_through_relay"})
+    assert attempts == 3
+    assert read_json(tmp_path / "status.json")["state"] == "connected_through_relay"
+    assert not list(tmp_path.glob(".pending-*"))

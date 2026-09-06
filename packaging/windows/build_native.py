@@ -489,7 +489,7 @@ def stage_ffmpeg(source: Path, stage: Path, lock: dict[str, Any]) -> None:
 
 def assert_payload(stage: Path) -> None:
     required = [
-        "runtime/python/python.exe", "runtime/python/python313.dll", "runtime/python/python313._pth",
+        "runtime/python/python.exe", "runtime/python/pythonw.exe", "runtime/python/python313.dll", "runtime/python/python313._pth",
         "runtime/python/vcruntime140.dll", "runtime/python/vcruntime140_1.dll",
         "runtime/python/sqlite3.dll", "runtime/node/node.exe",
         "runtime/ffmpeg/ffmpeg.exe", "runtime/ffmpeg/ffprobe.exe", "runtime/caddy/caddy.exe",
@@ -498,6 +498,8 @@ def assert_payload(stage: Path) -> None:
         "scripts/backup.py", "scripts/backup_format.py", "scripts/restore_validate.py",
         "config/product.json", "support/install.ps1", "support/native-guard.cjs",
         "support/maintenance.ps1", "support/development-notice.txt", "support/install-remote.ps1",
+        "BlueAshReelAgent.exe", "support/user-install.ps1", "backend/app/native_tray.py",
+        "backend/app/native_consent.py", "backend/app/native_user_install.py",
     ]
     for name in required:
         if not (stage / name).is_file():
@@ -542,6 +544,13 @@ def stage_payload(args: argparse.Namespace) -> Path:
         run([args.pnpm, "run", "build"], cwd=REPOSITORY / "frontend", env=environment)
     stage = fresh_stage(args.stage_dir)
     print(f"Staging native payload: {stage}", flush=True)
+    compiler = Path(os.environ["WINDIR"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+    if not compiler.is_file():
+        raise BuildError("The Windows inbox .NET Framework C# compiler is required to build the native tray")
+    run([str(compiler), "/nologo", "/target:winexe", "/platform:x64",
+         "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll",
+         "/reference:System.Web.Extensions.dll", "/out:" + str(stage / "BlueAshReelAgent.exe"),
+         str(PACKAGING / "BlueAshReelAgent.cs")])
     python_root = stage / "runtime" / "python"
     extract_zip(downloads["python"], python_root)
     configure_embedded_paths(python_root)
@@ -573,8 +582,9 @@ def stage_payload(args: argparse.Namespace) -> Path:
     for name in ("backup.py", "backup_format.py", "restore_validate.py", "__init__.py"):
         copy_required(REPOSITORY / "scripts" / name, stage / "scripts" / name)
     copy_required(REPOSITORY / "config" / "product.json", stage / "config" / "product.json")
+    write_json(stage / "config" / "product.json", {**PRODUCT, "version": version})
     copy_tree(REPOSITORY / "frontend" / "dist" / "standalone", stage / "frontend", frontend_runtime=True)
-    for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1"):
+    for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1", "user-install.ps1"):
         copy_required(PACKAGING / name, stage / "support" / name)
     if (PACKAGING / "service-template.xml").is_file():
         copy_required(PACKAGING / "service-template.xml", stage / "support" / "service-template.xml")
@@ -592,7 +602,8 @@ def stage_payload(args: argparse.Namespace) -> Path:
     components.extend(stage_additional_components(args.downloads, stage, offline=args.offline))
     for name in ("components.lock.json", "requirements.lock", "build_native.py", "build.ps1",
                  "additional-components.json", "license_sources.py", "installer.iss",
-                 "install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1"):
+                 "install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1",
+                 "user-install.ps1", "BlueAshReelAgent.cs"):
         copy_required(PACKAGING / name, stage / "source" / "packaging" / name)
     (stage / "OPEN-SOURCE-NOTICES.txt").write_text(
         f"{PRODUCT['name']} Development — unsigned local development installer\n\n"
@@ -609,7 +620,8 @@ def stage_payload(args: argparse.Namespace) -> Path:
         "included-components.json explicitly marks upstream_full_license_text_missing. "
         "This is a documented upstream packaging limitation, not an assertion of legal certification. "
         "The MPL-2.0 resvg-js source and original notice are included under source/npm and licenses/npm.\n\n"
-        "Windows 10 22H2 / Windows 11 provide the .NET Framework runtime used by WinSW. "
+        "Windows 10 22H2 / Windows 11 provide the .NET Framework runtime used by the native user tray. "
+        "Legacy WinSW wrappers are retained solely for previous-version migration and recovery. "
         "No additional runtime download is performed by this installer.\n",
         encoding="utf-8",
     )

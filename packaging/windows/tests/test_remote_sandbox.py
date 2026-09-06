@@ -241,6 +241,9 @@ def test_new_installer_helper_upgrades_without_invoking_legacy_remote_rejection(
     assert result.stdout.strip() == "new helper preserved identity"
     installer = (ROOT / "packaging/windows/installer.iss").read_text()
     dispatch = installer.split("function RunMaintenance", 1)[1].split("function WriteExistingDataValidator", 1)[0]
-    assert "ExtractTemporaryFile('upgrade-install.ps1')" in dispatch
-    assert "ExtractTemporaryFile('install-remote.ps1')" in dispatch
-    assert "Helper := ExpandConstant('{tmp}\\upgrade-install.ps1')" in dispatch
+    assert "ExpandConstant('{app}\\support\\user-install.ps1')" in dispatch
+    user_helper = (ROOT / "packaging/windows/user-install.ps1").read_text()
+    migration = user_helper.split("function Begin-LegacyMigration", 1)[1].split("try {\n    switch", 1)[0]
+    assert migration.index("Validate-LegacyServices $Record") < migration.index("-m app.native_install backup")
+    assert migration.index("-m app.native_install backup") < migration.index("Stop-Service")
+    assert "install-remote.ps1" not in migration

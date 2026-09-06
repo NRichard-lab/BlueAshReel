@@ -12,8 +12,8 @@ from app.remote.storage import read_json, write_json
 PORTAL_ORIGIN = "https://blueashreel.com"
 SHARED_FIELDS = [
     "Opaque Agent ID", "Public Ed25519 identity and fingerprint", "Owner-chosen friendly name",
-    "Software version", "Operating-system category", "Diagnostic protocol capabilities",
-    "Online/offline status and heartbeat", "Coarse connector health", "Encrypted diagnostic frames",
+    "Software version", "Operating-system category", "Encrypted protocol capabilities",
+    "Online/offline status and heartbeat", "Coarse connector health", "Opaque encrypted frames",
 ]
 _lock = Lock()
 
@@ -23,6 +23,7 @@ def snapshot(directory: Path | None) -> dict[str, Any]:
         "available": directory is not None, "enabled": False, "paired": False, "state": "disabled",
         "account_email": None, "agent_id": None, "name": None, "fingerprint": None,
         "last_heartbeat": None, "central_revocation_pending": False,
+        "update_available": False, "update_version": None,
         "relay_endpoint": PORTAL_ORIGIN.replace("https:", "wss:") + "/ws/relay/agent",
         "shared_fields": SHARED_FIELDS, "remote_media_available": False,
     }
@@ -30,7 +31,7 @@ def snapshot(directory: Path | None) -> dict[str, Any]:
         return state
     status = read_json(directory / "status.json")
     # Do not reflect unknown data, paths, secrets or arbitrary exception text into the Owner UI.
-    for key in set(state) - {"available", "shared_fields", "remote_media_available", "relay_endpoint"}:
+    for key in set(state) - {"available", "shared_fields", "relay_endpoint"}:
         if key in status:
             state[key] = status[key]
     state["enabled"] = read_json(directory / "desired.json").get("enabled") is True

@@ -136,6 +136,7 @@ def run_ffprobe(executable: str, path: Path, timeout_seconds: int) -> tuple[Prob
             capture_output=True,
             timeout=timeout_seconds,
             text=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise FFprobeError("Local media analysis could not be completed") from exc
@@ -154,7 +155,8 @@ def run_ffprobe(executable: str, path: Path, timeout_seconds: int) -> tuple[Prob
 
 def local_binary_available(executable: str) -> bool:
     try:
-        result = subprocess.run([executable, "-version"], capture_output=True, check=False, timeout=5, text=False)
+        result = subprocess.run([executable, "-version"], capture_output=True, check=False, timeout=5, text=False,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

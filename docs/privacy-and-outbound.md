@@ -1,20 +1,28 @@
 # Privacy and outbound connections
 
-## Optional control-plane connection
+## Windows Portal Agent boundary
 
-The separate [remote connector](remote-access.md) is disabled by default and needs
-explicit local Owner pairing. It shares only its opaque identity, public key,
-Owner-selected friendly name, account association, version, OS category, coarse
-status and encrypted diagnostics with the separate Blue Ash Reel portal. Public
-account records are separate from the household accounts described below.
+The Windows Agent's authenticated outbound connection to blueashreel.com:443 is
+required for ordinary Portal access. Its per-user API process reads the local
+catalog and dispatches narrowly allowed media operations; requests and replies
+are encrypted between browser and Agent. The relay has no decryption keys and
+stores no catalog, media, artwork, search text or viewing progress. Only account,
+Agent and short-lived authorization/control records are central.
 
-The connector cannot read the media database or media roots. Docker uses a separate
-image, volumes and network; Windows uses a distinct service identity and AppContainer.
-Its permitted outbound destination is `blueashreel.com` on TCP 443. The media
-services retain their existing outbound restrictions and work when the connector
-or Internet is unavailable. No media browsing, playback or automatic router changes
-are enabled. The public site's ability to serve browser JavaScript remains an
-explicit trust boundary; encrypted relay transport does not remove that risk.
+Local workers/FFmpeg retain the media-provider/network restrictions. Native source
+access follows the signed-in Windows user's drive/share permissions and does not
+write source files. Pairing/folder selection require local confirmation. Browser
+JavaScript remains part of the trust boundary; compare the Agent fingerprint
+locally. See [encrypted Portal media](encrypted-portal-agent.md).
+
+## Preserved Docker and service-era boundary
+
+The optional legacy diagnostic connector remains isolated from the Docker media
+database and roots. Its older Windows service/AppContainer configuration is a
+historical deployment, not the per-user Agent. Docker's local interface and media
+processing continue independently of that optional connector. The phase-2 rules
+below apply to that preserved local deployment; do not interpret them as disabling
+the new Windows Agent's authorized Portal media tunnel.
 
 ## Phase 2 streaming boundary
 
