@@ -26,6 +26,8 @@ from app.native_runtime import (
     write_stop_marker,
 )
 from app.remote.control import queue_action
+from app.remote.protocol import fingerprint
+from app.remote.storage import read_json, unprotect_secret
 from app.services.paths import assert_no_link_components
 from app.services.process_supervisor import lock_file, unlock_file
 
@@ -44,7 +46,9 @@ def command_action(value: Any, *, runtime_id: str, pid: int, now: float) -> str 
     if "maintenance_id" in value and (value.get("runtime_id") != runtime_id or value.get("target_pid") != pid):
         return None
     action = value.get("action")
-    return action if isinstance(action, str) and action in {"exit", "pause", "restart", "reconnect", "unpair"} else None
+    return action if isinstance(action, str) and action in {
+        "exit", "pause", "restart", "reconnect", "unpair", "discard_incomplete",
+    } else None
 
 
 def connection_label(status: dict[str, Any], *, healthy: bool, paused: bool = False,
@@ -161,6 +165,36 @@ class Supervisor:
         except (OSError, ValueError):
             return {}
 
+    def discard_incomplete_pairing(self, expected_fingerprint: Any) -> bool:
+        """Explicitly discard only the confirmed incomplete key, after draining its API."""
+        status = self.remote_status()
+        if (not isinstance(expected_fingerprint, str) or len(expected_fingerprint) != 64
+            or status.get("fingerprint") != expected_fingerprint or status.get("paired")
+            or status.get("central_revocation_pending")
+            or status.get("state") in {"waiting_portal_approval", "waiting_local_confirmation", "pairing"}):
+            return False
+        self.publish("Running")
+        self.stop()  # Shutdown consumes pending callbacks and waits for all credential writers.
+        try:
+            identity = self.installation.data_dir / "remote-identity" / "identity.json"
+            revocation = identity.with_name("revocation.json")
+            assert_no_link_components(identity.parent)
+            if revocation.exists() or revocation.is_symlink() or not identity.exists():
+                return False
+            assert_no_link_components(identity)
+            record = read_json(identity)
+            if not record or set(record) != {"secret", "name"}:
+                return False  # A pairing that completed while draining must remain owned and usable.
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+            key = Ed25519PrivateKey.from_private_bytes(unprotect_secret(record["secret"]))
+            if fingerprint(key.public_key().public_bytes_raw()) != expected_fingerprint:
+                return False
+            identity.unlink()
+            return True
+        finally:
+            self.start()  # A new API has no old callbacks and chooses a new random callback port.
+
     def publish(self, override: str | None = None) -> None:
         healthy = bool(self.children) and all(child.poll() is None for child in self.children.values())
         status = self.remote_status()
@@ -194,6 +228,8 @@ class Supervisor:
                         break
                     if action == "unpair":
                         queue_action(self.control, "unpair")
+                    if action == "discard_incomplete":
+                        self.discard_incomplete_pairing(value.get("expected_fingerprint"))
                     if action in {"pause", "restart", "reconnect"}:
                         self.publish("Running")
                         self.stop()

@@ -12,6 +12,18 @@ Local management listens on `127.0.0.1:<port>` (development default 18080). The 
 
 ## Runtime ownership and privacy
 
+If the Portal saved a pairing but its response was interrupted, choose Reconnect
+and Pair Agent to recover it under its original Owner. If that Portal entry was
+revoked before recovery, use the tray's **Discard incomplete pairing** action.
+It appears only for an unpaired local identity outside an active approval. The
+confirmation names its fingerprint and explains that Portal entries, their
+Owners, media and application data stay intact. The supervisor stops its owned
+processes, verifies that the same key still has no completed account association
+or pending revocation, deletes only that incomplete identity, and restarts.
+Choose Pair Agent afterward and explicitly approve the new fingerprint on both
+screens. Old callbacks are invalidated; a pairing completed during shutdown is
+preserved instead of discarded.
+
 `BlueAshReelAgent.exe` uses Windows inbox .NET Framework WinForms for its notification icon, menus and native dialogs. It starts embedded `pythonw.exe` as the current Windows account. The supervisor owns API and worker process handles and Windows Job Object cleanup. The Portal connector shares API lifespan and its playback manager. No service account accesses media; mapped drives and network shares use the signed-in user's access.
 
 HKCU `Software\Microsoft\Windows\CurrentVersion\Run` provides opt-in login startup. Runtime state and consent queues have a user/SYSTEM-only DACL on a new installation. Child processes have no visible console; FFmpeg/FFprobe probes also use hidden process flags. The bundled FFmpeg is compiled with networking disabled. API egress is constrained to loopback and the canonical Portal TLS endpoints; worker network integrations remain disabled.

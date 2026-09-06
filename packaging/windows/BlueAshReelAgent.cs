@@ -31,6 +31,12 @@ sealed class AgentTray : ApplicationContext {
     [DllImport("user32.dll", SetLastError = true)] static extern bool DestroyIcon(IntPtr handle);
     Dictionary<string, object> last = new Dictionary<string, object>();
 
+    internal static bool CanDiscardIncomplete(bool isPaired, bool pendingRevocation, string status, string fingerprint) {
+        return !isPaired && !pendingRevocation && fingerprint != null && fingerprint.Length == 64 &&
+            (status == "Not paired" || status == "Error" || status == "Pairing expired" ||
+             status == "Pairing cancelled" || status == "Revoked");
+    }
+
     static double Now() { return (DateTime.UtcNow - new DateTime(1970,1,1)).TotalSeconds; }
     static string Quote(string value) { return "\"" + value.TrimEnd('\\') + "\""; }
     static void NoLinks(string path) {
@@ -69,6 +75,17 @@ sealed class AgentTray : ApplicationContext {
         connection.Click += delegate { ShowStatus(); }; menu.Items.Add(connection);
         menu.Items.Add("Reconnect", null, delegate { Command("reconnect"); });
         unpair.Click += delegate {
+            bool incomplete = CanDiscardIncomplete(last.ContainsKey("paired") && Convert.ToBoolean(last["paired"]),
+                last.ContainsKey("central_revocation_pending") && Convert.ToBoolean(last["central_revocation_pending"]),
+                label, Value(last,"fingerprint"));
+            if (incomplete) {
+                string expectedFingerprint = Value(last,"fingerprint");
+                if (MessageBox.Show("Discard this incomplete local pairing?\n\nFingerprint: " + Value(last,"fingerprint_short") +
+                    "\n\nOnly this incomplete local identity will be removed. Existing Portal entries, their Owners, and your local media and application data are preserved. The Agent will restart automatically; then choose Pair Agent and approve the new fingerprint on both screens.",
+                    "Discard incomplete pairing", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2) == DialogResult.Yes) Command("discard_incomplete", expectedFingerprint);
+                return;
+            }
             if (MessageBox.Show("Unpair this Agent? Its Portal connection and remote access will close. Your local media and application data stay on this computer. Pairing again requires approval in the Portal and here.",
                 "Unpair Blue Ash Reel", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                 MessageBoxDefaultButton.Button2) == DialogResult.Yes) Command("unpair");
@@ -124,13 +141,15 @@ sealed class AgentTray : ApplicationContext {
             UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = data
         });
     }
-    void Command(string action) {
+    void Command(string action, string expectedFingerprint = null) {
         try {
             if (runtime == null || runtime.HasExited) {
                 if (action == "restart" || action == "reconnect") { StartRuntime(); return; }
                 throw new IOException();
             }
-            Write(Path.Combine(state,"tray-command.json"),new { action = action, created_at = Now() });
+            Write(Path.Combine(state,"tray-command.json"),new {
+                action = action, created_at = Now(), expected_fingerprint = expectedFingerprint
+            });
         } catch { Error(); }
     }
     string StartupCommand() { return Quote(Application.ExecutablePath) + " --data-dir " + Quote(data); }
@@ -172,8 +191,10 @@ sealed class AgentTray : ApplicationContext {
             connection.Text = "Connection status: " + label;
             bool isPaired = last.ContainsKey("paired") && Convert.ToBoolean(last["paired"]);
             bool pendingRevocation = last.ContainsKey("central_revocation_pending") && Convert.ToBoolean(last["central_revocation_pending"]);
+            bool incomplete = CanDiscardIncomplete(isPaired, pendingRevocation, label, Value(last,"fingerprint"));
             pair.Enabled = !isPaired && !pendingRevocation && label != "Waiting for Portal approval" && label != "Waiting for local confirmation";
-            unpair.Enabled = isPaired || pendingRevocation;
+            unpair.Text = incomplete ? "Discard incomplete pairing" : "Unpair this Agent";
+            unpair.Enabled = isPaired || pendingRevocation || incomplete;
             if (iconState != label) {
                 Color color = label == "Connected" ? Color.SeaGreen : label == "Not paired" ? Color.Goldenrod :
                     label == "Error" || label == "Revoked" || label == "Paired but Agent offline" ? Color.Firebrick :

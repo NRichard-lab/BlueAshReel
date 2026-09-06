@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.native_tray import connection_label
+from app.native_tray import Supervisor, command_action, connection_label
 from app.remote.callback_server import CallbackListener
 from app.remote.connector import BROKER_URL, RELAY_URL, Connector
 from app.remote.local_auth import COOKIE, router
@@ -253,3 +253,102 @@ def test_random_callback_listener_binds_only_loopback_and_closes(local_agent):
         assert listener.socket.fileno() == -1
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("race", ["none", "completed_pairing", "revocation_proof", "replaced_key"])
+def test_explicit_incomplete_discard_rechecks_after_drain_and_rejects_old_callback(tmp_path, race):
+    connector = Connector(tmp_path / "control", tmp_path / "remote-identity", "0.1.0")
+    application = FastAPI()
+    application.include_router(router)
+    application.state.portal_connector = connector
+    application.state.portal_pending = {}
+    application.state.portal_status_sessions = {}
+    supervisor = object.__new__(Supervisor)
+    supervisor.installation = SimpleNamespace(data_dir=tmp_path)
+    retained = tmp_path / "database" / "catalog-sentinel"
+    retained.parent.mkdir()
+    retained.write_text("synthetic catalog and media must remain")
+    events = []
+    old_public = None
+    surviving_record = None
+    restarted = None
+    with TestClient(application, base_url=BASE) as client:
+        request = begin(client)
+        old_public = connector.private_key.public_key()
+        connector.state = "pairing_failed"
+        connector.publish()
+
+        def stop():
+            nonlocal surviving_record
+            events.append("stop")
+            assert (connector.identity / "identity.json").exists()
+            # Mirror native API shutdown, including a credential write that may
+            # complete after the tray displayed its previous unpaired status.
+            if race == "completed_pairing":
+                connector.credentials.update(agent_id=str(uuid.uuid4()), user_id=str(uuid.uuid4()))
+                write_json(connector.identity / "identity.json", connector.credentials)
+            elif race == "revocation_proof":
+                proof = {"agent_id": str(uuid.uuid4()), "signature": "proof"}
+                write_json(connector.identity / "revocation.json", proof)
+            elif race == "replaced_key":
+                connector.remove_identity()
+                connector.prepare_identity("Replacement")
+            surviving_record = read_json(connector.identity / "identity.json")
+            application.state.portal_pending.clear()
+            application.state.portal_status_sessions.clear()
+
+        def start():
+            nonlocal restarted
+            events.append("start")
+            restarted = Connector(connector.control, connector.identity, "0.1.0")
+            application.state.portal_connector = restarted
+
+        with (
+            patch.object(supervisor, "remote_status", return_value=read_json(connector.control / "status.json")),
+            patch.object(supervisor, "publish"), patch.object(supervisor, "stop", side_effect=stop),
+            patch.object(supervisor, "start", side_effect=start), patch("app.remote.connector.post_control") as network,
+        ):
+            assert supervisor.discard_incomplete_pairing(request["fingerprint"]) is (race == "none")
+        network.assert_not_called()  # No Portal owner/record/revocation changes.
+        assert events == ["stop", "start"]
+        assert retained.read_text() == "synthetic catalog and media must remain"
+        replay = client.post("/portal/callback", json=callback_payload(request), headers={"Origin": BASE})
+        assert replay.status_code == 403
+        if race == "none":
+            assert not (connector.identity / "identity.json").exists()
+            fresh = begin(client)
+            assert fresh["fingerprint"] != request["fingerprint"] and fresh["state"] != request["state"]
+            assert restarted.private_key.public_key() != old_public
+        else:
+            assert read_json(connector.identity / "identity.json") == surviving_record
+            assert restarted.paired is (race == "completed_pairing")
+
+
+@pytest.mark.parametrize("case", [
+    "missing_fingerprint", "changed_fingerprint", "paired", "revocation", "portal", "local",
+])
+def test_incomplete_discard_never_interrupts_an_ineligible_agent(case):
+    supervisor = object.__new__(Supervisor)
+    status = {"fingerprint": "a" * 64, "paired": False, "state": "pairing_failed"}
+    expected = status["fingerprint"]
+    if case == "missing_fingerprint":
+        expected = None
+    elif case == "changed_fingerprint":
+        expected = "b" * 64
+    elif case == "paired":
+        status["paired"] = True
+    elif case == "revocation":
+        status["central_revocation_pending"] = True
+    elif case == "portal":
+        status["state"] = "waiting_portal_approval"
+    elif case == "local":
+        status["state"] = "waiting_local_confirmation"
+    with patch.object(supervisor, "remote_status", return_value=status), patch.object(supervisor, "stop") as stop:
+        assert supervisor.discard_incomplete_pairing(expected) is False
+        stop.assert_not_called()
+
+
+def test_discard_command_uses_existing_expiry_and_runtime_binding_validation():
+    command = {"action": "discard_incomplete", "created_at": 99, "expected_fingerprint": "a" * 64}
+    assert command_action(command, runtime_id="current", pid=123, now=100) == "discard_incomplete"
+    assert command_action(command, runtime_id="current", pid=123, now=130) is None

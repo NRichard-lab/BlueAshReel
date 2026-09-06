@@ -49,6 +49,13 @@ revocation. If an already-approved browser callback was interrupted, choose
 Reconnect in the tray, then Pair Agent to create a fresh authorization. A durable
 nonsecret revocation marker preserves the Revoked label across restart and
 completes private-key destruction if the process stops midway through revocation.
+If an exchange response was lost and the resulting Portal entry was revoked
+before recovery, the tray offers Discard incomplete pairing after explicit local
+confirmation. It drains the API before rechecking the exact displayed key and
+refuses to delete a completed pairing or pending revocation proof. It removes
+only the incomplete local identity, preserves the original Portal record, and
+restarts automatically so old callbacks cannot use the replacement key. The next
+Pair Agent action starts fresh approval in the Portal and the native tray.
 
 The connector authenticates both the broker and relay with device signatures.
 It reports connected only after both authenticated sockets are active. Scoped
