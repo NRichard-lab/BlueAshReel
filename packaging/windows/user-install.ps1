@@ -40,26 +40,49 @@ function Assert-NoLinkedTree([string]$Root) {
         if ($taskItem.PSIsContainer) { foreach ($taskChild in @(Get-ChildItem -LiteralPath $taskItem.FullName -Force)) { $taskQueue.Enqueue($taskChild.FullName) } }
     }
 }
+function Write-StopCommand([string]$Path, [string]$Message) {
+    # Reuse the guarded atomic writer, including on an older installed runtime.
+    # Passing JSON on stdin avoids native command-line quoting and partial reads.
+    $taskWriter = 'import json,sys; from pathlib import Path; from app.native_install import write_json; write_json(Path(sys.argv[1]),json.load(sys.stdin))'
+    $Message | & $taskPython -I -B -c $taskWriter $Path
+    if ($LASTEXITCODE -ne 0) { throw 'The Agent stop request could not be published safely.' }
+}
 function Stop-UserRuntime {
     if (-not (Test-Path -LiteralPath $taskState)) { return }
+    $taskStatusFile = Join-Path $taskState 'tray-status.json'
+    if (-not (Test-Path -LiteralPath $taskStatusFile)) { return }
+    $taskStatus = Get-Content -LiteralPath $taskStatusFile -Raw | ConvertFrom-Json
+    $taskRuntimePid = [uint32]$taskStatus.pid
+    if ($taskRuntimePid -eq 0) { throw 'Invalid runtime process identity.' }
+    # Inno can invoke 32-bit PowerShell. CIM establishes the image and creation
+    # time of the initial process; do not follow a replacement status-file PID.
+    $taskProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$taskRuntimePid"
+    if (-not $taskProcess) { return }
+    $taskExpectedImage = Join-Path $ProgramDir 'runtime\python\pythonw.exe'
+    if ($taskProcess.ExecutablePath -ine $taskExpectedImage) { throw 'Unexpected runtime process identity.' }
+    $taskCreationTime = $taskProcess.CreationDate
+    if ($null -eq $taskCreationTime) { throw 'The runtime process creation time is unavailable.' }
+    $taskGeneration = $null
+    if ($taskStatus.PSObject.Properties.Name -contains 'runtime_id') {
+        $taskGeneration = [string]$taskStatus.runtime_id
+        if ($taskGeneration -cnotmatch '^[a-f0-9]{32}$') { throw 'Invalid runtime generation.' }
+    }
     $taskCommand = Join-Path $taskState 'tray-command.json'
-    $taskMessage = @{action='exit'; created_at=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()} | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText($taskCommand,$taskMessage)
+    $taskMessage = @{action='exit';created_at=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();
+        maintenance_id=[Guid]::NewGuid().ToString('N');target_pid=$taskRuntimePid;runtime_id=$taskGeneration} | ConvertTo-Json -Compress
+    Write-StopCommand $taskCommand $taskMessage
     $taskDeadline = [DateTime]::UtcNow.AddSeconds(100)
     do {
-        $taskStatusFile = Join-Path $taskState 'tray-status.json'
-        if (-not (Test-Path -LiteralPath $taskStatusFile)) { return }
-        $taskStatus = Get-Content -LiteralPath $taskStatusFile -Raw | ConvertFrom-Json
-        $taskRuntimePid = [uint32]$taskStatus.pid
-        if ($taskRuntimePid -eq 0) { throw 'Invalid runtime process identity.' }
-        # Inno can invoke 32-bit PowerShell. Get-Process.Path cannot inspect a
-        # 64-bit pythonw module from that process, but CIM reports its image path.
         $taskProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$taskRuntimePid"
         if (-not $taskProcess) { return }
-        $taskProcessPath = $taskProcess.ExecutablePath
-        if ($taskProcessPath -ine (Join-Path $ProgramDir 'runtime\python\pythonw.exe')) { throw 'Unexpected runtime process identity.' }
+        if ($null -eq $taskProcess.CreationDate) { throw 'The runtime process creation time is unavailable.' }
+        if ($taskProcess.CreationDate -ne $taskCreationTime) { return }
+        if ($taskProcess.ExecutablePath -ine $taskExpectedImage) { throw 'Unexpected runtime process identity.' }
         Start-Sleep -Milliseconds 500
     } while ([DateTime]::UtcNow -lt $taskDeadline)
+    # No path-based cleanup: another tray command may have replaced our request.
+    # A pending maintenance request is bound to the old runtime generation and
+    # cannot stop its replacement, even if the old process never consumed it.
     throw 'The prior Agent did not finish stopping. Program files and data were preserved.'
 }
 function Validate-LegacyServices($Record) {

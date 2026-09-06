@@ -12,7 +12,7 @@ from dotenv import dotenv_values
 
 from app import native_consent, native_install, native_user_install
 from app.native_runtime import NativeRuntimeError, load_configuration, load_installation
-from app.native_tray import connection_label
+from app.native_tray import command_action, connection_label
 
 
 @pytest.fixture
@@ -137,6 +137,32 @@ def test_advanced_storage_rejects_overlap_and_existing_data(user_layout: tuple[P
 def test_tray_connected_requires_fresh_authenticated_tunnel(status: dict, healthy: bool, expected: str) -> None:
     assert connection_label(status, healthy=healthy, now=100) == expected
     assert connection_label(status, healthy=healthy, now=100, paused=True) == "Paused"
+
+
+@pytest.mark.parametrize("binding", ["matching", "older_generation", "older_pid", "missing_generation"])
+def test_maintenance_stop_cannot_terminate_replacement_runtime(binding: str) -> None:
+    command = {"action": "exit", "created_at": 99, "maintenance_id": "request", "target_pid": 123}
+    if binding != "missing_generation":
+        command["runtime_id"] = "current" if binding != "older_generation" else "previous"
+    if binding == "older_pid":
+        command["target_pid"] = 122
+    assert command_action(command, runtime_id="current", pid=123, now=100) == (
+        "exit" if binding == "matching" else None
+    )
+
+
+@pytest.mark.parametrize("action", ["exit", "pause", "restart", "reconnect"])
+def test_ordinary_tray_commands_remain_compatible(action: str) -> None:
+    assert command_action({"action": action, "created_at": 99}, runtime_id="current", pid=123, now=100) == action
+
+
+@pytest.mark.parametrize("command", [
+    [], None, {"action": []}, {"action": {}, "created_at": 99}, {"action": "unknown", "created_at": 99},
+    {"action": "exit", "created_at": "bad"}, {"action": "exit", "created_at": 101},
+    {"action": "exit", "created_at": 69},
+])
+def test_malformed_expired_and_future_commands_are_ignored(command: object) -> None:
+    assert command_action(command, runtime_id="current", pid=123, now=100) is None
 
 
 def test_folder_consent_requires_matching_native_response(user_layout: tuple[Path, Path]) -> None:

@@ -10,6 +10,30 @@ throughout the remaining work.
 
 ## Evidence recorded
 
+- Final generation-bound maintenance correction: 722 tests passed with real
+  FFmpeg/Caddy, four platform skips, and Ruff passed. The 64 focused checks cover
+  absent/changed process identity, atomic commands and stale-generation rejection.
+  An actual source-overlay recovery restored the original database and files,
+  rejected a fresh old-generation exit, and remained healthy for 40 seconds.
+  This is source validation; the final rebuilt installer needs separate acceptance.
+- Actual clean development.5 r2 installation and repair passed as the signed-in
+  nonadministrator, with all 3,727 installed payload files matching their
+  inventories, canonical SQLite schema and zero installer-created accounts or
+  libraries. Repair retained existing port, storage and synthetic data despite
+  conflicting setup arguments. Separate packaged maintenance tests passed 17
+  checks for advanced storage, resource limits and custom-database backup/restore.
+  Advanced wizard field editing was limited by UI automation; execution used the
+  supported unattended installer and does not establish complete GUI coverage.
+  R2 then failed rollback-start acceptance: the helper left a fresh exit command
+  when the old runtime was already absent. The restored Agent consumed it and
+  stopped. That candidate remains rejected. Maintenance exit commands now carry
+  the intended runtime generation and PID, are published atomically only after
+  live process validation, and never require deleting newer commands. Polling
+  follows the original process and rejects missing identity information. A
+  corrected build needs its own rollback and retention acceptance. Rejected,
+  unpublished pre-generation test binaries are not supported rollback targets;
+  the published development.4 baseline uses service rollback, and validated
+  development.5 per-user snapshots include generation-aware command handling.
 - Final Windows concurrency correction: 693 tests passed with real FFmpeg/Caddy,
   four platform skips, and Ruff passed. Both state writers coordinate one target
   with a bounded Windows mutex and retry sharing/lock conflicts across the entire

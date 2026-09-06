@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,21 @@ from app.services.paths import assert_no_link_components
 from app.services.process_supervisor import lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
+
+
+def command_action(value: Any, *, runtime_id: str, pid: int, now: float) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        age = now - float(value.get("created_at", 0))
+    except (ValueError, TypeError):
+        return None
+    if not 0 <= age < 30:
+        return None
+    if "maintenance_id" in value and (value.get("runtime_id") != runtime_id or value.get("target_pid") != pid):
+        return None
+    action = value.get("action")
+    return action if isinstance(action, str) and action in {"exit", "pause", "restart", "reconnect"} else None
 
 
 def connection_label(status: dict[str, Any], *, healthy: bool, paused: bool = False,
@@ -55,6 +71,7 @@ class Supervisor:
         self.children: dict[str, subprocess.Popen[bytes]] = {}
         self.paused = False
         self.started = time.monotonic()
+        self.runtime_id = uuid.uuid4().hex
         self.parent_pid = parent_pid
 
     @property
@@ -139,6 +156,7 @@ class Supervisor:
         label = override or connection_label(self.remote_status(), healthy=healthy, paused=self.paused)
         write_json(self.installation.state_dir / "tray-status.json", {
             "state": label, "healthy": healthy, "updated_at": time.time(), "pid": os.getpid(),
+            "runtime_id": self.runtime_id,
             "port": self.installation.port, "fingerprint": self.remote_status().get("fingerprint"),
             "update_version": self.remote_status().get("update_version"),
         })
@@ -157,7 +175,7 @@ class Supervisor:
                     assert_no_link_components(command)
                     value = json.loads(command.read_text(encoding="utf-8-sig"))
                     command.unlink(missing_ok=True)
-                    action = value.get("action") if time.time() - float(value.get("created_at", 0)) < 30 else None
+                    action = command_action(value, runtime_id=self.runtime_id, pid=os.getpid(), now=time.time())
                     if action == "exit":
                         clean_exit = True
                         break
