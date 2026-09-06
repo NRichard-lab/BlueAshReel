@@ -181,8 +181,12 @@ def test_installer_routes_backup_before_migrate_and_never_silently_purges() -> N
     assert post_install.index("RunMaintenance('Backup'") < post_install.index("RunMaintenance('Install'")
     uninstall = source.split("procedure CurUninstallStepChanged", 1)[1]
     assert uninstall.index("ValidateExistingData(False, SavedPort)") < uninstall.index("RunMaintenance('Stop'")
-    assert "RemoveData" not in uninstall and "PURGEDATA" not in uninstall
-    assert "preserves" in source.lower() or "preserve" in uninstall.lower()
+    assert uninstall.index("if DeleteUserData then begin") < uninstall.index("RunMaintenance('RemoveData',' -ConfirmDeleteData'")
+    prompt = source.split("function InitializeUninstall", 1)[1].split("procedure CurUninstallStepChanged", 1)[0]
+    assert "DeleteUserData := False" in prompt and "if UninstallSilent then Exit" in prompt
+    assert "MB_YESNOCANCEL or MB_DEFBUTTON2" in prompt
+    assert "DeleteUserData := Choice = IDYES" in prompt
+    assert "Retain every identity and data file unless the user explicitly chose Yes" in uninstall
 
 
 def test_current_inno_compiler_accepts_full_installer_source(tmp_path: Path) -> None:

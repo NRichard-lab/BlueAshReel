@@ -91,6 +91,7 @@ var
   RuntimePage, LocationsPage, CachePage: TInputQueryWizardPage;
   AdvancedPage: TInputOptionWizardPage;
   ExistingUser, LegacyMigration, InstallSuccessful, PreservedReinstall: Boolean;
+  DeleteUserData: Boolean;
   ResolvedDataDir, SavedPort, ValidationProgramDir: String;
 
 function HasInstanceMarker(const Directory: String): Boolean;
@@ -354,13 +355,42 @@ begin Result := InstallSuccessful; end;
 function GetCustomSetupExitCode: Integer;
 begin if InstallSuccessful then Result := 0 else Result := 1; end;
 
+function InitializeUninstall: Boolean;
+var Choice: Integer;
+begin
+  DeleteUserData := False;
+  Result := True;
+  { Unattended uninstalls always retain identity and data. A visible, explicit
+    choice is required for destructive cleanup; No is the safe default. }
+  if UninstallSilent then Exit;
+  Choice := MsgBox('Do you also want to permanently delete this Agent''s local identity and application data?' + #13#10#13#10 +
+    'Yes: delete pairing credentials, settings, database, artwork, temporary files, logs and backups, including configured advanced storage.' + #13#10 +
+    'No (recommended): retain them so reinstalling can recover this Agent.' + #13#10#13#10 +
+    'Source media files are never deleted. To revoke remote access immediately, use Unpair this Agent before uninstalling.' + #13#10 +
+    'Cancel: leave the Agent installed.', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON2);
+  Result := Choice <> IDCANCEL;
+  DeleteUserData := Choice = IDYES;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var Registered: String;
 begin
   if CurUninstallStep = usUninstall then
   begin
     ValidationProgramDir := ExpandConstant('{app}');
     if not ValidateExistingData(False, SavedPort) then RaiseException('The retained instance could not be safely identified.');
     if not RunMaintenance('Stop','',False) then RaiseException('The Agent could not finish stopping. Uninstall was stopped.');
+    if DeleteUserData then begin
+      if not RunMaintenance('RemoveData',' -ConfirmDeleteData',False) then
+        RaiseException('Local data could not be removed safely. Uninstall was stopped; retained data needs recovery review.');
+      if RegQueryStringValue(HKCU,'Software\BlueReel\{#BuildChannel}','DataDir',Registered) and
+          (CompareText(Registered, GetDataDir('')) = 0) then begin
+        RegDeleteValue(HKCU,'Software\BlueReel\{#BuildChannel}','ProgramDir');
+        RegDeleteValue(HKCU,'Software\BlueReel\{#BuildChannel}','DataDir');
+        RegDeleteValue(HKCU,'Software\BlueReel\{#BuildChannel}','Port');
+        RegDeleteKeyIfEmpty(HKCU,'Software\BlueReel\{#BuildChannel}');
+      end;
+    end;
   end;
-  { Preserve every database, setting, cache, backup and identity on uninstall. }
+  { Retain every identity and data file unless the user explicitly chose Yes. }
 end;

@@ -19,6 +19,9 @@ sealed class AgentTray : ApplicationContext {
     readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = 32768 };
     readonly ToolStripMenuItem startup = new ToolStripMenuItem("Start with Windows");
     readonly ToolStripMenuItem pause = new ToolStripMenuItem("Pause Agent");
+    readonly ToolStripMenuItem pair = new ToolStripMenuItem("Pair Agent");
+    readonly ToolStripMenuItem unpair = new ToolStripMenuItem("Unpair this Agent");
+    readonly ToolStripMenuItem connection = new ToolStripMenuItem("Connection status: Connecting");
     readonly string runKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     Process runtime;
     bool busy, exiting;
@@ -60,10 +63,16 @@ sealed class AgentTray : ApplicationContext {
             throw new IOException("The Agent installation identity does not match.");
         state = Path.Combine(data, "state"); runName = Value(settings,"service_prefix") + "Tray";
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Open Blue Ash Reel", null, delegate { Open(false); });
-        menu.Items.Add("Open Local Agent Status", null, delegate { Browser(Local("status")); });
-        menu.Items.Add("Pair Agent", null, delegate { Browser(Local("pair")); });
+        menu.Items.Add("Open Portal", null, delegate { Browser("https://blueashreel.com"); });
+        menu.Items.Add("Open local management", null, delegate { Browser(Local("status")); });
+        pair.Click += delegate { Browser(Local("pair")); }; menu.Items.Add(pair);
+        connection.Click += delegate { ShowStatus(); }; menu.Items.Add(connection);
         menu.Items.Add("Reconnect", null, delegate { Command("reconnect"); });
+        unpair.Click += delegate {
+            if (MessageBox.Show("Unpair this Agent? Its Portal connection and remote access will close. Your local media and application data stay on this computer. Pairing again requires approval in the Portal and here.",
+                "Unpair Blue Ash Reel", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2) == DialogResult.Yes) Command("unpair");
+        }; menu.Items.Add(unpair);
         pause.Click += delegate { Command(label == "Paused" ? "restart" : "pause"); }; menu.Items.Add(pause);
         menu.Items.Add("Restart Agent", null, delegate { Command("restart"); });
         menu.Items.Add("View Status", null, delegate { ShowStatus(); });
@@ -103,11 +112,12 @@ sealed class AgentTray : ApplicationContext {
     }
     void Browser(string url) { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
     void ShowStatus() {
-        MessageBox.Show("Agent: " + label + "\n" + (last.ContainsKey("fingerprint") ? "Fingerprint: " + Value(last,"fingerprint") : "") +
+        MessageBox.Show("Agent: " + label + "\n" + (last.ContainsKey("fingerprint_short") ? "Fingerprint: " + Value(last,"fingerprint_short") : "") +
             (label == "Update available" ? "\nPublished update: " + Value(last,"update_version") : "") +
+            "\n\nBefore approving pairing, check that this fingerprint exactly matches the one in the Portal." +
             "\n\nSign in to the Portal to browse or manage media.", "Blue Ash Reel status", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
-    void Open(bool pair) { Browser(pair || label == "Unpaired" ? Local("pair") : "https://blueashreel.com"); }
+    void Open(bool startPairing) { Browser(startPairing || label == "Not paired" ? Local("pair") : "https://blueashreel.com"); }
     void StartRuntime() {
         runtime = Process.Start(new ProcessStartInfo(Path.Combine(program,@"runtime\python\pythonw.exe"),
             "-I -B -m app.native_tray --data-dir " + Quote(data) + " --parent-pid " + Process.GetCurrentProcess().Id) {
@@ -123,11 +133,15 @@ sealed class AgentTray : ApplicationContext {
             Write(Path.Combine(state,"tray-command.json"),new { action = action, created_at = Now() });
         } catch { Error(); }
     }
-    bool IsStartup() { using (var key = Registry.CurrentUser.OpenSubKey(runKey)) return key != null && key.GetValue(runName) != null; }
+    string StartupCommand() { return Quote(Application.ExecutablePath) + " --data-dir " + Quote(data); }
+    bool IsStartup() {
+        using (var key = Registry.CurrentUser.OpenSubKey(runKey))
+            return key != null && String.Equals(Convert.ToString(key.GetValue(runName)), StartupCommand(), StringComparison.OrdinalIgnoreCase);
+    }
     void SetStartup(bool enabled) {
         using (var key = Registry.CurrentUser.CreateSubKey(runKey)) {
-            if (enabled) key.SetValue(runName,Quote(Application.ExecutablePath) + " --data-dir " + Quote(data));
-            else key.DeleteValue(runName,false);
+            if (enabled) key.SetValue(runName,StartupCommand());
+            else if (IsStartup()) key.DeleteValue(runName,false);
         }
         startup.Checked = enabled;
     }
@@ -153,11 +167,16 @@ sealed class AgentTray : ApplicationContext {
                 icon.Visible = false; icon.Dispose(); timer.Stop(); ExitThread(); return;
             }
             label = runtime == null || runtime.HasExited || !last.ContainsKey("updated_at") || Now() - Convert.ToDouble(last["updated_at"]) > 75
-                ? "Agent error" : Value(last,"state");
+                ? "Error" : Value(last,"state");
             icon.Text = "Blue Ash Reel — " + label;
+            connection.Text = "Connection status: " + label;
+            bool isPaired = last.ContainsKey("paired") && Convert.ToBoolean(last["paired"]);
+            bool pendingRevocation = last.ContainsKey("central_revocation_pending") && Convert.ToBoolean(last["central_revocation_pending"]);
+            pair.Enabled = !isPaired && !pendingRevocation && label != "Waiting for Portal approval" && label != "Waiting for local confirmation";
+            unpair.Enabled = isPaired || pendingRevocation;
             if (iconState != label) {
-                Color color = label == "Connected" ? Color.SeaGreen : label == "Unpaired" ? Color.Goldenrod :
-                    label == "Agent error" || label == "Portal unavailable" ? Color.Firebrick :
+                Color color = label == "Connected" ? Color.SeaGreen : label == "Not paired" ? Color.Goldenrod :
+                    label == "Error" || label == "Revoked" || label == "Paired but Agent offline" ? Color.Firebrick :
                     label == "Paused" ? Color.Gray : label == "Update available" ? Color.MediumPurple : Color.RoyalBlue;
                 Icon previous = brand; brand = MakeIcon(color); icon.Icon = brand; previous.Dispose(); iconState = label;
             }
@@ -172,7 +191,7 @@ sealed class AgentTray : ApplicationContext {
             }
             string requests = Path.Combine(state,"tray-requests");
             if (Directory.Exists(requests)) foreach (string path in Directory.GetFiles(requests,"request-*.json")) { Consent(path); break; }
-        } catch { label = "Agent error"; icon.Text = "Blue Ash Reel — Agent error"; }
+        } catch { label = "Error"; icon.Text = "Blue Ash Reel — Error"; connection.Text = "Connection status: Error"; }
         finally { busy = false; }
     }
     void Consent(string path) {
@@ -193,7 +212,8 @@ sealed class AgentTray : ApplicationContext {
                     "\n\nSource files remain read-only. The path stays on this Agent and in the encrypted Owner session.", "Confirm media folder",
                     MessageBoxButtons.YesNo,MessageBoxIcon.Question) == DialogResult.Yes;
             } else if (Value(request,"kind") == "confirmation") {
-                approved = MessageBox.Show(Value(request,"message"),"Confirm Blue Ash Reel pairing",MessageBoxButtons.YesNo,MessageBoxIcon.Question) == DialogResult.Yes;
+                approved = MessageBox.Show(Value(request,"message"),"Confirm Blue Ash Reel pairing",MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,MessageBoxDefaultButton.Button2) == DialogResult.Yes;
             }
         }
         approved = approved && Now() < Convert.ToDouble(request["expires_at"]);

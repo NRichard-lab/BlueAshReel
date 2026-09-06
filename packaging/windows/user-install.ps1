@@ -1,13 +1,14 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Install','PrepareUpgrade','Backup','RollbackUser','FinalizeMigration','RollbackMigration','Stop','Health')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Install','PrepareUpgrade','Backup','RollbackUser','FinalizeMigration','RollbackMigration','Stop','Health','RemoveData')][string]$Action,
     [Parameter(Mandatory)][string]$ProgramDir,
     [Parameter(Mandatory)][string]$DataDir,
     [ValidateSet('development','stable')][string]$Instance = 'development',
     [int]$Port = 18080,
     [string]$DatabaseDir, [string]$ArtworkDir, [string]$TempDir, [string]$BackupsDir, [string]$LogsDir,
     [int]$MaxProcesses = 2, [int]$Threads = 2,
-    [string]$UserSid, [string]$UserAccount
+    [string]$UserSid, [string]$UserAccount,
+    [switch]$ConfirmDeleteData
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -198,6 +199,12 @@ try {
             if ($LASTEXITCODE -ge 8) { throw 'Previous program files could not be fully restored.' }
         }
         'Stop' { Stop-UserRuntime }
+        'RemoveData' {
+            if (-not $ConfirmDeleteData) { throw 'Explicit data deletion confirmation is required.' }
+            Stop-UserRuntime
+            & $taskPython -I -B (Join-Path $ProgramDir 'support\remove_user_data.py') --program-dir $ProgramDir --data-dir $DataDir --instance $Instance --confirm-delete-data
+            if ($LASTEXITCODE -ne 0) { throw 'Local data removal could not complete safely.' }
+        }
         'Health' { Native 'health' }
         'Install' {
             if (Test-Path -LiteralPath $taskRecord) {

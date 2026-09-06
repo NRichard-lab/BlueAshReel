@@ -498,7 +498,7 @@ def assert_payload(stage: Path) -> None:
         "scripts/backup.py", "scripts/backup_format.py", "scripts/restore_validate.py",
         "config/product.json", "support/install.ps1", "support/native-guard.cjs",
         "support/maintenance.ps1", "support/development-notice.txt", "support/install-remote.ps1",
-        "BlueAshReelAgent.exe", "support/user-install.ps1", "backend/app/native_tray.py",
+        "BlueAshReelAgent.exe", "support/user-install.ps1", "support/remove_user_data.py", "backend/app/native_tray.py",
         "backend/app/native_consent.py", "backend/app/native_user_install.py",
     ]
     for name in required:
@@ -584,7 +584,8 @@ def stage_payload(args: argparse.Namespace) -> Path:
     copy_required(REPOSITORY / "config" / "product.json", stage / "config" / "product.json")
     write_json(stage / "config" / "product.json", {**PRODUCT, "version": version})
     copy_tree(REPOSITORY / "frontend" / "dist" / "standalone", stage / "frontend", frontend_runtime=True)
-    for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1", "user-install.ps1"):
+    for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1",
+                 "user-install.ps1", "remove_user_data.py"):
         copy_required(PACKAGING / name, stage / "support" / name)
     if (PACKAGING / "service-template.xml").is_file():
         copy_required(PACKAGING / "service-template.xml", stage / "support" / "service-template.xml")
@@ -603,7 +604,7 @@ def stage_payload(args: argparse.Namespace) -> Path:
     for name in ("components.lock.json", "requirements.lock", "build_native.py", "build.ps1",
                  "additional-components.json", "license_sources.py", "installer.iss",
                  "install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1",
-                 "user-install.ps1", "BlueAshReelAgent.cs"):
+                 "user-install.ps1", "remove_user_data.py", "BlueAshReelAgent.cs"):
         copy_required(PACKAGING / name, stage / "source" / "packaging" / name)
     (stage / "OPEN-SOURCE-NOTICES.txt").write_text(
         f"{PRODUCT['name']} Development — unsigned local development installer\n\n"
