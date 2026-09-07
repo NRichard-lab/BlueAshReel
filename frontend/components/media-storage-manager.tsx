@@ -49,7 +49,7 @@ export function MediaStorageManager() {
   useEffect(() => { queueMicrotask(() => void load()); }, []);
 
   return <>
-    <Link href="/settings" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Settings</Link>
+    <Link href="/admin/settings" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Settings</Link>
     <PageHeader
       eyebrow="Settings"
       title="Media Storage"

@@ -36,7 +36,7 @@ const navigation = [
 
 const secondary = [
   { label: 'Active streams', href: '/streams', icon: MonitorPlay },
-  { label: 'Settings', href: '/settings', icon: Settings },
+  { label: 'Settings', href: '/admin/settings', icon: Settings },
   { label: 'Privacy', href: '/privacy', icon: ShieldCheck },
 ];
 

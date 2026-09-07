@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { isOwnerOnlyPath } from '../lib/admin-routes';
 
 describe('Owner-only administration routes', () => {
-  it.each(['/settings', '/settings/media-storage', '/settings/playback', '/privacy', '/streams/active'])('protects %s and nested pages', (path) => {
+  it.each(['/admin/settings', '/admin/settings/media-storage', '/admin/settings/playback', '/privacy', '/streams/active'])('protects %s and nested pages', (path) => {
     expect(isOwnerOnlyPath(path)).toBe(true);
   });
 

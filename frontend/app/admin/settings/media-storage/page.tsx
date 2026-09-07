@@ -6,5 +6,5 @@ import { MediaStorageManager } from '@/components/media-storage-manager';
 export const metadata: Metadata = { title: 'Media Storage' };
 
 export default function MediaStoragePage() {
-  return <AppShell currentPath="/settings/media-storage"><MediaStorageManager /></AppShell>;
+  return <AppShell currentPath="/admin/settings/media-storage"><MediaStorageManager /></AppShell>;
 }

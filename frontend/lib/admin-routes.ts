@@ -1,4 +1,4 @@
-const ownerOnlyRoutes = ['/settings', '/privacy', '/streams'];
+const ownerOnlyRoutes = ['/admin/settings', '/privacy', '/streams'];
 
 export function isOwnerOnlyPath(currentPath: string): boolean {
   return ownerOnlyRoutes.some(

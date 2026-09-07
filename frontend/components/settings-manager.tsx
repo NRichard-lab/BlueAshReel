@@ -80,8 +80,8 @@ export function SettingsManager() {
   return (
     <>
       <PageHeader eyebrow="Local configuration" title="Settings" description="Tune local playback and scanning, review storage, and inspect important Owner actions." />
-      <Card className="mt-6"><CardHeader><CardTitle>Remote Access</CardTitle><CardDescription>Pair your Agent, verify its identity, and control the optional encrypted diagnostic connection.</CardDescription></CardHeader><CardContent><Button variant="outline" render={<Link href="/settings/remote-access" />}>Remote Access <ArrowRight className="ml-auto" /></Button></CardContent></Card>
-      <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><Cpu className="size-4" /> Playback & Transcoding</CardTitle><CardDescription>Choose Automatic, hardware, software, or Direct Play/remux-only behavior. Verify hardware and set safe resource limits.</CardDescription></CardHeader><CardContent><Button variant="outline" render={<Link href="/settings/playback" />}>Playback & Transcoding <ArrowRight className="ml-auto" /></Button></CardContent></Card>
+      <Card className="mt-6"><CardHeader><CardTitle>Remote Access</CardTitle><CardDescription>Pair your Agent, verify its identity, and control the optional encrypted diagnostic connection.</CardDescription></CardHeader><CardContent><Button variant="outline" render={<Link href="/admin/settings/remote-access" />}>Remote Access <ArrowRight className="ml-auto" /></Button></CardContent></Card>
+      <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><Cpu className="size-4" /> Playback & Transcoding</CardTitle><CardDescription>Choose Automatic, hardware, software, or Direct Play/remux-only behavior. Verify hardware and set safe resource limits.</CardDescription></CardHeader><CardContent><Button variant="outline" render={<Link href="/admin/settings/playback" />}>Playback & Transcoding <ArrowRight className="ml-auto" /></Button></CardContent></Card>
       {error ? <Alert variant="destructive" className="mt-6"><AlertTitle>Settings action failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {notice ? <Alert className="mt-6 border-[var(--success-border)] bg-[var(--success-soft)]"><Check /><AlertTitle>Saved</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert> : null}
       <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,.65fr)]">
@@ -101,7 +101,7 @@ export function SettingsManager() {
             {loading ? [0, 1, 2].map((item) => <Skeleton key={item} className="h-14" />) : [
               ['Application data', settings?.application_data_directory], ['Temporary files', settings?.temporary_directory], ['Artwork cache', settings?.artwork_directory],
             ].map(([label, value]) => <div key={label} className="rounded-lg border bg-muted/20 p-3"><p className="text-xs font-medium">{label}</p><code className="mt-1 block truncate text-[11px] text-muted-foreground" title={value}>{value}</code></div>)}
-            {!loading ? <Button variant="outline" className="w-full" render={<Link href="/settings/media-storage" />}><HardDrive /> Media Storage <ArrowRight className="ml-auto" /></Button> : null}
+            {!loading ? <Button variant="outline" className="w-full" render={<Link href="/admin/settings/media-storage" />}><HardDrive /> Media Storage <ArrowRight className="ml-auto" /></Button> : null}
           </CardContent>
         </Card>
       </div>

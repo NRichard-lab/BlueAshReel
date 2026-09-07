@@ -83,7 +83,7 @@ export function PlaybackSettings() {
   const softwareLocked = draft?.mode === 'direct_only' || draft?.mode === 'hardware_required';
   const hardwareLocked = draft?.mode === 'software_only' || draft?.mode === 'direct_only';
   return <>
-    <Link href="/settings" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Settings</Link>
+    <Link href="/admin/settings" className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Settings</Link>
     <PageHeader eyebrow="Owner controls" title="Playback & Transcoding" description="Choose how this server plays local media. Changes apply to new streams, without terminating existing playback." />
     {error ? <Alert variant="destructive" className="mt-6"><AlertTitle>Playback settings action failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {notice ? <Alert className="mt-6 border-[var(--success-border)] bg-[var(--success-soft)]"><Check /><AlertTitle>Saved</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert> : null}

@@ -5,5 +5,5 @@ import { RemoteAccessSettings } from '@/components/remote-access-settings';
 export const metadata: Metadata = { title: 'Remote Access' };
 
 export default function RemoteAccessPage() {
-  return <AppShell currentPath="/settings/remote-access"><RemoteAccessSettings /></AppShell>;
+  return <AppShell currentPath="/admin/settings/remote-access"><RemoteAccessSettings /></AppShell>;
 }

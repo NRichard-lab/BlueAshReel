@@ -70,7 +70,7 @@ export function ActiveStreams() {
   }
   return <>
     <PageHeader eyebrow="Owner controls" title="Active streams" description="Playback stays on this server. Stream identities are visible only to Owners; routine logs do not include viewing details." />
-    <Link href="/settings/playback" className="mt-4 inline-block text-sm text-primary underline underline-offset-4">Playback & Transcoding settings</Link>
+    <Link href="/admin/settings/playback" className="mt-4 inline-block text-sm text-primary underline underline-offset-4">Playback & Transcoding settings</Link>
     <p className="my-5 text-lg font-medium">{data ? `${data.total} active stream${data.total === 1 ? '' : 's'}` : 'Loading active streams…'}</p>
     {error && <p role="alert" className="my-4 text-sm text-destructive">{error}</p>}
     {notice && <output className="my-4 block text-sm text-primary">{notice}</output>}
