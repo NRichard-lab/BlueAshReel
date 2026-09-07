@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Hls from 'hls.js';
-import { Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, SkipForward } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, SkipForward, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NativeSelect, NativeSelectOption as Option } from '@/components/ui/native-select';
 import { CatalogState } from '@/components/viewer-catalog';
@@ -237,13 +237,17 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
   return <>
     <CatalogState {...result} empty={false} />
     {item && <>
-      <Link href={`/watch/${mediaId}`} className="mb-5 inline-block text-sm text-primary">← Back to details</Link>
-      <h1 className="mb-5 text-2xl font-semibold">{item.title}</h1>
-      <div ref={frameRef} className="overflow-hidden rounded-xl border bg-black text-white" tabIndex={0}
+      <div className="mb-5 flex items-center gap-3">
+        <Link href={`/watch/${mediaId}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
+          <ArrowLeft className="size-4" aria-hidden="true" />Back to details
+        </Link>
+        <h1 className="min-w-0 truncate text-xl font-semibold">{item.title}</h1>
+      </div>
+      <div ref={frameRef} className="mx-auto w-full max-w-5xl overflow-hidden rounded-xl border border-border bg-black text-white shadow-xl [&:fullscreen]:flex [&:fullscreen]:max-w-none [&:fullscreen]:flex-col [&:fullscreen]:justify-center [&:fullscreen]:rounded-none [&:fullscreen]:border-0" tabIndex={0}
         role="application" aria-label="Video player. Space or K to play, arrows to seek, M to mute, F for fullscreen."
         onKeyDown={keyboard}>
         {/* oxlint-disable-next-line jsx-a11y/media-has-caption -- The caption track below is conditional on an available selected local track. */}
-        <video ref={videoRef} className="aspect-video max-h-[70vh] w-full bg-black" playsInline preload="metadata"
+        <video ref={videoRef} className="mx-auto aspect-video max-h-[78vh] w-full bg-black in-[:fullscreen]:max-h-none in-[:fullscreen]:flex-1" playsInline preload="metadata"
           aria-label={`${item.title} video`} onClick={togglePlay}
           onLoadedMetadata={() => { const v = videoRef.current; if (v && desired.current > 0) { v.currentTime = desired.current; desired.current = 0; } }}
           onPlaying={() => {
@@ -291,20 +295,27 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
           </div>
         </div>
       </div>
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <span className="rounded-full border px-3 py-1 text-xs">{session ? (session.method_label ?? methodLabel[session.decision.method]) : 'Method determined when playback starts'}</span>
-        <output className="text-sm text-muted-foreground">{status}</output>
+      <div className="mx-auto mt-4 max-w-5xl space-y-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${error ? 'bg-destructive' : playing ? 'bg-[var(--success)]' : 'bg-muted-foreground/50'}`} />
+        <output>{status}</output>
       </div>
-      {session?.fallback ? <p className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">Hardware-to-software fallback: {session.fallback_reason || 'This stream is using local CPU/software.'}</p> : null}
-      {error && <p role="alert" className="mt-4 rounded-lg border border-destructive p-4 text-sm text-destructive">{error}</p>}
-      <div className="my-5 flex flex-wrap gap-3">
+      {error && <p role="alert" className="rounded-lg border border-destructive/60 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
+      <div className="flex flex-wrap gap-3">
         <Button disabled={!file || busy} onClick={() => void start()}><Play />{busy ? 'Preparing…' : session ? 'Reconnect / resume' : item.position_seconds >= 5 && !item.watched ? `Resume at ${clockTime(item.position_seconds)}` : 'Start playback'}</Button>
         <Button variant="outline" disabled={!file || busy} onClick={() => void start(0, true)}><RotateCcw />Restart from beginning</Button>
         <Button variant="outline" onClick={() => void mark()}>{(watched ?? item.watched) ? 'Mark Unwatched' : 'Mark Watched'}</Button>
-        {next.data?.item && <Link href={`/player/${next.data.item.id}`} className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm"><SkipForward className="size-4" />Next episode</Link>}
+        {next.data?.item && <Link href={`/player/${next.data.item.id}`} className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm"><SkipForward className="size-4" />Next episode</Link>}
       </div>
-      {countdown != null && <div className="mb-5 flex items-center gap-4 rounded-xl border p-4"><output>Next episode in {countdown}s</output><Button variant="outline" onClick={() => setCountdown(null)}>Cancel autoplay</Button></div>}
-      <div className="grid gap-4 rounded-xl border bg-card p-5 sm:grid-cols-3">
+      {countdown != null && <div className="flex items-center gap-4 rounded-xl border border-border p-4"><output>Next episode in {countdown}s</output><Button variant="outline" onClick={() => setCountdown(null)}>Cancel autoplay</Button></div>}
+      <details className="rounded-xl border border-border bg-card p-4 text-sm">
+        <summary className="cursor-pointer text-muted-foreground">Stream details</summary>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-border px-3 py-1 text-xs">{session ? (session.method_label ?? methodLabel[session.decision.method]) : 'Method determined when playback starts'}</span>
+          {session?.fallback ? <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs">Hardware-to-software fallback: {session.fallback_reason || 'Using local CPU/software.'}</span> : null}
+        </div>
+      </details>
+      <div className="grid gap-4 rounded-xl border border-border bg-card p-5 sm:grid-cols-3">
         <label htmlFor="audio-track" className="space-y-2 text-sm"><span>Audio track</span><NativeSelect id="audio-track" aria-label="Audio track" value={audio} onChange={e => setAudio(e.target.value)}>
           <Option value="">Default track</Option>{file?.audio.map(a => <Option key={a.index} value={a.index}>{a.title || `Track ${a.index}`} · {a.language || 'und'} · {a.codec}</Option>)}
         </NativeSelect></label>
@@ -317,8 +328,9 @@ export function MediaPlayer({ mediaId }: { mediaId: string }) {
         <div className="sm:col-span-3 flex flex-wrap items-center gap-4"><Button variant="secondary" disabled={!file || busy} onClick={() => void start(session ? position : undefined)}>Apply playback options</Button>
           <p className="text-xs text-muted-foreground">Changes create a local representation at the current position. No source file is modified.</p></div>
       </div>
-      {notice && <output className="mt-4 block text-sm text-muted-foreground">{notice}</output>}
-      <p className="mt-5 text-xs text-muted-foreground">Focus the player: Space / K play or pause · ← / → seek 10 seconds · M mute · F fullscreen. Progress stays on this server.</p>
+      {notice && <output className="block text-sm text-muted-foreground">{notice}</output>}
+      <p className="text-xs text-muted-foreground">Focus the player: Space / K play or pause · ← / → seek 10 seconds · M mute · F fullscreen. Progress stays on this server.</p>
+      </div>
     </>}
   </>;
 }

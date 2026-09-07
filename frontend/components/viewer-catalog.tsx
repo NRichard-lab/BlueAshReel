@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Film, Check, Play, List, Grid2X2 } from 'lucide-react';
+import { Film, Check, Play, List, Grid2X2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -11,7 +11,19 @@ import {
 } from '@/components/ui/native-select';
 import { PageResult } from '@/lib/api';
 import { MediaCardRecord, useViewerData, clockTime } from '@/lib/viewer';
+import { PageHeader } from '@/components/page-header';
+import { PosterGrid, PosterGridSkeleton } from '@/components/viewer/poster-grid';
+import { PosterCard } from '@/components/viewer/poster-card';
+import {
+  IS_DEV_PREVIEW,
+  DevPreviewBanner,
+} from '@/components/viewer/dev-preview';
+import { sampleCatalogPage } from '@/lib/presentation-placeholders';
 
+/**
+ * Compact list row. Retained for the "list" view toggle and the episode lists on
+ * the detail page. Poster/grid browsing now uses <PosterCard>.
+ */
 export function MediaCard({
   item,
   compact = false,
@@ -189,53 +201,69 @@ export function ViewerCatalog({
   const libraries = useViewerData<{ items: { id: string; name: string }[]; total: number }>(
     `/browse/libraries?page=${libraryPage}`,
   );
-  const title = {
-    movies: 'Movies',
-    shows: 'TV Shows',
-    search: 'Search your collection',
-    continue: 'Continue Watching',
+  const { title, description } = {
+    movies: { title: 'Movies', description: 'Every film in your libraries.' },
+    shows: { title: 'TV Shows', description: 'Series and episodes in your libraries.' },
+    search: { title: 'Search', description: 'Find anything across your collection.' },
+    continue: { title: 'Continue Watching', description: 'Pick up where you left off.' },
   }[mode];
   function filter(set: (value: string) => void, value: string) {
     set(value);
     setPage(1);
   }
+  // DEV-only: fill the grid with sample posters when there is no Agent session.
+  const devFallback = IS_DEV_PREVIEW && !!result.error;
+  const items =
+    result.data?.items ?? (devFallback ? sampleCatalogPage : undefined);
+  const total =
+    result.data?.total ?? (devFallback ? sampleCatalogPage.length : 0);
+  const totalPages = Math.max(1, Math.ceil(total / 24));
+
   return (
     <>
-      <div className="mb-7 flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {result.data
-              ? `${result.data.total} items in your libraries`
-              : 'Your own collection. No outside recommendations.'}
-          </p>
+      <DevPreviewBanner />
+      <PageHeader
+        title={title}
+        description={
+          result.data ? `${result.data.total} in your libraries` : description
+        }
+        actions={
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setCompact(!compact)}
+            aria-label={compact ? 'Use poster grid' : 'Use compact list'}
+            aria-pressed={compact}
+          >
+            {compact ? <Grid2X2 /> : <List />}
+          </Button>
+        }
+      />
+
+      <div className="mt-6 flex flex-wrap items-center gap-2.5">
+        <div className="relative w-full max-w-sm">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <Input
+            className="w-full pl-9"
+            aria-label="Search media"
+            placeholder="Title, year, or S01E02…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
-        <Button
-          variant="outline"
-          onClick={() => setCompact(!compact)}
-          aria-label={compact ? 'Use poster grid' : 'Use compact list'}
-        >
-          {compact ? <Grid2X2 /> : <List />}
-        </Button>
-      </div>
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <Input
-          className="max-w-sm"
-          aria-label="Search media"
-          placeholder="Title, year, or S01E02…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
         <NativeSelect
           aria-label="Sort media"
           value={sort}
           onChange={(e) => filter(setSort, e.target.value)}
         >
-          <Option value="title">Title</Option>
-          <Option value="year">Year</Option>
-          <Option value="added">Recently added</Option>
-          <Option value="duration">Duration</Option>
-          <Option value="watch">Watch status</Option>
+          <Option value="title">Sort: Title</Option>
+          <Option value="year">Sort: Year</Option>
+          <Option value="added">Sort: Recently added</Option>
+          <Option value="duration">Sort: Duration</Option>
+          <Option value="watch">Sort: Watch status</Option>
         </NativeSelect>
         <NativeSelect
           aria-label="Filter library"
@@ -281,27 +309,65 @@ export function ViewerCatalog({
             </NativeSelect>
           </>
         )}
+        {/* Visual-only: genre filtering has no Agent source yet. */}
+        <NativeSelect aria-label="Filter genre (coming later)" value="" disabled>
+          <Option value="">Genre — coming later</Option>
+        </NativeSelect>
       </div>
-      <CatalogState {...result} empty={!result.data?.items.length} />
-      {(libraries.data?.total ?? 0) > 100 && <div className="mb-4 flex gap-3 text-sm">
-        <Button variant="outline" disabled={libraryPage === 1} onClick={() => { setLibraryPage(libraryPage - 1); filter(setLibrary, ''); }}>Previous library choices</Button>
-        <Button variant="outline" disabled={libraryPage * 100 >= (libraries.data?.total ?? 0)} onClick={() => { setLibraryPage(libraryPage + 1); filter(setLibrary, ''); }}>More library choices</Button>
-      </div>}
-      {!result.loading && !result.error && (
-        <div
-          className={
-            compact
-              ? 'space-y-3'
-              : 'grid grid-cols-2 gap-x-5 gap-y-8 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6'
-          }
-        >
-          {result.data?.items.map((item) => (
-            <MediaCard key={item.id} item={item} compact={compact} />
-          ))}
+
+      {(libraries.data?.total ?? 0) > 100 && (
+        <div className="mt-4 flex gap-3 text-sm">
+          <Button
+            variant="outline"
+            disabled={libraryPage === 1}
+            onClick={() => {
+              setLibraryPage(libraryPage - 1);
+              filter(setLibrary, '');
+            }}
+          >
+            Previous library choices
+          </Button>
+          <Button
+            variant="outline"
+            disabled={libraryPage * 100 >= (libraries.data?.total ?? 0)}
+            onClick={() => {
+              setLibraryPage(libraryPage + 1);
+              filter(setLibrary, '');
+            }}
+          >
+            More library choices
+          </Button>
         </div>
       )}
-      {(result.data?.total ?? 0) > 24 && (
-        <div className="mt-8 flex items-center justify-center gap-5">
+
+      <div className="mt-7">
+        {!devFallback && (
+          <CatalogState {...result} empty={!result.data?.items.length} />
+        )}
+        {result.loading && !result.data ? <PosterGridSkeleton /> : null}
+        {items?.length ? (
+          compact ? (
+            <div className="space-y-3">
+              {items.map((item) => (
+                <MediaCard key={item.id} item={item} compact />
+              ))}
+            </div>
+          ) : (
+            <PosterGrid>
+              {items.map((item) => (
+                <PosterCard
+                  key={item.id}
+                  item={item}
+                  onChanged={result.reload}
+                />
+              ))}
+            </PosterGrid>
+          )
+        ) : null}
+      </div>
+
+      {total > 24 && (
+        <div className="mt-9 flex items-center justify-center gap-5">
           <Button
             variant="outline"
             disabled={page === 1 || result.loading}
@@ -309,12 +375,12 @@ export function ViewerCatalog({
           >
             Previous
           </Button>
-          <span className="text-sm">
-            Page {page} of {Math.ceil((result.data?.total ?? 0) / 24)}
+          <span className="text-sm text-muted-foreground">
+            Page {page} of {totalPages}
           </span>
           <Button
             variant="outline"
-            disabled={page * 24 >= (result.data?.total ?? 0) || result.loading}
+            disabled={page * 24 >= total || result.loading}
             onClick={() => setPage((p) => p + 1)}
           >
             Next

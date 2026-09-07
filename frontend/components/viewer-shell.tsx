@@ -2,19 +2,40 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Film, LockKeyhole, LogOut } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import {
+  Film,
+  Search,
+  LockKeyhole,
+  LogOut,
+  User,
+  ShieldCheck,
+} from 'lucide-react';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
 import { apiRequest, CurrentUser } from '@/lib/api';
 import { productConfig } from '@/lib/product-config';
 
-const links = [
+/** Primary viewing navigation. Administrative pages are intentionally excluded
+ *  here and reachable only from the account menu. */
+const primaryNav: [label: string, href: string][] = [
   ['Home', '/'],
   ['Movies', '/movies'],
   ['TV Shows', '/shows'],
-  ['Search', '/search'],
-  ['Continue Watching', '/continue'],
-  ['Profile', '/profile'],
+  ['Settings', '/settings'],
 ];
+
+function isActive(currentPath: string, href: string): boolean {
+  if (href === '/') return currentPath === '/';
+  return currentPath === href || currentPath.startsWith(`${href}/`);
+}
 
 export function ViewerShell({
   children,
@@ -24,17 +45,17 @@ export function ViewerShell({
   currentPath: string;
 }) {
   const [user, setUser] = useState<CurrentUser>();
-  const [posture, setPosture] = useState<string>('Checking privacy');
+  const [localOnly, setLocalOnly] = useState<boolean | null>(null);
   const [error, setError] = useState('');
+
   useEffect(() => {
     apiRequest<CurrentUser>('/auth/me')
       .then(setUser)
-      .catch(() => setError('Sign in to browse your household libraries.'));
-    const refreshPrivacy = () => apiRequest<{ local_only: boolean }>('/privacy')
-      .then((p) =>
-        setPosture(p.local_only ? 'Local only' : 'Outbound gate open'),
-      )
-      .catch(() => setPosture('Privacy status unavailable'));
+      .catch(() => setError('Sign in to browse your libraries.'));
+    const refreshPrivacy = () =>
+      apiRequest<{ local_only: boolean }>('/privacy')
+        .then((p) => setLocalOnly(p.local_only))
+        .catch(() => setLocalOnly(null));
     void refreshPrivacy();
     const timer = window.setInterval(() => void refreshPrivacy(), 15000);
     window.addEventListener('focus', refreshPrivacy);
@@ -45,6 +66,7 @@ export function ViewerShell({
       window.removeEventListener('privacy-posture-changed', refreshPrivacy);
     };
   }, []);
+
   async function logout() {
     try {
       await apiRequest('/auth/logout', { method: 'POST' });
@@ -53,66 +75,146 @@ export function ViewerShell({
       setError('Could not close your session. Please try again.');
     }
   }
+
+  const isStaff = user?.roles.some((r) =>
+    ['Owner', 'Administrator'].includes(r),
+  );
+
   return (
-    <div className="dark min-h-screen bg-background text-foreground">
-      <a href="#collection" className="sr-only focus:not-sr-only">
+    <div className="dark flex min-h-screen flex-col bg-background text-foreground">
+      <a
+        href="#collection"
+        className="sr-only rounded-md bg-primary px-3 py-2 text-primary-foreground focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50"
+      >
         Skip to content
       </a>
-      <header className="border-b border-border bg-sidebar">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-5 py-5 md:px-10">
-          <Link href="/" className="flex items-center gap-3">
-            <Film className="size-7 text-primary" />
-            <span>
-              <strong className="text-xl tracking-tight">
+
+      <header className="sticky top-0 z-30 border-b border-border/70 bg-background/85 backdrop-blur supports-backdrop-filter:bg-background/70">
+        <div className="mx-auto flex max-w-[1680px] items-center gap-3 px-5 py-3 md:px-10">
+          <Link
+            href="/"
+            className="flex items-center gap-2.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+              <Film className="size-5" aria-hidden="true" />
+            </span>
+            <span className="hidden leading-tight sm:block">
+              <span className="block text-[15px] font-semibold tracking-tight">
                 {productConfig.name}
-              </strong>
+              </span>
               <span className="block text-[11px] text-muted-foreground">
                 {productConfig.subtitle}
               </span>
             </span>
           </Link>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="hidden items-center gap-1.5 sm:flex">
-              <LockKeyhole className="size-3.5" />
-              {posture}
-            </span>
+
+          <nav
+            aria-label="Primary"
+            className="ml-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] md:ml-4"
+          >
+            {primaryNav.map(([label, href]) => {
+              const active = isActive(currentPath, href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  aria-current={active ? 'page' : undefined}
+                  className={cn(
+                    'shrink-0 rounded-lg px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
+                    active
+                      ? 'bg-primary/12 text-primary'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div className="flex shrink-0 items-center gap-1">
+            <Link
+              href="/search"
+              aria-label="Search your libraries"
+              className={cn(buttonVariants({ variant: 'ghost', size: 'icon' }))}
+            >
+              <Search aria-hidden="true" />
+            </Link>
+
+            {localOnly ? (
+              <span
+                className="hidden items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground lg:flex"
+                title="Media and browsing stay on this server"
+              >
+                <LockKeyhole className="size-3.5" aria-hidden="true" />
+                Local only
+              </span>
+            ) : null}
+
             {user ? (
-              <Button variant="ghost" onClick={logout} aria-label="Log out">
-                <LogOut />
-                <span className="hidden md:inline">{user.username}</span>
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Account: ${user.username}`}
+                    />
+                  }
+                >
+                  <Avatar size="sm" className="size-7">
+                    <AvatarFallback>
+                      {user.username.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-52">
+                  <div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">
+                    {user.username}
+                  </div>
+                  <DropdownMenuItem render={<Link href="/profile" />}>
+                    <User aria-hidden="true" />
+                    Profile &amp; history
+                  </DropdownMenuItem>
+                  {isStaff ? (
+                    <DropdownMenuItem render={<Link href="/admin" />}>
+                      <ShieldCheck aria-hidden="true" />
+                      Administration
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void logout();
+                    }}
+                  >
+                    <LogOut aria-hidden="true" />
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : (
-              <Link href="/login">Sign in</Link>
+              <Link
+                href="/login"
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+              >
+                Sign in
+              </Link>
             )}
           </div>
         </div>
-        <nav
-          aria-label="Main navigation"
-          className="mx-auto flex max-w-[1600px] gap-1 overflow-x-auto px-4 md:px-9"
-        >
-          {[
-            ...links,
-            ...(user?.roles.some((r) => ['Owner', 'Administrator'].includes(r))
-              ? [['Administration', '/admin']]
-              : []),
-          ].map(([label, href]) => (
-            <Link
-              key={href}
-              href={href}
-              aria-current={currentPath === href ? 'page' : undefined}
-              className={`shrink-0 border-b-2 px-3 py-3 text-sm ${currentPath === href ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-            >
-              {label}
-            </Link>
-          ))}
-        </nav>
       </header>
+
       <main
         id="collection"
-        className="mx-auto max-w-[1600px] px-5 py-8 md:px-10"
+        className="mx-auto w-full max-w-[1680px] flex-1 px-5 py-7 md:px-10 md:py-9"
       >
         {error ? (
-          <p role="alert" className="mb-6 rounded-xl border p-4">
+          <p
+            role="alert"
+            className="mb-6 rounded-xl border border-border p-4 text-sm"
+          >
             {error}{' '}
             <Link href="/login" className="text-primary underline">
               Sign in
