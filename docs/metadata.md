@@ -106,7 +106,8 @@ Scanning commits successful indexing before queueing a separate metadata job.
 Provider failures cannot fail the indexing job. Completed data refreshes after
 30 days when enrichment runs; unmatched/review/error attempts have a six-hour
 routine-scan cooldown. Provider-wide authentication, throttling and transient
-outages stop the batch. Jobs retry after 15 minutes, at most three attempts;
+outages stop the batch. Jobs retry after at least 15 minutes (or the provider's
+longer Retry-After period), at most three attempts;
 successful records are preserved between retries. A failed-only retry command
 retries error/unavailable/matched/interrupted records without refreshing healthy
 completed metadata. No provider calls happen on viewer page loads.

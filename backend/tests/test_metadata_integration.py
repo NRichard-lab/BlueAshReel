@@ -451,6 +451,25 @@ def test_provider_outage_stops_library_requests_and_schedules_bounded_retry(
     assert not any(call[0] in {"get_movie", "download_image"} for call in provider.calls)
 
 
+def test_provider_retry_after_survives_the_worker_job_boundary(owner_context, monkeypatch):
+    context, csrf = owner_context
+    lib = library(context, csrf)
+    movie(context, lib)
+    provider = FixtureProvider(year=2026)
+    provider.fail = ProviderError("rate_limited", status_code=429, retry_after_seconds=7200)
+    monkeypatch.setattr("app.metadata.service.configured_provider", lambda _config: provider)
+    now = utcnow()
+    monkeypatch.setattr("app.metadata.service.utcnow", lambda: now)
+    with context.session_factory() as db:
+        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1,
+                            payload={"library_id": lib["id"]})
+        db.add(job)
+        db.commit()
+        run_metadata_job(db, job, context.config)
+        assert job.status == "retry_wait"
+        assert job.available_at.replace(tzinfo=UTC) == now + timedelta(hours=2)
+
+
 def test_scheduled_retry_retries_recent_error_without_refetching_successful_records(owner_context, monkeypatch):
     context, csrf = owner_context
     lib = library(context, csrf)

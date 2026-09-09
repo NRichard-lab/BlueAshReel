@@ -77,6 +77,7 @@ class Enricher:
         self.visited: set[str] = set()
         self.seasons: set[str] = set()
         self.stop_provider = False
+        self.retry_delay_seconds = 15 * 60.0
 
     def _due(self, row: MetadataRecord, force: bool) -> bool:
         if force:
@@ -164,6 +165,7 @@ class Enricher:
                 row.status = "unmatched"
         except ProviderError as exc:
             row.status, row.error_code = "error", exc.code[:80]
+            self.retry_delay_seconds = max(self.retry_delay_seconds, exc.retry_after_seconds or 0)
             if (
                 exc.status_code in {401, 403, 429}
                 or (exc.status_code or 0) >= 500
@@ -441,7 +443,7 @@ def run_metadata_job(
 
             fail_job(db, job, "Metadata provider unavailable; indexed media remains playable")
             if job.status == "retry_wait":
-                job.available_at = utcnow() + timedelta(minutes=15)
+                job.available_at = utcnow() + timedelta(seconds=enricher.retry_delay_seconds)
                 db.commit()
             return
         job.status = "succeeded"
