@@ -5,6 +5,6 @@
   "server_name": "Blue Ash Reel Server",
   "domain": "blueashreel.com",
   "subtitle": "A Blue Ash Application.",
-  "version": "0.1.0",
+  "version": "0.1.0-development.6",
   "api_prefix": "/api/v1"
 }

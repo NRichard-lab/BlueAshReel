@@ -13,6 +13,7 @@ using Microsoft.Win32;
 
 sealed class AgentTray : ApplicationContext {
     readonly string data, program, state, runName;
+    readonly bool isolatedTest;
     readonly NotifyIcon icon = new NotifyIcon();
     readonly Control dispatcher = new Control();
     readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -55,6 +56,21 @@ sealed class AgentTray : ApplicationContext {
                 throw new IOException("Linked Agent storage is not supported.");
         }
     }
+    internal static bool IsIsolatedInstallation(string program, string data) {
+        string testBase = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "BlueAshReel-Installer-Tests");
+        if (!program.StartsWith(testBase + "\\", StringComparison.OrdinalIgnoreCase)) return false;
+        string root = Path.GetDirectoryName(program), id = Path.GetFileName(root);
+        NoLinks(program); NoLinks(data);
+        string marker = Path.Combine(root,".bluereel-installer-test"); NoLinks(marker);
+        if (!String.Equals(Path.GetDirectoryName(root),testBase,StringComparison.OrdinalIgnoreCase) ||
+            !String.Equals(program,Path.Combine(root,"program"),StringComparison.OrdinalIgnoreCase) ||
+            !String.Equals(data,Path.Combine(root,"data"),StringComparison.OrdinalIgnoreCase) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(id,"^[a-z0-9]{1,32}$") ||
+            !File.Exists(marker) || new FileInfo(marker).Length > 128 || File.ReadAllText(marker).TrimEnd('\r','\n') != id)
+            throw new IOException("Invalid isolated installer identity.");
+        return true;
+    }
     static void Write(string path, object value) {
         NoLinks(path);
         string temporary = Path.Combine(Path.GetDirectoryName(path), ".tray-" + Guid.NewGuid().ToString("N"));
@@ -79,6 +95,7 @@ sealed class AgentTray : ApplicationContext {
         program = Path.GetFullPath(Value(settings, "program_dir")); NoLinks(program);
         if (!String.Equals(program, AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
             throw new IOException("The Agent installation identity does not match.");
+        isolatedTest = IsIsolatedInstallation(program,data);
         state = Path.Combine(data, "state"); runName = Value(settings,"service_prefix") + "Tray";
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open Portal", null, delegate { Browser("https://blueashreel.com"); });
@@ -111,7 +128,9 @@ sealed class AgentTray : ApplicationContext {
             Process.Start(new ProcessStartInfo(logs) { UseShellExecute = true });
         });
         menu.Items.Add("Settings", null, delegate { Settings(settings); });
-        startup.Checked = IsStartup(); startup.Click += delegate { SetStartup(!IsStartup()); }; menu.Items.Add(startup);
+        menu.Items.Add("About Blue Ash Reel", null, delegate { ShowAbout(); });
+        startup.Checked = IsStartup(); startup.Enabled = !isolatedTest;
+        startup.Click += delegate { SetStartup(!IsStartup()); }; menu.Items.Add(startup);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit Blue Ash Reel", null, delegate {
             if (MessageBox.Show("Exit Blue Ash Reel? Active playback and scans will stop and this Agent will appear offline.",
@@ -140,8 +159,16 @@ sealed class AgentTray : ApplicationContext {
         return "http://127.0.0.1:" + Value(settings,"port") + "/portal/start?purpose=" + purpose;
     }
     void Browser(string url) { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+    void ShowAbout() {
+        var product = Read(Path.Combine(program,@"config\product.json"));
+        MessageBox.Show("Blue Ash Reel Agent\nVersion: " + Value(product,"version") +
+            "\nSource: " + Value(product,"source_revision") + "\n\nUnsigned development build.",
+            "About Blue Ash Reel", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
     void ShowStatus() {
-        MessageBox.Show("Agent: " + label + "\n" + (last.ContainsKey("fingerprint_short") ? "Fingerprint: " + Value(last,"fingerprint_short") : "") +
+        var product = Read(Path.Combine(program,@"config\product.json"));
+        MessageBox.Show("Agent: " + label + "\nVersion: " + Value(product,"version") + "\n" +
+            (last.ContainsKey("fingerprint_short") ? "Fingerprint: " + Value(last,"fingerprint_short") : "") +
             (label == "Update available" ? "\nPublished update: " + Value(last,"update_version") : "") +
             "\n\nBefore approving pairing, check that this fingerprint exactly matches the one in the Portal." +
             "\n\nSign in to the Portal to browse or manage media.", "Blue Ash Reel status", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -170,6 +197,7 @@ sealed class AgentTray : ApplicationContext {
             return key != null && String.Equals(Convert.ToString(key.GetValue(runName)), StartupCommand(), StringComparison.OrdinalIgnoreCase);
     }
     void SetStartup(bool enabled) {
+        if (isolatedTest) throw new IOException("Disposable installer tests cannot change Windows startup.");
         using (var key = Registry.CurrentUser.CreateSubKey(runKey)) {
             if (enabled) key.SetValue(runName,StartupCommand());
             else if (IsStartup()) key.DeleteValue(runName,false);
@@ -183,7 +211,7 @@ sealed class AgentTray : ApplicationContext {
                 "\r\nProgram files: " + program + "\r\nApplication data: " + data + "\r\n";
             if (settings.ContainsKey("storage")) foreach (var item in (Dictionary<string,object>)settings["storage"]) text.AppendText(item.Key + ": " + item.Value + "\r\n");
             text.AppendText("\r\nUse the installer's Advanced page to choose storage at installation. Existing locations are preserved during upgrades.\r\nAdd libraries from the authenticated Portal; approve folders on this workstation.\r\nOutbound media-provider access is blocked by the Agent's strict-local policy; only the device connector communicates with the Portal.");
-            var check = new CheckBox { Text = "Start automatically when I sign in to Windows", Checked = IsStartup(), Dock = DockStyle.Bottom, Height = 40 };
+            var check = new CheckBox { Text = "Start automatically when I sign in to Windows", Checked = IsStartup(), Enabled = !isolatedTest, Dock = DockStyle.Bottom, Height = 40 };
             check.CheckedChanged += delegate { SetStartup(check.Checked); };
             form.Controls.Add(text); form.Controls.Add(check); form.ShowDialog();
         }

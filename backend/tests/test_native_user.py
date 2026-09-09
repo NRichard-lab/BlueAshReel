@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -53,6 +54,37 @@ def test_repair_preserves_every_storage_setting_and_secret(user_layout: tuple[Pa
     assert repaired == original
     assert (data / "configuration/.env").read_bytes() == before
     assert dotenv_values(data / "configuration/.env")["TRANSCODE_THREADS"] == "3"
+
+
+@pytest.mark.parametrize("custom_token_path", [False, True])
+def test_native_tmdb_token_file_is_empty_then_preserved_on_repair(
+    user_layout: tuple[Path, Path], custom_token_path: bool,
+) -> None:
+    program, data = user_layout
+    native_user_install.configure(program, data, "development", 19080, {})
+    environment = data / "configuration/.env"
+    default_token = data / "configuration/tmdb-access-token.txt"
+    config = load_configuration(load_installation(data))
+    assert config.tmdb_token_file == default_token
+    assert default_token.read_bytes() == b""
+    assert config.tmdb_token == ""
+    token_path = default_token
+    if custom_token_path:
+        token_path = data / "configuration/private-metadata.txt"
+        values = dict(dotenv_values(environment, interpolate=False))
+        values["TMDB_TOKEN_FILE"] = token_path.as_posix()
+        environment.write_text("".join(f"{key}={json.dumps(value)}\n" for key, value in values.items()),
+                               encoding="utf-8")
+    synthetic_token = secrets.token_urlsafe(32)
+    token_path.write_text(synthetic_token, encoding="utf-8")
+    before = environment.read_bytes()
+    native_user_install.configure(program, data, "development", 29080, {})
+    repaired = load_configuration(load_installation(data))
+    assert environment.read_bytes() == before
+    assert repaired.tmdb_token_file == token_path
+    assert repaired.tmdb_token == synthetic_token
+    assert synthetic_token not in repr(repaired)
+    assert synthetic_token not in json.dumps(repaired.model_dump(mode="json"))
 
 
 def test_foreign_channel_repair_and_foreign_fresh_data_cannot_change_permissions(

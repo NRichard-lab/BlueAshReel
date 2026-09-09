@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
+from app.config import ProductConfig
 from app.native_install import write_json
 from app.native_runtime import (
     Installation,
@@ -81,6 +82,9 @@ class Supervisor:
     def __init__(self, installation: Installation, parent_pid: int | None = None) -> None:
         self.installation = installation
         self.config = load_configuration(installation)
+        self.product = ProductConfig.model_validate_json(
+            (installation.program_dir / "config/product.json").read_text(encoding="utf-8")
+        )
         self.children: dict[str, subprocess.Popen[bytes]] = {}
         self.paused = False
         self.started = time.monotonic()
@@ -202,6 +206,7 @@ class Supervisor:
         write_json(self.installation.state_dir / "tray-status.json", {
             "state": label, "healthy": healthy, "updated_at": time.time(), "pid": os.getpid(),
             "runtime_id": self.runtime_id,
+            "version": self.product.version, "source_revision": self.product.source_revision,
             "port": self.installation.port, "fingerprint": status.get("fingerprint"),
             "fingerprint_short": status.get("fingerprint_short"), "paired": status.get("paired", False),
             "agent_id": status.get("agent_id"),
@@ -210,6 +215,8 @@ class Supervisor:
         })
 
     def run(self) -> int:
+        logger.info("Agent runtime starting version=%s source_revision=%s",
+                    self.product.version, self.product.source_revision or "unrecorded")
         self.publish("Running")
         clean_exit = False
         try:

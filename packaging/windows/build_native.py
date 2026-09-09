@@ -495,7 +495,7 @@ def assert_payload(stage: Path) -> None:
         "runtime/ffmpeg/ffmpeg.exe", "runtime/ffmpeg/ffprobe.exe", "runtime/caddy/caddy.exe",
         "services/WinSW.exe", "backend/app/main.py", "backend/alembic.ini",
         "frontend/server.js", "frontend/node_modules/vinext/package.json",
-        "scripts/backup.py", "scripts/backup_format.py", "scripts/restore_validate.py",
+        "scripts/backup.py", "scripts/backup_format.py", "scripts/restore_validate.py", "scripts/validate_migration.py",
         "config/product.json", "support/install.ps1", "support/native-guard.cjs",
         "support/maintenance.ps1", "support/development-notice.txt", "support/install-remote.ps1",
         "BlueAshReelAgent.exe", "support/user-install.ps1", "support/remove_user_data.py", "backend/app/native_tray.py",
@@ -530,9 +530,48 @@ def package_versions(args: argparse.Namespace, lock: dict[str, Any]) -> tuple[st
     return version, ".".join(str(int(part)) for part in match.groups())
 
 
+def source_revision() -> str:
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPOSITORY,
+                              capture_output=True, text=True, check=True).stdout.strip()
+    state = subprocess.run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=REPOSITORY,
+                           capture_output=True, text=True, check=True).stdout.strip()
+    if state or not re.fullmatch(r"[a-f0-9]{40}", revision):
+        raise BuildError("Commit the reviewed source before building a development installer")
+    return revision
+
+
+def assembly_metadata(version: str, file_version: str, revision: str) -> str:
+    if (not re.fullmatch(r"\d+\.\d+\.\d+-development\.\d+", version)
+            or not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", file_version)
+            or not re.fullmatch(r"[a-f0-9]{40}", revision)):
+        raise BuildError("Invalid native assembly build identity")
+    return (
+        'using System.Reflection;\n'
+        '[assembly: AssemblyTitle("Blue Ash Reel Agent")]\n'
+        '[assembly: AssemblyProduct("Blue Ash Reel Agent")]\n'
+        f'[assembly: AssemblyVersion("{file_version}")]\n'
+        f'[assembly: AssemblyFileVersion("{file_version}")]\n'
+        f'[assembly: AssemblyInformationalVersion("{version}+{revision}")]\n'
+    )
+
+
+def frontend_provenance(frontend: Path, revision: str, version: str, *, record: bool) -> None:
+    output = frontend / "dist"
+    marker = output / ".bluereel-native-build.json"
+    expected = {"source_revision": revision, "version": version,
+                "files": [row for row in inventory(output) if row["path"] != marker.name]}
+    if record:
+        write_json(marker, expected)
+    elif not marker.is_file() or json.loads(marker.read_text(encoding="utf-8")) != expected:
+        raise BuildError("Prebuilt frontend does not match this version, clean commit, and output hashes")
+
+
 def stage_payload(args: argparse.Namespace) -> Path:
     lock = load_lock(args.component_lock)
     version, file_version = package_versions(args, lock)
+    revision = source_revision()
+    if version != PRODUCT["version"]:
+        raise BuildError("Product config and package version must agree before compiling the frontend")
     if os.name != "nt":
         raise BuildError("Native payload assembly runs on Windows; unit tests are platform-independent")
     downloadable = [*lock["artifacts"], *lock.get("npm_notices", []), *lock.get("npm_sources", [])]
@@ -542,15 +581,21 @@ def stage_payload(args: argparse.Namespace) -> Path:
         environment = dict(os.environ, BLUEREEL_NATIVE_BUILD="1", NEXT_TELEMETRY_DISABLED="1",
                            WRANGLER_SEND_METRICS="false")
         run([args.pnpm, "run", "build"], cwd=REPOSITORY / "frontend", env=environment)
+        frontend_provenance(REPOSITORY / "frontend", revision, version, record=True)
+    else:
+        frontend_provenance(REPOSITORY / "frontend", revision, version, record=False)
     stage = fresh_stage(args.stage_dir)
     print(f"Staging native payload: {stage}", flush=True)
     compiler = Path(os.environ["WINDIR"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
     if not compiler.is_file():
         raise BuildError("The Windows inbox .NET Framework C# compiler is required to build the native tray")
+    assembly = stage / "source" / "packaging" / "AssemblyInfo.cs"
+    assembly.parent.mkdir(parents=True)
+    assembly.write_text(assembly_metadata(version, file_version, revision), encoding="utf-8")
     run([str(compiler), "/nologo", "/target:winexe", "/platform:x64",
          "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll",
          "/reference:System.Web.Extensions.dll", "/out:" + str(stage / "BlueAshReelAgent.exe"),
-         str(PACKAGING / "BlueAshReelAgent.cs")])
+         str(PACKAGING / "BlueAshReelAgent.cs"), str(assembly)])
     python_root = stage / "runtime" / "python"
     extract_zip(downloads["python"], python_root)
     configure_embedded_paths(python_root)
@@ -579,10 +624,12 @@ def stage_payload(args: argparse.Namespace) -> Path:
     copy_tree(REPOSITORY / "backend" / "app", stage / "backend" / "app")
     copy_tree(REPOSITORY / "backend" / "alembic", stage / "backend" / "alembic")
     copy_required(REPOSITORY / "backend" / "alembic.ini", stage / "backend" / "alembic.ini")
-    for name in ("backup.py", "backup_format.py", "restore_validate.py", "__init__.py"):
+    for name in ("backup.py", "backup_format.py", "restore_validate.py", "validate_migration.py", "__init__.py"):
         copy_required(REPOSITORY / "scripts" / name, stage / "scripts" / name)
+    for name in ("windows-machine-migration.md", "migration-source-audit.md", "metadata.md", "backup-and-restore.md"):
+        copy_required(REPOSITORY / "docs" / name, stage / "docs" / name)
     copy_required(REPOSITORY / "config" / "product.json", stage / "config" / "product.json")
-    write_json(stage / "config" / "product.json", {**PRODUCT, "version": version})
+    write_json(stage / "config" / "product.json", {**PRODUCT, "version": version, "source_revision": revision})
     copy_tree(REPOSITORY / "frontend" / "dist" / "standalone", stage / "frontend", frontend_runtime=True)
     for name in ("install.ps1", "native-guard.cjs", "maintenance.ps1", "development-notice.txt", "install-remote.ps1",
                  "user-install.ps1", "remove_user_data.py"):
@@ -647,16 +694,13 @@ def stage_payload(args: argparse.Namespace) -> Path:
     assert_payload(stage)
     run([str(stage / "runtime" / "node" / "node.exe"), "--version"], cwd=stage)
     run([str(stage / "runtime" / "ffmpeg" / "ffmpeg.exe"), "-version"], cwd=stage)
-    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPOSITORY, capture_output=True, text=True, check=False)
-    worktree = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=normal"],
-        cwd=REPOSITORY, capture_output=True, text=True, check=False,
-    )
+    if source_revision() != revision:
+        raise BuildError("Source revision changed during packaging; rebuild from the reviewed commit")
     write_json(stage / "included-components.json", {
         "schema_version": 1, "product": PRODUCT["name"], "package_name": PRODUCT["package_name"], "version": version,
         "windows_file_version": file_version, "architecture": "x64",
-        "built_at": dt.datetime.now(dt.UTC).isoformat(), "source_revision": revision.stdout.strip(),
-        "source_revision_dirty": bool(worktree.stdout.strip()) if worktree.returncode == 0 else None,
+        "built_at": dt.datetime.now(dt.UTC).isoformat(), "source_revision": revision,
+        "source_revision_dirty": False,
         "unsigned": True, "external_prerequisites": [],
         "supported_os": lock["minimum_windows"], "components": components,
         "files": inventory(stage),
@@ -677,6 +721,11 @@ def compile_installer(stage: Path, args: argparse.Namespace) -> Path:
     output.mkdir(parents=True, exist_ok=True)
     lock = load_lock(args.component_lock)
     version, file_version = package_versions(args, lock)
+    manifest = json.loads((stage / "included-components.json").read_text(encoding="utf-8"))
+    if (manifest.get("source_revision_dirty") is not False
+            or manifest.get("source_revision") != source_revision()
+            or manifest.get("version") != version or manifest.get("windows_file_version") != file_version):
+        raise BuildError("Installer source and version must match the clean, verified payload")
     run([
         str(args.iscc), "/DPayloadDir=" + str(stage), "/DOutputDir=" + str(output),
         "/DProductVersion=" + version, "/DFileVersion=" + file_version,
@@ -687,9 +736,11 @@ def compile_installer(stage: Path, args: argparse.Namespace) -> Path:
     installer = output / f"{PRODUCT['package_name']}-Setup-Development-x64.exe"
     if not installer.is_file():
         raise BuildError("Inno Setup did not produce the expected development installer")
-    manifest = json.loads((stage / "included-components.json").read_text(encoding="utf-8"))
+    if source_revision() != manifest["source_revision"]:
+        raise BuildError("Source revision changed during installer compilation")
     write_json(output / "installer-artifact.json", {
         "filename": installer.name, "size": installer.stat().st_size, "sha256": digest(installer),
+        "version_qualified_filename": f"{PRODUCT['package_name']}-Agent-{version}-x64.exe",
         "unsigned": True, "payload": stage.relative_to(REPOSITORY).as_posix(), "version": version,
         "windows_file_version": file_version, "source_revision": manifest["source_revision"],
         "source_revision_dirty": manifest["source_revision_dirty"], "built_at": manifest["built_at"],
@@ -697,6 +748,9 @@ def compile_installer(stage: Path, args: argparse.Namespace) -> Path:
         "payload_inventory_sha256": digest(stage.with_name(stage.name + ".files.json")),
     })
     (output / (installer.name + ".sha256")).write_text(digest(installer) + "  " + installer.name + "\n", encoding="ascii")
+    qualified = output / f"{PRODUCT['package_name']}-Agent-{version}-x64.exe"
+    copy_required(installer, qualified)
+    (output / (qualified.name + ".sha256")).write_text(digest(qualified) + "  " + qualified.name + "\n", encoding="ascii")
     return installer
 
 

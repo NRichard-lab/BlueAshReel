@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "product": "Blue Ash Reel Development",
-  "version": "0.1.0-development.5",
-  "windows_file_version": "0.1.0.5",
+  "version": "0.1.0-development.6",
+  "windows_file_version": "0.1.0.6",
   "architecture": "x64",
   "minimum_windows": "Windows 10 22H2 or Windows 11 (inbox .NET Framework 4.8)",
   "artifacts": [

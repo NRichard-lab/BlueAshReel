@@ -32,7 +32,8 @@ def locked_artifact(content: bytes = b"pinned dependency") -> dict[str, str]:
 
 def test_repository_component_pins_are_complete() -> None:
     lock = builder.load_lock()
-    assert lock["version"] == "0.1.0-development.5"
+    assert lock["version"] == "0.1.0-development.6"
+    assert lock["version"] == builder.PRODUCT["version"]
     assert {item["id"] for item in lock["artifacts"]} >= {"python", "node", "winsw", "caddy", "inno"}
     assert {item["id"] for item in lock["ffmpeg_sources"]} == {
         "ffmpeg", "x264", "nv-codec-headers", "amf", "libvpl",
@@ -281,10 +282,12 @@ def test_installer_compile_uses_payload_and_output_defines(tmp_path: Path, monke
     installer.write_bytes(b"fixture installer")
     monkeypatch.setattr(builder, "REPOSITORY", tmp_path)
     monkeypatch.setattr(builder, "run", lambda command: seen.append(command))
+    monkeypatch.setattr(builder, "source_revision", lambda: "a" * 40)
     stage = tmp_path / "artifacts" / "package"
     stage.mkdir()
     (stage / "included-components.json").write_text(json.dumps({
         "source_revision": "a" * 40, "source_revision_dirty": False, "built_at": "2026-09-05T00:00:00Z",
+        "version": builder.PRODUCT["version"], "windows_file_version": builder.load_lock()["windows_file_version"],
     }))
     stage.with_name(stage.name + ".files.json").write_text('{"files":[]}')
     assert builder.compile_installer(stage, args) == installer
@@ -301,6 +304,80 @@ def test_installer_compile_uses_payload_and_output_defines(tmp_path: Path, monke
     assert artifact["source_revision"] == "a" * 40
     assert not artifact["source_revision_dirty"]
     assert str(tmp_path) not in json.dumps(artifact)
+    qualified = args.output_dir / f"BlueAshReel-Agent-{lock['version']}-x64.exe"
+    assert qualified.read_bytes() == installer.read_bytes()
+    assert qualified.with_suffix('.exe.sha256').read_text().startswith(artifact['sha256'])
+
+
+@pytest.mark.parametrize('failure', ['version', 'file_version', 'dirty', 'different_commit', 'commit_changed'])
+def test_installer_rejects_mixed_payload_or_compiler_source(tmp_path: Path, monkeypatch, failure: str) -> None:
+    args = builder.parser().parse_args([])
+    args.iscc = tmp_path / 'ISCC.exe'
+    args.iscc.touch()
+    args.output_dir = tmp_path / 'artifacts' / 'output'
+    stage = tmp_path / 'payload'
+    stage.mkdir()
+    manifest = {'version': builder.PRODUCT['version'], 'windows_file_version': '0.1.0.6',
+                'source_revision': 'a' * 40, 'source_revision_dirty': False}
+    if failure == 'version': manifest['version'] = '0.1.0-development.5'
+    if failure == 'file_version': manifest['windows_file_version'] = '0.1.0.5'
+    if failure == 'dirty': manifest['source_revision_dirty'] = True
+    if failure == 'different_commit': manifest['source_revision'] = 'b' * 40
+    (stage / 'included-components.json').write_text(json.dumps(manifest))
+    revisions = iter(['a' * 40, 'b' * 40] if failure == 'commit_changed' else ['a' * 40])
+    monkeypatch.setattr(builder, 'REPOSITORY', tmp_path)
+    monkeypatch.setattr(builder, 'source_revision', lambda: next(revisions))
+    commands = []
+    def compile_fixture(command):
+        commands.append(command)
+        (args.output_dir / 'BlueAshReel-Setup-Development-x64.exe').write_bytes(b'unpublished candidate')
+    monkeypatch.setattr(builder, 'run', compile_fixture)
+    with pytest.raises(builder.BuildError):
+        builder.compile_installer(stage, args)
+    assert len(commands) == (1 if failure == 'commit_changed' else 0)
+    assert not (args.output_dir / 'installer-artifact.json').exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PE version resource integration")
+def test_native_tray_compiles_exact_version_and_commit_into_pe(tmp_path: Path) -> None:
+    version, windows = builder.package_versions(builder.parser().parse_args([]), builder.load_lock())
+    metadata = tmp_path / "AssemblyInfo.cs"
+    metadata.write_text(builder.assembly_metadata(version, windows, "b" * 40))
+    compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+    harness = tmp_path / "VersionTest.cs"
+    harness.write_text('''using System;
+using System.Diagnostics;
+static class VersionTest {
+  static int Main() {
+    var version = FileVersionInfo.GetVersionInfo(typeof(VersionTest).Assembly.Location);
+    Console.WriteLine(version.FileVersion + "|" + version.ProductVersion);
+    return 0;
+  }
+}''')
+    output = tmp_path / "version.exe"
+    result = subprocess.run([str(compiler), '/nologo', '/target:exe', '/platform:x64', '/main:VersionTest',
+        '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll',
+        '/out:' + str(output), str(SOURCE.parent / 'BlueAshReelAgent.cs'), str(metadata), str(harness)],
+        capture_output=True, text=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    result = subprocess.run([str(output)], capture_output=True, text=True, timeout=10,
+                            creationflags=subprocess.CREATE_NO_WINDOW, check=False)
+    assert result.stdout.strip() == windows + '|' + version + '+' + 'b' * 40
+
+
+@pytest.mark.parametrize('change', ['missing', 'revision', 'version', 'output'])
+def test_prebuilt_frontend_requires_matching_source_version_and_content(tmp_path: Path, change: str) -> None:
+    frontend = tmp_path / 'frontend'
+    (frontend / 'dist').mkdir(parents=True)
+    output = frontend / 'dist' / 'server.js'
+    output.write_text('compiled frontend')
+    builder.frontend_provenance(frontend, 'a' * 40, '0.1.0-development.6', record=True)
+    builder.frontend_provenance(frontend, 'a' * 40, '0.1.0-development.6', record=False)
+    if change == 'missing': (frontend / 'dist/.bluereel-native-build.json').unlink()
+    if change == 'output': output.write_text('stale or replaced frontend')
+    with pytest.raises(builder.BuildError, match='Prebuilt frontend'):
+        builder.frontend_provenance(frontend, 'b' * 40 if change == 'revision' else 'a' * 40,
+            '0.1.0-development.5' if change == 'version' else '0.1.0-development.6', record=False)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Real embedded Windows runtime path regression")

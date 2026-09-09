@@ -349,6 +349,7 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
         "APP_SECRET_KEY": secrets.token_hex(48),
         "APP_DATA_DIR": (data / "data").as_posix(),
         "ARTWORK_DIR": (data / "artwork").as_posix(),
+        "TMDB_TOKEN_FILE": (data / "configuration" / "tmdb-access-token.txt").as_posix(),
         "TEMP_DIR": (data / "temp").as_posix(),
         "DATABASE_URL": "sqlite:///" + (data / "database" / "app.db").as_posix(),
         "MEDIA_ROOT_DEFINITIONS": _root_definitions(roots),
@@ -395,6 +396,9 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
     with environment.open("x", encoding="utf-8", newline="\n") as output:
         for key, value in values.items():
             output.write(f"{key}={json.dumps(value, ensure_ascii=False)}\n")
+    # This empty, private file is configured only on a fresh installation. A
+    # repair returns above, preserving both existing credentials and overrides.
+    (data / "configuration" / "tmdb-access-token.txt").touch(exist_ok=False)
     write_json(data / "configuration" / "installation.json", metadata)
     (data / MARKER).write_text(prefix + "\n", encoding="utf-8")
     if runtime_mode == "legacy_service":

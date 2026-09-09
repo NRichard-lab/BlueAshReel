@@ -9,10 +9,10 @@
   #define OutputDir "..\..\artifacts\native-dev"
 #endif
 #ifndef ProductVersion
-  #define ProductVersion "0.1.0-development.5"
+  #define ProductVersion "0.1.0-development.6"
 #endif
 #ifndef FileVersion
-  #define FileVersion "0.1.0.5"
+  #define FileVersion "0.1.0.6"
 #endif
 #ifndef BuildChannel
   #define BuildChannel "development"
@@ -34,7 +34,7 @@
 #endif
 
 [Setup]
-AppId={#ProductId}
+AppId={code:GetAppId}
 AppName={#ProductName}
 AppVersion={#ProductVersion}
 AppVerName={#ProductName} {#ProductVersion} (unsigned)
@@ -63,25 +63,26 @@ CloseApplications=no
 RestartApplications=no
 AlwaysRestart=no
 UsePreviousAppDir=no
+UsePreviousLanguage=no
 InfoBeforeFile=development-notice.txt
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Tasks]
-Name: startup; Description: "Start Blue Ash Reel when I sign in to Windows"; Flags: checkedonce
+Name: startup; Description: "Start Blue Ash Reel when I sign in to Windows"; Flags: checkedonce; Check: AllowDesktopIntegration
 
 [Registry]
-Root: HKCU; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "ProgramDir"; ValueData: "{app}"
-Root: HKCU; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "DataDir"; ValueData: "{code:GetDataDir}"
-Root: HKCU; Subkey: "Software\BlueReel\{#BuildChannel}"; ValueType: string; ValueName: "Port"; ValueData: "{code:GetPort}"
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#ServicePrefix}Tray"; ValueData: """{app}\BlueAshReelAgent.exe"" --data-dir ""{code:GetDataDir}"""; Tasks: startup; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "{code:GetRegistrationKey}"; ValueType: string; ValueName: "ProgramDir"; ValueData: "{app}"
+Root: HKCU; Subkey: "{code:GetRegistrationKey}"; ValueType: string; ValueName: "DataDir"; ValueData: "{code:GetDataDir}"
+Root: HKCU; Subkey: "{code:GetRegistrationKey}"; ValueType: string; ValueName: "Port"; ValueData: "{code:GetPort}"
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#ServicePrefix}Tray"; ValueData: """{app}\BlueAshReelAgent.exe"" --data-dir ""{code:GetDataDir}"""; Tasks: startup; Flags: uninsdeletevalue; Check: AllowDesktopIntegration
 
 [Icons]
-Name: "{group}\{#ProductName}"; Filename: "{app}\BlueAshReelAgent.exe"; Parameters: "--data-dir ""{code:GetDataDir}"""
-Name: "{group}\Open Blue Ash Reel Portal"; Filename: "https://{#ProductDomain}"
-Name: "{group}\Open-source notices"; Filename: "{app}\OPEN-SOURCE-NOTICES.txt"
-Name: "{group}\Uninstall {#ProductName}"; Filename: "{uninstallexe}"
+Name: "{group}\{#ProductName}"; Filename: "{app}\BlueAshReelAgent.exe"; Parameters: "--data-dir ""{code:GetDataDir}"""; Check: AllowDesktopIntegration
+Name: "{group}\Open Blue Ash Reel Portal"; Filename: "https://{#ProductDomain}"; Check: AllowDesktopIntegration
+Name: "{group}\Open-source notices"; Filename: "{app}\OPEN-SOURCE-NOTICES.txt"; Check: AllowDesktopIntegration
+Name: "{group}\Uninstall {#ProductName}"; Filename: "{uninstallexe}"; Check: AllowDesktopIntegration
 
 [Code]
 var
@@ -90,6 +91,90 @@ var
   ExistingUser, LegacyMigration, InstallSuccessful, PreservedReinstall: Boolean;
   DeleteUserData: Boolean;
   ResolvedDataDir, SavedPort, ValidationProgramDir: String;
+  ScopeResolved: Boolean;
+  IsolationId, IsolationRoot: String;
+
+function GetFileAttributesW(Path: String): Cardinal;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
+
+procedure NoTestLinks(Path: String);
+var Parent: String; Attributes: Cardinal;
+begin
+  while Path <> '' do begin
+    Attributes := GetFileAttributesW(Path);
+    if (Attributes <> $FFFFFFFF) and ((Attributes and $400) <> 0) then
+      RaiseException('Isolated installer paths cannot contain links or junctions.');
+    Parent := ExtractFileDir(Path);
+    if Parent = Path then Exit;
+    Path := Parent;
+  end;
+end;
+
+function TestBase: String;
+begin Result := ExpandConstant('{localappdata}\BlueAshReel-Installer-Tests'); end;
+
+procedure ResolveScope;
+var Index: Integer; ProgramPath, Marker, Argument: String; Lines: TArrayOfString; Supplied: Boolean;
+begin
+  if ScopeResolved then Exit;
+  if IsUninstaller then begin
+    ProgramPath := RemoveBackslashUnlessRoot(ExpandConstant('{app}'));
+    if Pos(Lowercase(AddBackslash(TestBase)), Lowercase(AddBackslash(ProgramPath))) = 1 then begin
+      IsolationRoot := ExtractFileDir(ProgramPath);
+      if (CompareText(ExtractFileDir(IsolationRoot), TestBase) <> 0) or
+          (CompareText(ExtractFileName(ProgramPath), 'program') <> 0) then
+        RaiseException('Invalid isolated uninstaller location.');
+      IsolationId := ExtractFileName(IsolationRoot);
+    end;
+  end else begin
+    Supplied := False;
+    for Index := 1 to ParamCount do begin
+      Argument := ParamStr(Index);
+      if CompareText(Copy(Argument, 1, 13), '/ISOLATEDTEST') = 0 then begin
+        if Supplied or (Copy(Argument, 14, 1) <> '=') or (Length(Argument) < 15) then
+          RaiseException('Supply exactly one nonempty isolated test ID.');
+        Supplied := True;
+        IsolationId := Copy(Argument, 15, Length(Argument));
+      end;
+    end;
+  end;
+  if IsolationId <> '' then begin
+    if (Length(IsolationId) < 1) or (Length(IsolationId) > 32) then
+      RaiseException('Isolated test ID must contain 1-32 lowercase letters or digits.');
+    for Index := 1 to Length(IsolationId) do
+      if not (((IsolationId[Index] >= 'a') and (IsolationId[Index] <= 'z')) or
+              ((IsolationId[Index] >= '0') and (IsolationId[Index] <= '9'))) then
+        RaiseException('Isolated test ID must contain 1-32 lowercase letters or digits.');
+    IsolationRoot := AddBackslash(TestBase) + IsolationId;
+    NoTestLinks(IsolationRoot);
+    Marker := AddBackslash(IsolationRoot) + '.bluereel-installer-test';
+    if DirExists(IsolationRoot) or FileExists(IsolationRoot) or IsUninstaller then begin
+      NoTestLinks(Marker);
+      if not LoadStringsFromFile(Marker, Lines) then RaiseException('Isolated test marker is missing.');
+      if (GetArrayLength(Lines) <> 1) then RaiseException('Invalid isolated test marker.');
+      if Lines[0] <> IsolationId then RaiseException('Foreign isolated test marker.');
+    end;
+  end;
+  ScopeResolved := True;
+end;
+
+function IsIsolatedTest: Boolean;
+begin ResolveScope; Result := IsolationId <> ''; end;
+
+function AllowDesktopIntegration: Boolean;
+begin Result := not IsIsolatedTest; end;
+
+function GetAppId(Param: String): String;
+begin
+  if IsIsolatedTest then Result := 'BlueAshReel-IsolatedTest-' + IsolationId
+  else Result := ExpandConstant('{#ProductId}');
+end;
+
+function GetRegistrationKey(Param: String): String;
+begin
+  if IsIsolatedTest then Result := 'Software\BlueReel\InstallerTests\' + IsolationId
+  else Result := 'Software\BlueReel\{#BuildChannel}';
+end;
 
 function HasInstanceMarker(const Directory: String): Boolean;
 begin
@@ -105,12 +190,14 @@ end;
 
 function GetDefaultProgramDir(Param: String): String;
 begin
-  if not RegQueryStringValue(HKCU,'Software\BlueReel\{#BuildChannel}','ProgramDir',Result) then
+  if IsIsolatedTest then begin Result := AddBackslash(IsolationRoot) + 'program'; Exit; end;
+  if not RegQueryStringValue(HKCU,GetRegistrationKey(''),'ProgramDir',Result) then
     Result := ExpandConstant('{localappdata}\Programs\{#DataName}');
 end;
 
 function GetDataDir(Param: String): String;
 begin
+  if IsIsolatedTest then begin Result := AddBackslash(IsolationRoot) + 'data'; Exit; end;
   if ResolvedDataDir = '' then begin
     if not RegQueryStringValue(HKCU, 'Software\BlueReel\{#BuildChannel}', 'DataDir', ResolvedDataDir) then
       if not RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'DataDir', ResolvedDataDir) then
@@ -123,7 +210,12 @@ function GetPort(Param: String): String;
 begin
   Result := SavedPort;
   if Result = '' then begin
-    if not RegQueryStringValue(HKCU, 'Software\BlueReel\{#BuildChannel}', 'Port', Result) then
+    if IsIsolatedTest then begin
+      if not RegQueryStringValue(HKCU, GetRegistrationKey(''), 'Port', Result) then
+        Result := ExpandConstant('{param:PORT|29280}');
+      Exit;
+    end;
+    if not RegQueryStringValue(HKCU, GetRegistrationKey(''), 'Port', Result) then
       if not RegQueryStringValue(HKLM, 'Software\BlueReel\{#BuildChannel}', 'Port', Result) then Result := '{#DefaultPort}';
   end;
 end;
@@ -253,8 +345,10 @@ end;
 procedure InitializeWizard;
 var Registered: String;
 begin
-  ExistingUser := RegQueryStringValue(HKCU,'Software\BlueReel\{#BuildChannel}','ProgramDir',Registered);
-  LegacyMigration := (not ExistingUser) and RegQueryStringValue(HKLM,'Software\BlueReel\{#BuildChannel}','ProgramDir',Registered);
+  ExistingUser := RegQueryStringValue(HKCU,GetRegistrationKey(''),'ProgramDir',Registered);
+  LegacyMigration := False;
+  if not IsIsolatedTest then
+    LegacyMigration := (not ExistingUser) and RegQueryStringValue(HKLM,'Software\BlueReel\{#BuildChannel}','ProgramDir',Registered);
   SavedPort := GetPort('');
   RuntimePage := CreateInputQueryPage(wpSelectDir, 'Agent runtime', 'Runs only while you are signed in to Windows.',
     'Sign in to blueashreel.com after installation to pair the Agent. Libraries and access are managed from the authenticated Portal.');
@@ -299,6 +393,28 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+  if IsIsolatedTest then begin
+    { A test instance can never redirect the normal registration or storage. }
+    if (CompareText(RemoveBackslashUnlessRoot(ExpandConstant('{app}')), AddBackslash(IsolationRoot) + 'program') <> 0) or
+        (CompareText(RemoveBackslashUnlessRoot(RuntimePage.Values[0]), AddBackslash(IsolationRoot) + 'data') <> 0) or
+        (LocationsPage.Values[0] <> '') or (LocationsPage.Values[1] <> '') or
+        (CachePage.Values[0] <> '') or (CachePage.Values[1] <> '') or (CachePage.Values[2] <> '') then begin
+      Result := 'Isolated tests require their dedicated program and data directories.'; Exit;
+    end;
+    NoTestLinks(ExpandConstant('{app}')); NoTestLinks(GetDataDir(''));
+    if (DirExists(ExpandConstant('{app}')) or DirExists(GetDataDir(''))) and
+        not HasInstanceMarker(GetDataDir('')) then begin
+      Result := 'Existing isolated program or data files have no validated instance marker.'; Exit;
+    end;
+    if not DirExists(IsolationRoot) then begin
+      if not ForceDirectories(IsolationRoot) or
+          not SaveStringToFile(AddBackslash(IsolationRoot) + '.bluereel-installer-test', IsolationId + #13#10, False) then begin
+        Result := 'The isolated test marker could not be created.'; Exit;
+      end;
+    end;
+  end else if Pos(Lowercase(AddBackslash(TestBase)), Lowercase(AddBackslash(ExpandConstant('{app}')))) = 1 then begin
+    Result := 'This reserved test directory requires an explicit isolated test ID.'; Exit;
+  end;
   if not (ExistingUser or LegacyMigration) then begin
     ResolvedDataDir := RuntimePage.Values[0]; SavedPort := RuntimePage.Values[1];
   end;
@@ -333,6 +449,7 @@ begin
       if ExistingUser and not PreservedReinstall then RunMaintenance('RollbackUser','',False);
       RaiseException('Agent setup did not complete. Existing data and validated recovery backups were preserved.');
     end;
+    if not IsIsolatedTest then begin
     Launched := ExecAsOriginalUser(ExpandConstant('{app}\BlueAshReelAgent.exe'),'--data-dir ' + Quoted(GetDataDir('')),
       ExpandConstant('{app}'),SW_SHOWNORMAL,ewNoWait,ExitCode);
     if not Launched or not RunMaintenance('Health','',False) then begin
@@ -346,6 +463,7 @@ begin
       '--data-dir ' + Quoted(GetDataDir('')) + ' --finish-install',
       ExpandConstant('{app}'),SW_SHOWNORMAL,ewNoWait,ExitCode) then
       RaiseException('The Agent is installed and healthy, but its pairing window could not open. Choose Pair Agent from the Windows tray.');
+    end;
     InstallSuccessful := True;
   end;
 end;
@@ -359,6 +477,7 @@ begin if InstallSuccessful then Result := 0 else Result := 1; end;
 function InitializeUninstall: Boolean;
 var Choice: Integer;
 begin
+  ResolveScope;
   DeleteUserData := False;
   Result := True;
   { Unattended uninstalls always retain identity and data. A visible, explicit
@@ -384,12 +503,12 @@ begin
     if DeleteUserData then begin
       if not RunMaintenance('RemoveData',' -ConfirmDeleteData',False) then
         RaiseException('Local data could not be removed safely. Uninstall was stopped; retained data needs recovery review.');
-      if RegQueryStringValue(HKCU,'Software\BlueReel\{#BuildChannel}','DataDir',Registered) and
+      if RegQueryStringValue(HKCU,GetRegistrationKey(''),'DataDir',Registered) and
           (CompareText(Registered, GetDataDir('')) = 0) then begin
-        RegDeleteValue(HKCU,'Software\BlueReel\{#BuildChannel}','ProgramDir');
-        RegDeleteValue(HKCU,'Software\BlueReel\{#BuildChannel}','DataDir');
-        RegDeleteValue(HKCU,'Software\BlueReel\{#BuildChannel}','Port');
-        RegDeleteKeyIfEmpty(HKCU,'Software\BlueReel\{#BuildChannel}');
+        RegDeleteValue(HKCU,GetRegistrationKey(''),'ProgramDir');
+        RegDeleteValue(HKCU,GetRegistrationKey(''),'DataDir');
+        RegDeleteValue(HKCU,GetRegistrationKey(''),'Port');
+        RegDeleteKeyIfEmpty(HKCU,GetRegistrationKey(''));
       end;
     end;
   end;

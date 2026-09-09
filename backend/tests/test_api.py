@@ -28,7 +28,7 @@ def test_health_version_and_public_config_do_not_expose_sensitive_state(context)
     assert ready.json()["checks"]["application_data"] == "ok"
     assert ready.json()["checks"]["temporary_storage"] == "ok"
     assert ready.json()["checks"]["artwork_storage"] == "ok"
-    assert version.json()["version"] == "0.1.0"
+    assert version.json()["version"] == "0.1.0-development.6"
     assert public.json()["api_prefix"] == "/api/v1"
     combined = live.text + ready.text + version.text + public.text
     assert str(context.media_root) not in combined

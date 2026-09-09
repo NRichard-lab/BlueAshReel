@@ -1,5 +1,11 @@
 # Backup and restore
 
+For a Windows move to another machine, use the separate
+[machine migration procedure](windows-machine-migration.md). It covers the private
+directory snapshot, read-only row/artwork validation, DPAPI constraints and
+same-Owner re-pairing while retaining the old machine as fallback. The standard
+ZIP archive below is not a portable pairing-identity export.
+
 Native Windows uses this same archive format and validator without Docker. Use
 its Start Menu backup/validation actions; see [native recovery](native-windows.md#backup-repair-and-upgrade).
 Native archives additionally include `configuration/native/installation.json`
@@ -15,14 +21,21 @@ watch history. Treat archives as sensitive. Deleting current viewing history doe
 not rewrite existing backups; expire them according to household policy. Temporary
 HLS/subtitle output is disposable and should not be backed up as application data.
 
-The validator recognizes exact Phase 1, 2A and 2B table sets, preserving the existing
+The validator recognizes exact Phase 1, 2A, 2B, 2C and 2D table sets, preserving the existing
 pre-upgrade workflow when new scripts inspect an older installed image. The current
-migration head is 2b0100000001. Test clean and populated upgrades before installation.
+migration head is 2d0100000001. Test clean and populated upgrades before installation.
 Restored active sessions are expired on API startup; durable watch checkpoints
 remain resumable after login. Downgrading Phase 2 discards its new history/grants;
 use a verified pre-upgrade backup if that loss is unacceptable.
 
 Blue Ash Reel backs up a running SQLite database through SQLite's online backup API. It never copies an active `app.db` file directly. The resulting timestamped ZIP includes a standalone validated database, application data, product configuration and `.env`, and cached artwork unless excluded.
+
+The general ZIP tool does not include a separately configured TMDB token file or
+the native `remote-identity` directory. A machine migration therefore needs the
+additional private snapshot and validation described in the Windows migration
+procedure. Preserve the token file privately, and treat the identity copy as
+same-account recovery evidence: Windows DPAPI ciphertext alone is not a portable
+identity export. Never restore old command queues or process lock files.
 
 The local media-root registry (`.bluereel/media-roots.tsv`) and generated `compose.override.yml` are not yet included in these archives. Privately preserve reviewed copies alongside a backup before changing roots or moving the installation. They contain host paths; do not commit or publish them. `.env` alone does not retain secondary host locations. Preserve the stable root IDs/container targets when restoring these mappings so existing libraries keep pointing to the intended folders.
 

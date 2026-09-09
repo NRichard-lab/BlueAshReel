@@ -20,6 +20,7 @@ class ProductConfig(BaseModel):
     domain: str = "blueashreel.com"
     subtitle: str = "A private media application."
     version: str = "0.1.0"
+    source_revision: str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
     api_prefix: str = "/api/v1"
 
     @field_validator("api_prefix")
