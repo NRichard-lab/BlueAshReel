@@ -433,13 +433,18 @@ def test_remote_atomic_write_retries_temporary_creation_conflict(tmp_path):
     assert not list(tmp_path.glob(".pending-*"))
 
 
-def test_remote_atomic_write_does_not_retry_access_denied_or_lose_prior_state(tmp_path):
+def test_remote_atomic_write_bounds_replacement_denial_without_losing_prior_state(tmp_path):
     target = tmp_path / "desired.json"
     write_json(target, {"enabled": True})
     error = PermissionError("Synthetic access denial")
     error.winerror = 5
+    started = time.monotonic()
     with patch("app.remote.storage.os.replace", side_effect=error) as replace, pytest.raises(PermissionError):
         write_json(target, {"enabled": False})
-    assert replace.call_count == 1
+    if os.name == "nt":
+        assert 2 <= replace.call_count <= 25
+        assert 0.4 <= time.monotonic() - started < 2
+    else:
+        assert replace.call_count == 1
     assert read_json(target) == {"enabled": True}
     assert not list(tmp_path.glob(".pending-*"))

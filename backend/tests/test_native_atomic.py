@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -142,9 +142,9 @@ def test_replacement_denial_cleans_temporary_file_despite_transient_cleanup_conf
     with pytest.raises(PermissionError) as result:
         native_install.write_json(target, {"new": True})
     assert result.value.winerror == 5
-    assert replacements == 1
+    assert replacements > 1
     assert removals == 3
-    assert windows_clock[0] == pytest.approx(0.05)
+    assert windows_clock[0] == pytest.approx(0.55)
     assert json.loads(target.read_text()) == {"old": True}
     assert not list(tmp_path.glob(".bluereel-*"))
 
@@ -286,3 +286,78 @@ with state_write_lock(Path(sys.argv[1])):
         for stream in (child.stdin, child.stdout, child.stderr):
             if stream:
                 stream.close()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Exercises actual MoveFileEx denial from a shared-delete reader")
+@pytest.mark.parametrize("writer", [native_install.write_json, remote_write_json], ids=["native", "remote"])
+@pytest.mark.parametrize("release_reader", [True, False], ids=["temporary-reader", "persistent-reader"])
+def test_state_replacement_waits_for_reader_without_truncating_prior_state(
+    tmp_path: Path, writer: Callable[[Path, dict[str, object]], None], release_reader: bool,
+) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    target = tmp_path / "status.json"
+    writer(target, {"original": True})
+    # Same sharing flags as the .NET tray reader. MoveFileEx replacing an open
+    # destination reports WinError 5 despite FILE_SHARE_DELETE on this reader.
+    handle = kernel.CreateFileW(str(target), 0x80000000, 7, None, 3, 0, None)
+    assert handle != ctypes.c_void_p(-1).value
+    released = False
+    prior_intact: list[bool] = []
+
+    def release() -> None:
+        nonlocal released
+        prior_intact.append(json.loads(target.read_text()) == {"original": True})
+        assert kernel.CloseHandle(handle)
+        released = True
+
+    timer = Timer(0.1, release) if release_reader else None
+    try:
+        started = time.monotonic()
+        if timer:
+            timer.start()
+            writer(target, {"complete": "\N{SNOWMAN}"})
+            timer.join(timeout=5)
+            assert released and prior_intact == [True]
+            assert 0.075 <= time.monotonic() - started < 2
+            assert json.loads(target.read_text()) == {"complete": "\N{SNOWMAN}"}
+        else:
+            with pytest.raises(PermissionError) as failure:
+                writer(target, {"complete": True})
+            assert failure.value.winerror == 5
+            assert 0.4 <= time.monotonic() - started < 2
+            assert json.loads(target.read_text()) == {"original": True}
+            release()
+            writer(target, {"recovered": True})
+            assert json.loads(target.read_text()) == {"recovered": True}
+        assert not list(tmp_path.glob(".bluereel-*"))
+        assert not list(tmp_path.glob(".pending-*"))
+    finally:
+        if timer:
+            timer.join(timeout=5)
+        if not released:
+            kernel.CloseHandle(handle)
+
+
+def test_remote_state_creation_access_denied_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def denied_creation(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        nonlocal attempts
+        attempts += 1
+        raise windows_error(5)
+
+    monkeypatch.setattr("app.remote.storage.tempfile.mkstemp", denied_creation)
+    with pytest.raises(PermissionError) as failure:
+        remote_write_json(tmp_path / "status.json", {"new": True})
+    assert failure.value.winerror == 5 and attempts == 1
+    assert not list(tmp_path.iterdir())

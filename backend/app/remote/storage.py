@@ -117,7 +117,12 @@ def _write_json_locked(path: Path, value: dict[str, Any]) -> None:
                         os.chmod(temporary, 0o600)
                     prepared = True
                 assert temporary is not None
-                os.replace(temporary, path)
+                try:
+                    os.replace(temporary, path)
+                except OSError as error:
+                    if _wait_for_windows_sharing(error, deadline, replacing=True):
+                        continue
+                    raise
                 temporary = None
                 break
             except OSError as error:
@@ -131,17 +136,21 @@ def _write_json_locked(path: Path, value: dict[str, Any]) -> None:
                 os.close(directory)
     finally:
         if temporary is not None:
+            cleanup_deadline = time.monotonic() + 0.5
             while True:
                 try:
                     temporary.unlink(missing_ok=True)
                     break
                 except OSError as error:
-                    if not _wait_for_windows_sharing(error, deadline):
+                    if not _wait_for_windows_sharing(error, cleanup_deadline):
                         raise
 
 
-def _wait_for_windows_sharing(error: OSError, deadline: float) -> bool:
-    if os.name != "nt" or getattr(error, "winerror", None) not in {32, 33}:
+def _wait_for_windows_sharing(error: OSError, deadline: float, *, replacing: bool = False) -> bool:
+    # Existing-destination replacement can deny access until a reader closes.
+    # Never retry access denial during creation or other storage operations.
+    retryable = {5, 32, 33} if replacing else {32, 33}
+    if os.name != "nt" or getattr(error, "winerror", None) not in retryable:
         return False
     remaining = deadline - time.monotonic()
     if remaining <= 0:

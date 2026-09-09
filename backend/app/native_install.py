@@ -55,9 +55,12 @@ def write_json(path: Path, value: object) -> None:
     _atomic_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def _wait_for_windows_sharing(error: OSError, deadline: float) -> bool:
-    # Access denied and validation failures are not transient sharing conflicts.
-    if os.name != "nt" or getattr(error, "winerror", None) not in {32, 33}:
+def _wait_for_windows_sharing(error: OSError, deadline: float, *, replacing: bool = False) -> bool:
+    # MoveFileEx can report ACCESS_DENIED while an existing destination has an
+    # open reader, even one sharing delete. Only that operation may retry it;
+    # guard acquisition, creation, validation and cleanup still fail closed.
+    retryable = {5, 32, 33} if replacing else {32, 33}
+    if os.name != "nt" or getattr(error, "winerror", None) not in retryable:
         return False
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -99,7 +102,12 @@ def _atomic_text_locked(path: Path, value: str) -> None:
                 # MoveFileEx needs the guard released to open the directory
                 # for writing. Replacement never truncates a link's target.
                 assert candidate is not None
-                candidate.replace(path)
+                try:
+                    candidate.replace(path)
+                except OSError as error:
+                    if _wait_for_windows_sharing(error, deadline, replacing=True):
+                        continue
+                    raise
                 candidate = None
                 return
             except OSError as error:
@@ -107,12 +115,13 @@ def _atomic_text_locked(path: Path, value: str) -> None:
                     raise
     finally:
         if candidate is not None:
+            cleanup_deadline = time.monotonic() + 0.5
             while True:
                 try:
                     candidate.unlink(missing_ok=True)
                     break
                 except OSError as error:
-                    if not _wait_for_windows_sharing(error, deadline):
+                    if not _wait_for_windows_sharing(error, cleanup_deadline):
                         raise
 
 
