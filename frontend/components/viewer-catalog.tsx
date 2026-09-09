@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import { Film, Check, Play, List, Grid2X2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -169,7 +170,10 @@ export function ViewerCatalog({
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState('title');
-  const [library, setLibrary] = useState('');
+  // Honor the existing filtered-catalog links from Home's My Libraries rail.
+  const routeLibrary = useSearchParams().get('library_id') ?? '';
+  const [library, setLibrary] = useState(routeLibrary);
+  useEffect(() => { setLibrary(routeLibrary); setPage(1); }, [routeLibrary]);
   const [watched, setWatched] = useState('');
   const [availability, setAvailability] = useState('');
   const [resolution, setResolution] = useState('');

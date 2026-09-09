@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, tuple_, update
 
 from app.api import catalog, playback
 from app.api import router as administration
@@ -107,9 +107,10 @@ class RemoteMedia:
             raise HTTPException(404, "Unavailable")
         return identifier(row.local_id)
 
-    def external(self, db: Any, value: Any, kind: str = "media") -> Any:
+    def external(self, db: Any, value: Any, kind: str = "media",
+                 aliases: dict[tuple[str, str], str] | None = None) -> Any:
         if isinstance(value, list):
-            return [self.external(db, item, kind) for item in value]
+            return [self.external(db, item, kind, aliases) for item in value]
         if not isinstance(value, dict):
             return value
         result = {}
@@ -126,7 +127,8 @@ class RemoteMedia:
         for key, item in value.items():
             if key in {"poster_url", "background_url"}:
                 result["artwork_id" if key == "poster_url" else "background_id"] = (
-                    self.alias(db, "artwork", item.rsplit("/", 1)[-1]) if item else None
+                    (aliases[("artwork", item.rsplit("/", 1)[-1])] if aliases is not None
+                     else self.alias(db, "artwork", item.rsplit("/", 1)[-1])) if item else None
                 )
             elif key == "error_summary":
                 result[key] = "The local scan encountered an error. Review the Agent logs." if item else None
@@ -135,11 +137,47 @@ class RemoteMedia:
                 # cross this boundary, encrypted or otherwise.
                 continue
             elif key in ids and item is not None:
-                result[key] = self.alias(db, ids[key], item)
+                result[key] = aliases[(ids[key], item)] if aliases is not None else self.alias(db, ids[key], item)
             else:
-                child_kind = "file" if key == "files" else "path" if key == "paths" else kind
-                result[key] = self.external(db, item, child_kind)
+                child_kind = "file" if key == "files" else "path" if key == "paths" else (
+                    "library" if key == "libraries" else kind
+                )
+                result[key] = self.external(db, item, child_kind, aliases)
         return result
+
+    def external_home(self, db: Any, result: dict[str, Any]) -> dict[str, Any]:
+        # Home can repeat a title in several rails. Resolve its opaque IDs in
+        # batches rather than querying once for every field on every card.
+        references = {("library", item["id"]) for item in result["libraries"]}
+        for key, rail in result.items():
+            if key == "libraries":
+                continue
+            for item in rail:
+                for field, kind in (("id", "media"), ("library_id", "library"),
+                                    ("file_id", "file"), ("show_id", "media")):
+                    if item.get(field):
+                        references.add((kind, item[field]))
+                if item.get("poster_url"):
+                    references.add(("artwork", item["poster_url"].rsplit("/", 1)[-1]))
+        aliases = {}
+        ordered = sorted(references)
+        for offset in range(0, len(ordered), 400):
+            for row in db.scalars(select(RemoteObject).where(
+                RemoteObject.agent_id == self.agent_id,
+                tuple_(RemoteObject.kind, RemoteObject.local_id).in_(ordered[offset:offset + 400]),
+            )):
+                if row.revoked:
+                    raise HTTPException(404, "Unavailable")
+                aliases[(row.kind, row.local_id)] = row.id
+        missing = []
+        for kind, local_id in sorted(references - aliases.keys()):
+            row = RemoteObject(id=str(uuid.uuid4()), agent_id=self.agent_id, kind=kind, local_id=local_id)
+            missing.append(row)
+            aliases[(kind, local_id)] = row.id
+        if missing:
+            db.add_all(missing)
+            db.flush()
+        return self.external(db, result, aliases=aliases)
 
     def principal(self, db: Any, authorization: dict[str, Any]) -> Principal:
         if (
@@ -387,7 +425,11 @@ class RemoteMedia:
                 self.forget_playback(session_id)
                 return {"stopped": True}
             elif op == "catalog.home":
-                result = catalog.home(principal, db)
+                if args:
+                    raise ValueError("Home does not accept catalog or filesystem selectors")
+                result = self.external_home(db, catalog.home(principal, db))
+                db.commit()
+                return result
             elif op == "catalog.list":
                 media_kind, history, query = args.get("kind"), args.get("history"), args.get("q", "")
                 if (

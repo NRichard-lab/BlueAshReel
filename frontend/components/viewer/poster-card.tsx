@@ -11,6 +11,7 @@ import { DevBadge } from '@/components/viewer/dev-placeholder';
 
 function secondaryMeta(item: MediaCardRecord): string {
   const parts: string[] = [];
+  if (item.show_title) parts.push(item.show_title);
   if (item.season_number != null) {
     parts.push(
       `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number ?? 0).padStart(2, '0')}`,

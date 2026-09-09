@@ -53,16 +53,8 @@ function sampleRow(count: number, seedBase: number): MediaCardRecord[] {
   return Array.from({ length: count }, (_, i) => sampleCard(seedBase + i));
 }
 
-/** Horizontal rows on Home / detail that have no data source yet. */
+/** Horizontal rows on detail that have no data source yet. */
 export const placeholderRows: Record<string, MediaCardRecord[]> = {
-  recommended: sampleRow(8, 10).map((c, i) =>
-    i === 1
-      ? { ...c, completion: 38, position_seconds: 60 * 34 }
-      : i === 4
-        ? { ...c, watched: true }
-        : c,
-  ),
-  because_you_watched: sampleRow(8, 30),
   related: sampleRow(8, 60),
 };
 
@@ -132,40 +124,6 @@ export const placeholderVersions: {
 /* Used only when import.meta.env.DEV is true so the redesigned screens can   */
 /* be reviewed without the Portal or a signed-in session.                    */
 /* -------------------------------------------------------------------------- */
-
-/** Home rails, keyed like GET /browse/home. */
-export const sampleHomeRails: Record<string, MediaCardRecord[]> = {
-  continue: [
-    sampleCard(101, { title: 'Sample Movie A', completion: 42, position_seconds: 60 * 47, available: true, file_id: 'sample-file-101' }),
-    sampleCard(102, { title: 'Sample Series A', kind: 'series', completion: 0, season_number: 2, episode_number: 4, duration_seconds: 60 * 48 }),
-    sampleCard(103, { title: 'Sample Movie B', completion: 12, position_seconds: 60 * 14, available: true, file_id: 'sample-file-103' }),
-    sampleCard(104, { title: 'Sample Movie C', completion: 88, position_seconds: 60 * 96, available: true, file_id: 'sample-file-104' }),
-    sampleCard(105, { title: 'Sample Movie D', completion: 63, position_seconds: 60 * 70, available: true, file_id: 'sample-file-105' }),
-  ],
-  recent_movies: sampleRow(9, 110).map((c, i) => ({
-    ...c,
-    title: `Recent Movie ${i + 1}`,
-    available: true,
-    file_id: `sample-file-r${i}`,
-    watched: i === 2 || i === 6,
-  })),
-  recent_episodes: sampleRow(9, 130).map((c, i) => ({
-    ...c,
-    title: `Recent Episode ${i + 1}`,
-    kind: 'episode',
-    season_number: 1,
-    episode_number: i + 1,
-    duration_seconds: 60 * (22 + (i % 6)),
-  })),
-};
-
-/** Libraries index used by the Home rail and the Libraries page in dev. */
-export const sampleLibraries: { id: string; name: string }[] = [
-  { id: 'sample-lib-movies', name: 'Movies' },
-  { id: 'sample-lib-tv', name: 'TV Shows' },
-  { id: 'sample-lib-family', name: 'Family' },
-  { id: 'sample-lib-docs', name: 'Documentaries' },
-];
 
 /** One page of poster-grid results (Movies / TV Shows) for dev preview. */
 export const sampleCatalogPage: MediaCardRecord[] = sampleRow(18, 200).map(

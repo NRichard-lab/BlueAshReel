@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, noload, selectinload
 from app.config import AppConfig, get_config
 from app.database import get_db
 from app.dependencies import Principal, current_principal, require_user_csrf
+from app.home_schemas import HomeResponse
 from app.models import (
     Episode,
     Library,
@@ -36,6 +37,7 @@ from app.services.catalog import (
     safe_text,
     strict_local_file,
 )
+from app.services.home import home_catalog
 
 router = APIRouter(prefix="/browse", tags=["viewer catalog"])
 
@@ -151,46 +153,9 @@ def catalog(
     return {"items": cards(db, user_id, items, resolution), "total": total, "page": page, "page_size": page_size}
 
 
-@router.get("/home")
+@router.get("/home", response_model=HomeResponse)
 def home(principal: Principal = Depends(current_principal), db: Session = Depends(get_db)) -> dict[str, Any]:
-    def rail(kind: str | None = None, history: str | None = None, sort: str = "added") -> list[dict[str, Any]]:
-        # Bound every rail independently; this is a constant number of queries, never one query per card.
-        query = (
-            select(MediaItem)
-            .outerjoin(WatchProgress, progress_join(principal.user.id))
-            .where(permitted_library(principal.user.id))
-        )
-        if kind:
-            query = query.where(MediaItem.kind == kind)
-        if history:
-            query = query.where(WatchProgress.id.is_not(None))
-            if history == "recent":
-                query = query.where(WatchProgress.watched.is_(True))
-            if history == "continue":
-                query = query.where(
-                    WatchProgress.watched.is_(False), WatchProgress.position_seconds >= 5, file_available()
-                )
-        order = (
-            WatchProgress.last_played_at.desc()
-            if history
-            else MediaItem.created_at.desc()
-            if sort == "added"
-            else MediaItem.sort_title
-        )
-        return cards(
-            db,
-            principal.user.id,
-            list(db.scalars(query.options(noload(MediaItem.files)).order_by(order, MediaItem.id).limit(8))),
-        )
-
-    return {
-        "continue": rail(history="continue"),
-        "recent_movies": rail("movie"),
-        "recent_episodes": rail("episode"),
-        "movies": rail("movie", sort="title"),
-        "shows": rail("series", sort="title"),
-        "recent_watched": rail(history="recent"),
-    }
+    return home_catalog(db, principal.user.id)
 
 
 @router.get("/media/{media_id}")

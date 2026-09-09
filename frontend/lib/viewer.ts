@@ -19,6 +19,19 @@ export interface MediaCardRecord {
   season_number: number | null;
   episode_number: number | null;
   show_id: string | null;
+  show_title?: string | null;
+}
+export interface HomeLibrary {
+  id: string;
+  name: string;
+  library_type: 'movies' | 'tv' | 'other';
+  enabled: boolean;
+}
+export interface HomeResponse {
+  continue: MediaCardRecord[];
+  recent_movies: MediaCardRecord[];
+  recent_episodes: MediaCardRecord[];
+  libraries: HomeLibrary[];
 }
 export interface MediaFileRecord {
   id: string;
