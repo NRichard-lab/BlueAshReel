@@ -96,6 +96,8 @@ var
 
 function GetFileAttributesW(Path: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
+function SHGetFolderPathW(Window: HWND; Folder: Integer; Token: THandle; Flags: Cardinal; Path: String): Integer;
+  external 'SHGetFolderPathW@shell32.dll stdcall';
 
 procedure NoTestLinks(Path: String);
 var Parent: String; Attributes: Cardinal;
@@ -111,7 +113,15 @@ begin
 end;
 
 function TestBase: String;
-begin Result := ExpandConstant('{localappdata}\BlueAshReel-Installer-Tests'); end;
+var Profile: String; Terminator: Integer;
+begin
+  SetLength(Profile, 260);
+  { CSIDL_PROFILE: the actual user's profile, never an environment override. }
+  if SHGetFolderPathW(0, 40, 0, 0, Profile) <> 0 then RaiseException('The Windows profile directory is unavailable.');
+  Terminator := Pos(#0, Profile);
+  if Terminator < 2 then RaiseException('The Windows profile directory is invalid.');
+  Result := AddBackslash(Copy(Profile, 1, Terminator - 1)) + 'BlueAshReel-Installer-Tests';
+end;
 
 procedure ResolveScope;
 var Index: Integer; ProgramPath, Marker, Argument: String; Lines: TArrayOfString; Supplied: Boolean;

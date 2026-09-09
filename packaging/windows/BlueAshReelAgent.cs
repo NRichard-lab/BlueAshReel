@@ -57,7 +57,7 @@ sealed class AgentTray : ApplicationContext {
         }
     }
     internal static bool IsIsolatedInstallation(string program, string data) {
-        string testBase = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        string testBase = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "BlueAshReel-Installer-Tests");
         if (!program.StartsWith(testBase + "\\", StringComparison.OrdinalIgnoreCase)) return false;
         string root = Path.GetDirectoryName(program), id = Path.GetFileName(root);

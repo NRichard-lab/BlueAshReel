@@ -71,6 +71,10 @@ The snapshot contains private configuration, token files, account data and DPAPI
 ciphertext. Keep its owner/SYSTEM-only permissions, transfer it using private
 encrypted storage, and keep the recorded manifest SHA-256 separately. A hash
 copied from an untrusted modified manifest is not proof of authenticity.
+On the destination, recreate private access for the destination Windows account
+and SYSTEM; do not rely on the old account's SID or grant broad access to make a
+transferred directory readable. Ordinary file copies into installer-created
+private directories should inherit the destination permissions.
 
 The bundled validator uses only immutable, read-only SQLite access and never
 decrypts identity material, reads media files, restores files, or contacts the

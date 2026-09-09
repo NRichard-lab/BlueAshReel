@@ -82,7 +82,7 @@ def main() -> int:
     no_links(args.installer)
     if digest(args.installer) != args.sha256:
         raise RuntimeError('Installer checksum mismatch')
-    root = Path(os.environ['LOCALAPPDATA']) / 'BlueAshReel-Installer-Tests' / args.test_id
+    root = Path(os.environ['USERPROFILE']) / 'BlueAshReel-Installer-Tests' / args.test_id
     program, data = root / 'program', root / 'data'
     no_links(root)
     if root.exists():

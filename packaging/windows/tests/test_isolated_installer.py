@@ -62,7 +62,7 @@ def scope(harness: Path, output: Path, identifier: str | None) -> list[str]:
 
 @pytest.fixture
 def isolated_root() -> Path:
-    base = Path(os.environ["LOCALAPPDATA"]) / "BlueAshReel-Installer-Tests"
+    base = Path(os.environ["USERPROFILE"]) / "BlueAshReel-Installer-Tests"
     base.mkdir(exist_ok=True)
     identifier = uuid.uuid4().hex
     root = base / identifier
@@ -103,7 +103,7 @@ def test_compiled_inno_rejects_bare_or_duplicate_test_switches(
 def test_compiled_inno_scope_is_distinct_and_disables_desktop_integration(inno_scope_harness: Path, tmp_path: Path) -> None:
     identifier = uuid.uuid4().hex
     result = scope(inno_scope_harness, tmp_path / "result.txt", identifier)
-    root = Path(os.environ["LOCALAPPDATA"]) / "BlueAshReel-Installer-Tests" / identifier
+    root = Path(os.environ["USERPROFILE"]) / "BlueAshReel-Installer-Tests" / identifier
     assert result == ["accepted", "BlueAshReel-IsolatedTest-" + identifier,
                       "Software\\BlueReel\\InstallerTests\\" + identifier, "0",
                       str(root / "program"), str(root / "data")]
