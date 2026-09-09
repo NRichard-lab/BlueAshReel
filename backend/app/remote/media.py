@@ -170,6 +170,12 @@ class RemoteMedia:
                 )
                 db.add(grant)
                 db.flush()
+            elif grant.agent_id != self.agent_id and grant.enabled and grant.role == "owner":
+                # A locally confirmed re-pair can register this installation
+                # under a new Agent ID for the same Portal Owner. Only the
+                # current paired Owner's verified grant may follow that change;
+                # retain its local account and watch history, never member grants.
+                grant.agent_id = self.agent_id
             current = set(db.scalars(select(UserLibrary.library_id).where(UserLibrary.user_id == grant.local_user_id)))
             for library_id in db.scalars(select(Library.id)):
                 if library_id not in current:

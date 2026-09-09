@@ -643,6 +643,47 @@ def test_remote_artwork_and_owner_progress_migration(owner_context):
         assert db.get(PortalGrant, auth["user_id"]).local_user_id == original_id
 
 
+def test_same_owner_repair_preserves_local_account_and_watch_history(owner_context):
+    media, auth, (_, media_id, file_id, source) = setup_remote(owner_context)
+    call(media, auth, "catalog.list")
+    with media.factory() as db:
+        local_user_id = db.get(PortalGrant, auth["user_id"]).local_user_id
+        db.add(WatchProgress(user_id=local_user_id, media_item_id=media_id,
+                             media_file_id=file_id, position_seconds=25, duration_seconds=120))
+        db.commit()
+    source_before = source.read_bytes()
+    old_auth = dict(auth)
+    new_agent_id = str(uuid.uuid4())
+    media.bind(new_agent_id, auth["user_id"])
+    auth = {**auth, "agent_id": new_agent_id, "session_id": str(uuid.uuid4())}
+    card = call(media, auth, "catalog.list")["items"][0]
+    assert card["position_seconds"] == 25
+    with media.factory() as db:
+        grant = db.get(PortalGrant, auth["user_id"])
+        assert grant.local_user_id == local_user_id and grant.agent_id == new_agent_id
+        assert db.get(MediaFile, file_id).media_item_id == media_id
+    assert source.read_bytes() == source_before
+    with pytest.raises(HTTPException):
+        call(media, old_auth, "catalog.list")
+
+
+@pytest.mark.parametrize("restriction", ["disabled", "member", "different_owner"])
+def test_owner_repair_does_not_carry_unapproved_grants(owner_context, restriction):
+    media, auth, _ = setup_remote(owner_context)
+    call(media, auth, "catalog.list")
+    with media.factory() as db:
+        grant = db.get(PortalGrant, auth["user_id"])
+        if restriction == "disabled":
+            grant.enabled = False
+        elif restriction == "member":
+            grant.role = "viewer"
+        db.commit()
+    agent_id = str(uuid.uuid4())
+    media.bind(agent_id, str(uuid.uuid4()) if restriction == "different_owner" else auth["user_id"])
+    with pytest.raises(HTTPException):
+        call(media, {**auth, "agent_id": agent_id}, "catalog.list")
+
+
 def test_media_prefetch_does_not_consume_watch_progress_clock(owner_context):
     media, auth, _ = setup_remote(owner_context)
     card = call(media, auth, "catalog.list")["items"][0]
