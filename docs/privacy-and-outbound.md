@@ -9,7 +9,16 @@ are encrypted between browser and Agent. The relay has no decryption keys and
 stores no catalog, media, artwork, search text or viewing progress. Only account,
 Agent and short-lived authorization/control records are central.
 
-Local workers/FFmpeg retain the media-provider/network restrictions. Native source
+Without a TMDB credential, local workers retain their default network restrictions.
+With a private Agent TMDB credential, the native Python guard additionally permits
+only `api.themoviedb.org:443` and `image.tmdb.org:443`, with public DNS answers,
+verified HTTPS and no redirects. Metadata queries send parsed title/year and
+provider IDs, never file paths, media bytes or viewing history. Metadata/artwork
+stay in the Agent database/cache and cross the existing encrypted relay only for
+an authorized viewer. The Portal and browser do not call TMDB. FFmpeg continues
+to use local file/pipe inputs. See [metadata configuration](metadata.md).
+
+Native source
 access follows the signed-in Windows user's drive/share permissions and does not
 write source files. Pairing/folder selection require local confirmation. Browser
 JavaScript remains part of the trust boundary; compare the Agent fingerprint
@@ -58,7 +67,7 @@ Blue Ash Reel's phase-one runtime is designed to function with no Internet route
 - local artwork and application-controlled cache; and
 - configuration, logs, and backups.
 
-Source media is mounted read-only and is never renamed, moved, deleted, or uploaded. Temporary analysis files use the configured local temp directory. The application includes no analytics, advertisements, tracking pixels, external crash service, remote font, JavaScript CDN, or metadata-provider client. The optional portal uses its own public account system.
+Source media is mounted read-only and is never renamed, moved, deleted, or uploaded. Temporary analysis files use the configured local temp directory. The application includes no analytics, advertisements, tracking pixels, external crash service, remote font or JavaScript CDN. The optional TMDB metadata provider runs on the Agent. The Portal uses its own public account system.
 
 ## Defense in depth
 
@@ -68,12 +77,15 @@ Outbound permission has three separate layers:
    ingress namespace has default-deny outbound rules with only two internal
    destination/port exceptions, established replies and a loopback health check.
    External DNS, including Docker resolver forwarding, is blocked after startup.
-2. `OUTBOUND_INTEGRATIONS_ENABLED` defaults to `false` and gates every known integration category.
+2. `OUTBOUND_INTEGRATIONS_ENABLED` defaults to `false` and gates the legacy integration controls.
 3. Each known category (`metadata`, `artwork`, `portal`, and `telemetry`) also requires an explicit Owner-controlled database setting.
 
 An unknown integration name is denied. Passing only one layer never grants access. These flags do not enable outbound access in the media processes; the optional connector has a separate deployment and Owner consent described above. Build-time image/dependency downloads are distinct from runtime and require Internet only while installing or building.
 
-Future work that needs outbound access must add a reviewed network override, declare destinations and data fields, implement timeouts/auditing/redaction, expose an Owner control, and update this document. Do not weaken the internal network globally for an unrelated troubleshooting issue.
+The native TMDB provider is a separate narrow opt-in: supplying its private token
+authorizes the two declared HTTPS destinations, without enabling the broad legacy
+outbound switch. Docker's network isolation is preserved; its network policy may
+still prevent metadata enrichment. Do not weaken the internal network globally.
 
 ## Logs and health endpoints
 

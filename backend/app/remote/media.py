@@ -125,8 +125,9 @@ class RemoteMedia:
             "session_id": "playback",
         }
         for key, item in value.items():
-            if key in {"poster_url", "background_url"}:
-                result["artwork_id" if key == "poster_url" else "background_id"] = (
+            if key in {"poster_url", "background_url", "profile_url"}:
+                result[{"poster_url": "artwork_id", "background_url": "background_id",
+                        "profile_url": "profile_artwork_id"}[key]] = (
                     (aliases[("artwork", item.rsplit("/", 1)[-1])] if aliases is not None
                      else self.alias(db, "artwork", item.rsplit("/", 1)[-1])) if item else None
                 )

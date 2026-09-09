@@ -173,6 +173,11 @@ def activate_configuration(installation: Installation, config: AppConfig) -> Non
     for name, value in config.model_dump().items():
         if value is not None:
             os.environ[name.upper()] = str(value).lower() if isinstance(value, bool) else str(value)
+    # These private fields are intentionally excluded from generic serialization.
+    if config.tmdb_access_token:
+        os.environ["TMDB_ACCESS_TOKEN"] = config.tmdb_access_token.get_secret_value()
+    if config.tmdb_token_file:
+        os.environ["TMDB_TOKEN_FILE"] = str(config.tmdb_token_file)
     os.environ["PRODUCT_CONFIG_FILE"] = str(installation.program_dir / "config/product.json")
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     sys.dont_write_bytecode = True

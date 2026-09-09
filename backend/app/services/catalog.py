@@ -19,6 +19,7 @@ from app.models import (
     LocalArtwork,
     MediaFile,
     MediaItem,
+    MetadataRecord,
     Season,
     Series,
     UserLibrary,
@@ -151,6 +152,9 @@ def primary_video_height() -> ScalarSelect[int | None]:
 
 def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | None = None) -> list[dict[str, Any]]:
     ids = [item.id for item in items]
+    descriptive = {row.media_item_id: row for row in db.scalars(
+        select(MetadataRecord).where(MetadataRecord.media_item_id.in_(ids), MetadataRecord.title.is_not(None))
+    )} if ids else {}
     height = primary_video_height()
     ranking = (
         select(
@@ -217,6 +221,7 @@ def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | N
         db.scalars(select(MediaItem.id).where(MediaItem.id.in_(ids), MediaItem.kind == "series", file_available()))
     )
     for item in items:
+        metadata = descriptive.get(item.id)
         file = best.get(item.id)
         video = min(file.video_streams, key=lambda stream: stream.stream_index) if file and file.video_streams else None
         state = progress.get(item.id)
@@ -226,8 +231,8 @@ def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | N
                 "id": item.id,
                 "library_id": item.library_id,
                 "kind": item.kind,
-                "title": item.title,
-                "year": item.year,
+                "title": metadata.title if metadata and metadata.title else item.title,
+                "year": metadata.year if metadata and metadata.year else item.year,
                 "available": bool(file and file.available) or item.id in available_shows,
                 "file_id": file.id if file and file.available else None,
                 "duration_seconds": file.duration_seconds if file else None,

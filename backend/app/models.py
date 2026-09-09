@@ -370,6 +370,66 @@ class LocalArtwork(Base, TimestampMixin):
     source_path: Mapped[str] = mapped_column(Text, nullable=False)
     cached_path: Mapped[str | None] = mapped_column(Text)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(32))
+    provider_path: Mapped[str | None] = mapped_column(String(500))
+    content_type: Mapped[str | None] = mapped_column(String(32))
+
+
+class MetadataRecord(Base):
+    """Small normalized provider-neutral records; local IDs always own identity."""
+
+    __tablename__ = "metadata_records"
+    __table_args__ = (
+        CheckConstraint("(media_item_id IS NULL) != (season_id IS NULL)", name="ck_metadata_owner"),
+        CheckConstraint(
+            "status IN ('unavailable','unmatched','needs_review','matched','fetching','complete','error')",
+            name="ck_metadata_status",
+        ),
+        Index("ix_metadata_provider_item", "provider", "kind", "provider_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    media_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("media_items.id", ondelete="CASCADE"), unique=True
+    )
+    season_id: Mapped[str | None] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), unique=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="unmatched", nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(32))
+    provider_id: Mapped[str | None] = mapped_column(String(100))
+    external_ids: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500))
+    original_title: Mapped[str | None] = mapped_column(String(500))
+    year: Mapped[int | None] = mapped_column(Integer)
+    release_date: Mapped[str | None] = mapped_column(String(10))
+    last_air_date: Mapped[str | None] = mapped_column(String(10))
+    runtime_seconds: Mapped[int | None] = mapped_column(Integer)
+    overview: Mapped[str | None] = mapped_column(Text)
+    tagline: Mapped[str | None] = mapped_column(String(1000))
+    original_language: Mapped[str | None] = mapped_column(String(32))
+    content_rating: Mapped[str | None] = mapped_column(String(40))
+    genres: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    studios: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    networks: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    creators: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    countries: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    series_status: Mapped[str | None] = mapped_column(String(80))
+    number_of_seasons: Mapped[int | None] = mapped_column(Integer)
+    number_of_episodes: Mapped[int | None] = mapped_column(Integer)
+    vote_average: Mapped[float | None] = mapped_column(Float)
+    vote_count: Mapped[int | None] = mapped_column(Integer)
+    # Each entry has known normalized credit fields, bounded by the provider contract.
+    credits: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    related_provider_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    match_confidence: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    match_method: Mapped[str | None] = mapped_column(String(80))
+    manually_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    matched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    metadata_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_data_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    # A user-cleared match stays clear until an explicit assign/refresh request.
+    auto_match_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class BackgroundJob(Base):

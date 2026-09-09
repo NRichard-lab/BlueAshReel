@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -92,6 +92,14 @@ class AppConfig(BaseSettings):
     media_roots: str = ""
     media_root_definitions: str = ""
     outbound_integrations_enabled: bool = False
+    # Provider credentials are private Agent configuration; never part of API models.
+    tmdb_access_token: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    tmdb_token_file: Path | None = Field(default=None, exclude=True, repr=False)
+    tmdb_timeout_seconds: float = Field(default=10, ge=1, le=30)
+    tmdb_retries: int = Field(default=2, ge=0, le=3)
+    metadata_language: str = Field(default="en-US", pattern=r"^[a-z]{2}-[A-Z]{2}$")
+    metadata_region: str = Field(default="US", pattern=r"^[A-Z]{2}$")
+    metadata_refresh_days: int = Field(default=30, ge=1, le=365)
     # Private connector/tray spool. Per-user native mode serves encrypted media
     # through its outbound canonical Portal connection; media data stays local.
     remote_control_dir: Path | None = None
@@ -141,6 +149,24 @@ class AppConfig(BaseSettings):
         )
         if any(marker in lowered for marker in placeholders) or len(set(value)) < 12:
             raise ValueError("APP_SECRET_KEY must be a securely generated, non-placeholder secret")
+        return value
+
+    @property
+    def tmdb_token(self) -> str:
+        """Missing/unreadable/malformed credentials leave local indexing operational."""
+        value = self.tmdb_access_token.get_secret_value() if self.tmdb_access_token else ""
+        if not value and self.tmdb_token_file:
+            try:
+                from app.services.paths import assert_no_link_components
+
+                assert_no_link_components(self.tmdb_token_file)
+                if self.tmdb_token_file.stat().st_size <= 8192:
+                    value = self.tmdb_token_file.read_text(encoding="utf-8-sig").strip()
+            except (OSError, ValueError):
+                return ""
+        value = value.strip()
+        if not 20 <= len(value) <= 8192 or any(not (c.isascii() and (c.isalnum() or c in "._-")) for c in value):
+            return ""
         return value
 
     @property

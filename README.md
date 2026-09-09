@@ -87,7 +87,10 @@ reveal a library. Real GPU support must be established by an actual test encode.
 PostgreSQL holds account/control records, not a synchronized media catalog. Media
 names, paths, searches, artwork and payloads are encrypted before the relay. They
 may be displayed temporarily in the authorized browser. No central media cache,
-metadata-provider calls, analytics, remote fonts or cloud transcoding are added.
+analytics, remote fonts or cloud transcoding are added. An optional Agent-side
+TMDB provider enriches titles and downloads artwork into the local cache; only
+parsed title/year and provider IDs are sent to TMDB when privately configured.
+See [metadata setup and maintenance](docs/metadata.md).
 Source media is application-read-only on Windows and mounted read-only in Docker.
 
 ## Development and documentation

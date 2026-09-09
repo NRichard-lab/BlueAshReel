@@ -245,6 +245,9 @@ def detail(
         )
     )
     result["background_url"] = f"/api/v1/browse/artwork/{art.id}" if art else None
+    from app.metadata.view import detail_metadata
+
+    result.update(detail_metadata(db, principal.user.id, item))
     return result
 
 
@@ -267,8 +270,10 @@ def seasons(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
+    from app.metadata.view import season_metadata
+
     return {
-        "items": [dict(row._mapping) for row in rows],
+        "items": [{**dict(row._mapping), **season_metadata(db, row.id, media_id, row.season_number)} for row in rows],
         "page": page,
         "page_size": page_size,
         "total": db.scalar(select(func.count(Season.id)).join(Series).where(Series.media_item_id == media_id)),
@@ -377,14 +382,20 @@ def artwork(
             LocalArtwork.id == artwork_id,
             permitted_library(principal.user.id),
             LibraryPath.enabled.is_(True),
-            LocalArtwork.artwork_type.in_(["poster", "background"]),
+            or_(LocalArtwork.artwork_type.in_(["poster", "background", "profile"]),
+                LocalArtwork.artwork_type.like("season_poster_%")),
         )
     )
     if art is None:
         raise HTTPException(404, "Local artwork unavailable")
     library_path = db.get(LibraryPath, art.library_path_id)
     assert library_path is not None
-    source = strict_local_file(Path(library_path.canonical_path), art.source_path, config)
+    if art.provider:
+        from app.metadata.artwork import cached_file
+
+        source = cached_file(config, art.cached_path or "")
+    else:
+        source = strict_local_file(Path(library_path.canonical_path), art.source_path, config)
     if source.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp") or source.stat().st_size > 20 * 1024 * 1024:
         raise HTTPException(404, "Local artwork unavailable")
     return FileResponse(

@@ -37,11 +37,29 @@ _firewall_lock = threading.Lock()
 _native_guard_installed = False
 _portal_allowed = False
 _portal_ips: set[str] = set()
+_metadata_allowed = False
+_METADATA_HOSTS = frozenset({"api.themoviedb.org", "image.tmdb.org"})
+_metadata_ips: dict[str, set[str]] = {}
 
 
 def _portal_address(address: object) -> bool:
     return (_portal_allowed and isinstance(address, tuple) and len(address) >= 2
             and address[0] in _portal_ips and address[1] == 443)
+
+
+def _metadata_address(address: object, connection: object) -> bool:
+    return (_metadata_allowed and isinstance(address, tuple) and len(address) >= 2
+            and getattr(connection, "type", None) == socket.SOCK_STREAM
+            and address[1] == 443 and any(address[0] in addresses for addresses in _metadata_ips.values()))
+
+
+def _allowed_https_host(host: object, port: object) -> bool:
+    # The provider additionally enforces HTTPS, certificate validation, exact
+    # source URLs and no redirects. This socket gate permits only their HTTPS
+    # port; a configured provider never enables general network access.
+    if not isinstance(host, str) or str(port) != "443":
+        return False
+    return (_portal_allowed and host == "blueashreel.com") or (_metadata_allowed and host in _METADATA_HOSTS)
 
 # Values come from the process environment, never interpolated into PowerShell.
 # Read only ActiveStore (the merged effective policy), not an installer marker.
@@ -95,13 +113,14 @@ def native_network_audit(event: str, arguments: tuple[object, ...]) -> None:
         # 127/8 and ::1: missing hosts entries could otherwise trigger DNS.
         raise OutboundConnectionDisabled("Strict-local mode blocks reverse name resolution")
     if event in {"socket.getaddrinfo", "socket.gethostbyname"}:
-        if _portal_allowed and event == "socket.getaddrinfo" and arguments and arguments[0] == "blueashreel.com":
+        if event == "socket.getaddrinfo" and len(arguments) >= 2 and _allowed_https_host(arguments[0], arguments[1]):
             return
         if not arguments or not _loopback_host(arguments[0]):
             raise OutboundConnectionDisabled("Strict-local mode blocks external name resolution")
     elif event in {"socket.bind", "socket.connect", "socket.sendto", "socket.sendmsg"}:
         address = arguments[-1] if arguments else None
-        if event == "socket.connect" and _portal_address(address):
+        connection = arguments[0] if arguments else None
+        if event == "socket.connect" and (_portal_address(address) or _metadata_address(address, connection)):
             return
         if not isinstance(address, tuple) or not address or not _loopback_host(address[0]):
             raise OutboundConnectionDisabled("Strict-local mode blocks non-loopback connections")
@@ -129,7 +148,9 @@ def _guarded_address(connection: socket.socket, address: object) -> tuple[object
 
 def _guard_socket_method(method: Callable[..., Any]) -> Callable[..., Any]:
     def guarded(connection: socket.socket, address: object, *args: Any, **kwargs: Any) -> Any:
-        if method.__name__ in {"connect", "connect_ex"} and _portal_address(address):
+        if method.__name__ in {"connect", "connect_ex"} and (
+            _portal_address(address) or _metadata_address(address, connection)
+        ):
             return method(connection, address, *args, **kwargs)
         return method(connection, _guarded_address(connection, address), *args, **kwargs)
 
@@ -175,13 +196,27 @@ def _install_native_socket_wrappers() -> None:
     original_getaddrinfo = socket.getaddrinfo
 
     def getaddrinfo(host: Any, port: Any, family: int = 0, type: int = 0, proto: int = 0, flags: int = 0) -> Any:
-        if _portal_allowed and host == "blueashreel.com" and str(port) == "443":
+        if _allowed_https_host(host, port):
+            if host in _METADATA_HOSTS and (
+                type not in {0, socket.SOCK_STREAM} or proto not in {0, socket.IPPROTO_TCP}
+            ):
+                raise OutboundConnectionDisabled("Metadata requires an HTTPS TCP destination")
             addresses = original_getaddrinfo(host, port, family, type, proto, flags)
             allowed = [item for item in addresses if ipaddress.ip_address(item[4][0]).is_global]
+            if host in _METADATA_HOSTS:
+                allowed = [
+                    item for item in allowed if item[1] == socket.SOCK_STREAM and item[2] in {0, socket.IPPROTO_TCP}
+                ]
             if not allowed or len(allowed) > 32:
-                raise OutboundConnectionDisabled("Canonical Portal destination unavailable")
-            _portal_ips.clear()
-            _portal_ips.update(str(item[4][0]) for item in allowed)
+                if host in _METADATA_HOSTS:
+                    _metadata_ips.pop(host, None)
+                raise OutboundConnectionDisabled("Approved HTTPS destination unavailable")
+            addresses_to_allow = {str(item[4][0]) for item in allowed}
+            if host == "blueashreel.com":
+                _portal_ips.clear()
+                _portal_ips.update(addresses_to_allow)
+            else:
+                _metadata_ips[host] = addresses_to_allow
             return allowed
         return original_getaddrinfo(
             _numeric_loopback(host, family), port, family, type, proto, flags | socket.AI_NUMERICHOST,
@@ -204,12 +239,14 @@ def _install_native_socket_wrappers() -> None:
 
 
 def install_native_network_guard(config: AppConfig, *, allow_portal: bool = False) -> None:
-    global _native_guard_installed, _portal_allowed
+    global _native_guard_installed, _portal_allowed, _metadata_allowed
     if (
         config.deployment_mode == "native_windows"
         and not config.outbound_integrations_enabled and not _native_guard_installed
     ):
         _portal_allowed = allow_portal
+        _metadata_allowed = bool(config.tmdb_token)
+        _metadata_ips.clear()
         sys.addaudithook(native_network_audit)
         _install_native_socket_wrappers()
         _native_guard_installed = True

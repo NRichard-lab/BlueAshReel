@@ -90,6 +90,10 @@ def run_worker(stop_event: threading.Event | None = None) -> None:
                         run_scan(db, job, config)
                     else:
                         run_scan(db, job, config, stop_requested=stopping)
+                elif job.job_type == "metadata_enrich":
+                    from app.metadata.service import run_metadata_job
+
+                    run_metadata_job(db, job, config, stop_requested=stopping)
                 else:
                     fail_job(db, job, "No local worker handler is registered for this job type")
             except ScanInterrupted:

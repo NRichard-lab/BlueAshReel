@@ -286,7 +286,9 @@ def _reconcile_local_sidecars(
     """Forget vanished sidecars after a complete full scan; never modify source files."""
     if not scanned_path_ids:
         return
-    existing = db.scalars(select(LocalArtwork).where(LocalArtwork.library_path_id.in_(scanned_path_ids))).all()
+    existing = db.scalars(select(LocalArtwork).where(
+        LocalArtwork.library_path_id.in_(scanned_path_ids), LocalArtwork.provider.is_(None)
+    )).all()
     for artwork in existing:
         key = (
             artwork.media_item_id,
@@ -522,6 +524,15 @@ def run_scan(
             )
         )
         db.commit()
+        # Indexing has already succeeded durably. A separate job owns network metadata
+        # work so neither a provider outage nor a cache failure can fail the scan.
+        from app.metadata.service import enqueue_enrichment
+
+        try:
+            enqueue_enrichment(db, library.id)
+            db.commit()
+        except Exception:
+            db.rollback()
     except ScanCancelled:
         job.status = "cancelled"
         job.completed_at = utcnow()
