@@ -281,6 +281,7 @@ class TMDBMetadataProvider:
                         name,
                         _text(row.get("original_" + title_key)),
                         int(release_date[:4]) if release_date else None,
+                        overview=_text(row.get("overview"), 1200),
                     )
                 )
         return tuple(candidates)

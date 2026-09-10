@@ -301,6 +301,7 @@ class RemoteMedia:
                 410: "session_expired",
                 422: "invalid_request",
                 429: "rate_limited",
+                503: "metadata_unavailable",
             }.get(error.status_code, "operation_failed")
         except (ValueError, TypeError, KeyError):
             code = "invalid_request"
@@ -456,6 +457,29 @@ class RemoteMedia:
                 )
             elif op == "catalog.detail":
                 result = catalog.detail(self.resolve(db, "media", args["media_id"]), page, principal, db)
+            elif op in {"metadata.defaults", "metadata.search", "metadata.identify", "metadata.preview"}:
+                self.owner(authorization)
+                from app.metadata import identify
+                from app.metadata.provider import ProviderError
+                from app.services.catalog import load_item
+
+                permitted = {"media_id"} | (
+                    {"title", "year"} if op == "metadata.search" else
+                    {"provider_id"} if op in {"metadata.identify", "metadata.preview"} else set())
+                if set(args) - permitted:
+                    raise ValueError("Invalid metadata request")
+                item = load_item(db, principal.user.id, self.resolve(db, "media", args["media_id"]))
+                try:
+                    if op == "metadata.defaults":
+                        return identify.defaults(db, item)
+                    if op == "metadata.search":
+                        return identify.search(db, item, self.config, args.get("title"), args.get("year"))
+                    if op == "metadata.preview":
+                        return identify.preview(db, item, self.config, args.get("provider_id"))
+                    identify.identify(db, item, self.config, args.get("provider_id"))
+                    result = catalog.detail(item.id, page, principal, db)
+                except ProviderError as error:
+                    raise HTTPException(503, "Metadata provider unavailable") from error
             elif op == "catalog.seasons":
                 result = catalog.seasons(self.resolve(db, "media", args["media_id"]), page, size, principal, db)
                 kind = "season"

@@ -26,6 +26,7 @@ class Candidate:
     year: int | None = None
     runtime_seconds: int | None = None
     alternate_titles: tuple[str, ...] = ()
+    overview: str | None = None
 
 
 @dataclass(frozen=True)
