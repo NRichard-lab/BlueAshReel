@@ -20,6 +20,7 @@ from test_remote_media import call, setup_remote
 
 from app import native_runtime
 from app.config import AppConfig
+from app.metadata import edit
 from app.metadata.artwork import cache_image, cached_file
 from app.metadata.provider import ProviderError
 from app.metadata.service import (
@@ -31,6 +32,7 @@ from app.metadata.service import (
     run_metadata_job,
 )
 from app.metadata.types import ArtworkSource, Candidate, Credit, MetadataDetails
+from app.metadata.view import metadata_for
 from app.models import (
     BackgroundJob,
     BackgroundJobEvent,
@@ -62,15 +64,28 @@ class FixtureProvider:
     def details(self, kind, provider_id, title, year, runtime):
         profile = ArtworkSource("tmdb", "/private-provider-profile.jpg", "profile", "301")
         return MetadataDetails(
-            provider="tmdb", provider_id=provider_id, kind=kind, title=title,
-            original_title=title, year=year, release_date=f"{year or 2023}-04-05",
-            runtime_seconds=runtime, overview="A descriptive overview from the fixture provider.",
-            tagline="A provider tagline.", original_language="en", content_rating="PG-13",
-            genres=("Drama", "Adventure"), studios=("Fixture Studio",), countries=("US",),
+            provider="tmdb",
+            provider_id=provider_id,
+            kind=kind,
+            title=title,
+            original_title=title,
+            year=year,
+            release_date=f"{year or 2023}-04-05",
+            runtime_seconds=runtime,
+            overview="A descriptive overview from the fixture provider.",
+            tagline="A provider tagline.",
+            original_language="en",
+            content_rating="PG-13",
+            genres=("Drama", "Adventure"),
+            studios=("Fixture Studio",),
+            countries=("US",),
             networks=("Fixture Network",) if kind == "series" else (),
             creators=("Fixture Creator",) if kind == "series" else (),
-            directors=("Fixture Director",), writers=("Fixture Writer",),
-            vote_average=8.2, vote_count=345, status="Ended" if kind == "series" else None,
+            directors=("Fixture Director",),
+            writers=("Fixture Writer",),
+            vote_average=8.2,
+            vote_count=345,
+            status="Ended" if kind == "series" else None,
             number_of_seasons=1 if kind == "series" else None,
             number_of_episodes=2 if kind == "series" else None,
             external_ids={"tmdb": provider_id, "imdb": "tt0000001"},
@@ -79,8 +94,10 @@ class FixtureProvider:
                 Credit("302", "Fixture Director", "Directing", job="Director"),
                 Credit("303", "Fixture Writer", "Writing", job="Writer"),
             ),
-            artwork=(ArtworkSource("tmdb", f"/private-provider-{kind}-poster.jpg", "poster"),
-                     ArtworkSource("tmdb", f"/private-provider-{kind}-backdrop.jpg", "backdrop")),
+            artwork=(
+                ArtworkSource("tmdb", f"/private-provider-{kind}-poster.jpg", "poster"),
+                ArtworkSource("tmdb", f"/private-provider-{kind}-backdrop.jpg", "backdrop"),
+            ),
         )
 
     def search_movie(self, title, year=None):
@@ -106,23 +123,43 @@ class FixtureProvider:
     def get_season(self, series_id, season_number):
         self.calls.append(("get_season", series_id, season_number))
         return MetadataDetails(
-            provider=self.name, provider_id="203", kind="season", title="A Named First Season",
-            overview="The real provider season overview.", release_date="2023-04-05", number_of_episodes=2,
-            series_provider_id=series_id, season_number=season_number,
+            provider=self.name,
+            provider_id="203",
+            kind="season",
+            title="A Named First Season",
+            overview="The real provider season overview.",
+            release_date="2023-04-05",
+            number_of_episodes=2,
+            series_provider_id=series_id,
+            season_number=season_number,
             artwork=(ArtworkSource(self.name, "/private-provider-season.jpg", "poster"),),
         )
 
     def get_episode(self, series_id, season_number, episode_number):
         self.calls.append(("get_episode", series_id, season_number, episode_number))
         return MetadataDetails(
-            provider=self.name, provider_id=str(204 + episode_number), kind="episode",
-            title=f"Actual Episode Title {episode_number}", overview=f"Episode {episode_number} provider overview.",
-            year=2023, release_date=f"2023-04-{episode_number + 5:02d}", runtime_seconds=2700,
-            vote_average=8.5, vote_count=100, series_provider_id=series_id,
-            season_number=season_number, episode_number=episode_number,
+            provider=self.name,
+            provider_id=str(204 + episode_number),
+            kind="episode",
+            title=f"Actual Episode Title {episode_number}",
+            overview=f"Episode {episode_number} provider overview.",
+            year=2023,
+            release_date=f"2023-04-{episode_number + 5:02d}",
+            runtime_seconds=2700,
+            vote_average=8.5,
+            vote_count=100,
+            series_provider_id=series_id,
+            season_number=season_number,
+            episode_number=episode_number,
             external_ids={"tmdb": str(204 + episode_number)},
             credits=(Credit("304", "Episode Director", "Directing", job="Director"),),
             artwork=(ArtworkSource(self.name, f"/private-provider-episode-{episode_number}.jpg", "still"),),
+        )
+
+    def get_image_candidates(self, kind, provider_id):
+        return (
+            ArtworkSource(self.name, "/alternate-poster.jpg", "poster", width=1000, height=1500),
+            ArtworkSource(self.name, "/alternate-backdrop.jpg", "backdrop", width=1920, height=1080),
         )
 
     def download_image(self, source):
@@ -154,19 +191,80 @@ def make_hierarchy(context, csrf):
         db.flush()
         episode_ids = []
         for number in (1, 2):
-            episode = MediaItem(library_id=lib["id"], kind="episode", title=f"Episode {number}",
-                                sort_title=f"episode {number}")
+            episode = MediaItem(
+                library_id=lib["id"], kind="episode", title=f"Episode {number}", sort_title=f"episode {number}"
+            )
             db.add(episode)
             db.flush()
             db.add(Episode(media_item_id=episode.id, season_id=season.id, episode_number=number))
-            db.add(MediaFile(
-                media_item_id=episode.id, library_path_id=lib["paths"][0]["id"],
-                relative_path=f"Fixture.Show.S01E{number:02d}.mkv", size_bytes=30, modified_ns=1,
-                fingerprint="a" * 64, available=True, container="matroska", duration_seconds=2701,
-            ))
+            db.add(
+                MediaFile(
+                    media_item_id=episode.id,
+                    library_path_id=lib["paths"][0]["id"],
+                    relative_path=f"Fixture.Show.S01E{number:02d}.mkv",
+                    size_bytes=30,
+                    modified_ns=1,
+                    fingerprint="a" * 64,
+                    available=True,
+                    container="matroska",
+                    duration_seconds=2701,
+                )
+            )
             episode_ids.append(episode.id)
         db.commit()
         return lib, show.id, season.id, episode_ids
+
+
+def test_sparse_metadata_override_survives_provider_refresh_and_restores(owner_context):
+    context, csrf = owner_context
+    lib = library(context, csrf)
+    local_id = movie(context, lib, "Local")
+    provider = FixtureProvider(title="Provider title", year=2026)
+    with context.session_factory() as db:
+        item = db.get(MediaItem, local_id)
+        Enricher(db, context.config, provider)._persist(item, record_for(db, item), provider.movie)
+        db.commit()
+    with context.session_factory() as db:
+        item = db.get(MediaItem, local_id)
+        assert item is not None
+        edit.save(db, item, {"title": "Owner title", "genres": ["Drama", "Drama", " History "]}, [])
+        assert edit.read(db, item)["values"]["title"] == "Owner title"
+    provider.movie = replace(provider.movie, title="Refreshed provider title", overview="Refreshed overview")
+    enrich_movie(context, local_id, provider, force=True)
+    with context.session_factory() as db:
+        item = db.get(MediaItem, local_id)
+        assert item is not None
+        values = edit.read(db, item)["values"]
+        assert values["title"] == "Owner title"
+        assert values["overview"] == "Refreshed overview"
+        edit.save(db, item, {}, ["title"])
+        assert edit.read(db, item)["values"]["title"] == "Refreshed provider title"
+
+
+def test_artwork_pin_survives_refresh_and_can_restore(owner_context, monkeypatch):
+    context, csrf = owner_context
+    lib = library(context, csrf)
+    local_id = movie(context, lib, "Local")
+    provider = FixtureProvider()
+    with context.session_factory() as db:
+        item = db.get(MediaItem, local_id)
+        Enricher(db, context.config, provider)._persist(item, record_for(db, item), provider.movie)
+        db.commit()
+    monkeypatch.setattr("app.metadata.edit.configured_provider", lambda _config: provider)
+    with context.session_factory() as db:
+        item = db.get(MediaItem, local_id)
+        assert item is not None
+        candidate = edit.artwork_candidates(db, item, context.config, "poster")["items"][0]
+        edit.select_artwork(db, item, context.config, "poster", candidate["id"])
+        pinned = metadata_for(db, local_id).artwork_selections["poster"]["artwork_id"]
+    enrich_movie(context, local_id, provider, force=True)
+    with context.session_factory() as db:
+        item = db.get(MediaItem, local_id)
+        row = metadata_for(db, local_id)
+        assert row.artwork_selections["poster"]["artwork_id"] == pinned
+        assert db.get(LocalArtwork, pinned) is not None
+        edit.restore_artwork(db, item, "poster")
+        assert "poster" not in metadata_for(db, local_id).artwork_selections
 
 
 def test_movie_metadata_persists_locally_and_detail_reads_never_call_provider(owner_context, monkeypatch):
@@ -305,9 +403,14 @@ def test_unconfigured_provider_job_fails_only_when_enrichment_is_needed(owner_co
         row = record_for(db, item)
         if cached:
             row.status, row.title, row.metadata_updated_at = "complete", "Cached title", utcnow()
-        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1,
-                            locked_by="test-worker", lease_expires_at=utcnow() + timedelta(minutes=15),
-                            payload={"library_id": lib["id"], "force": force})
+        job = BackgroundJob(
+            job_type="metadata_enrich",
+            status="running",
+            attempts=1,
+            locked_by="test-worker",
+            lease_expires_at=utcnow() + timedelta(minutes=15),
+            payload={"library_id": lib["id"], "force": force},
+        )
         db.add(job)
         db.commit()
         run_metadata_job(db, job, context.config)
@@ -320,8 +423,9 @@ def test_unconfigured_provider_job_fails_only_when_enrichment_is_needed(owner_co
             assert row.status == "unavailable" and row.error_code == "provider_not_configured"
         if not cached or force:
             assert "not configured" in job.error_summary
-            assert db.scalar(select(BackgroundJobEvent.event_type).where(
-                BackgroundJobEvent.job_id == job.id)) == "failed"
+            assert (
+                db.scalar(select(BackgroundJobEvent.event_type).where(BackgroundJobEvent.job_id == job.id)) == "failed"
+            )
         assert claim_next_job(db, context.config, "another-worker") is None
 
 
@@ -421,13 +525,24 @@ def test_provider_artwork_opaque_relay_profile_season_and_authorization(owner_co
     assert seasons[0]["name"] == "A Named First Season" and seasons[0]["show_id"] == show_alias
     for artwork_id in (detail["artwork_id"], detail["background_id"], profile_id, seasons[0]["artwork_id"]):
         assert decode(call(media, auth, "artwork.bytes", artwork_id=artwork_id)["data"]).startswith(b"\xff\xd8\xff")
-        for invalid in ({**auth, "authorized": False}, {**auth, "expires_at": 0},
-                        {**auth, "agent_id": str(uuid.uuid4())}):
+        for invalid in (
+            {**auth, "authorized": False},
+            {**auth, "expires_at": 0},
+            {**auth, "agent_id": str(uuid.uuid4())},
+        ):
             with pytest.raises(HTTPException):
                 call(media, invalid, "artwork.bytes", artwork_id=artwork_id)
     serialized = json.dumps({"detail": detail, "seasons": seasons}, default=str)
-    for forbidden in (str(context.media_root), str(context.config.artwork_dir), "private-provider", local_id,
-                      "poster_url", "profile_url", "api.themoviedb.org", "image.tmdb.org"):
+    for forbidden in (
+        str(context.media_root),
+        str(context.config.artwork_dir),
+        "private-provider",
+        local_id,
+        "poster_url",
+        "profile_url",
+        "api.themoviedb.org",
+        "image.tmdb.org",
+    ):
         assert forbidden not in serialized
     viewer = {**auth, "user_id": str(uuid.uuid4()), "session_id": str(uuid.uuid4()), "role": "viewer"}
     call(media, auth, "grants.set", user_id=viewer["user_id"], library_ids=[])
@@ -463,20 +578,38 @@ def test_artwork_cache_deduplicates_repairs_corruption_and_rejects_invalid_image
         assert len(provider.calls) == 2
         provider.download_image = lambda _source: (b"<html>upstream error</html>", "image/jpeg")
         with pytest.raises(ProviderError, match="invalid_image"):
-            cache_image(db, context.config, provider, db.get(MediaItem, first),
-                        ArtworkSource("tmdb", "/invalid-image.jpg", "poster"))
+            cache_image(
+                db,
+                context.config,
+                provider,
+                db.get(MediaItem, first),
+                ArtworkSource("tmdb", "/invalid-image.jpg", "poster"),
+            )
         assert db.scalar(select(func.count()).select_from(LocalArtwork)) == 2
-    for path in ("../secret.jpg", str(Path(context.config.artwork_dir) / "outside.jpg"), "https://image.tmdb.org/x.jpg"):
+    for path in (
+        "../secret.jpg",
+        str(Path(context.config.artwork_dir) / "outside.jpg"),
+        "https://image.tmdb.org/x.jpg",
+    ):
         with pytest.raises(HTTPException):
             cached_file(context.config, path)
 
 
-@pytest.mark.parametrize("code,status", [
-    ("rate_limited", 429), ("temporarily_unavailable", 500), ("temporarily_unavailable", 503),
-    ("timeout", None), ("network_error", None),
-])
+@pytest.mark.parametrize(
+    "code,status",
+    [
+        ("rate_limited", 429),
+        ("temporarily_unavailable", 500),
+        ("temporarily_unavailable", 503),
+        ("timeout", None),
+        ("network_error", None),
+    ],
+)
 def test_provider_outage_stops_library_requests_and_schedules_bounded_retry(
-    owner_context, monkeypatch, code, status,
+    owner_context,
+    monkeypatch,
+    code,
+    status,
 ):
     context, csrf = owner_context
     lib = library(context, csrf)
@@ -487,8 +620,9 @@ def test_provider_outage_stops_library_requests_and_schedules_bounded_retry(
     now = utcnow()
     monkeypatch.setattr("app.metadata.service.utcnow", lambda: now)
     with context.session_factory() as db:
-        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1,
-                            payload={"library_id": lib["id"], "force": False})
+        job = BackgroundJob(
+            job_type="metadata_enrich", status="running", attempts=1, payload={"library_id": lib["id"], "force": False}
+        )
         db.add(job)
         db.commit()
         run_metadata_job(db, job, context.config)
@@ -515,8 +649,7 @@ def test_provider_retry_after_survives_the_worker_job_boundary(owner_context, mo
     now = utcnow()
     monkeypatch.setattr("app.metadata.service.utcnow", lambda: now)
     with context.session_factory() as db:
-        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1,
-                            payload={"library_id": lib["id"]})
+        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1, payload={"library_id": lib["id"]})
         db.add(job)
         db.commit()
         run_metadata_job(db, job, context.config)
@@ -538,8 +671,9 @@ def test_scheduled_retry_retries_recent_error_without_refetching_successful_reco
         complete.provider, complete.provider_id = "tmdb", "777"
         complete.status, complete.title, complete.overview = "complete", "Previously Complete", "Preserved overview."
         complete.metadata_updated_at = before
-        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1,
-                            payload={"library_id": lib["id"], "force": False})
+        job = BackgroundJob(
+            job_type="metadata_enrich", status="running", attempts=1, payload={"library_id": lib["id"], "force": False}
+        )
         db.add(job)
         db.commit()
         run_metadata_job(db, job, context.config)
@@ -570,8 +704,13 @@ def test_automatic_retry_does_not_repeat_original_force_refresh_or_retry_forever
         complete.title, complete.metadata_updated_at = "Completed By First Attempt", utcnow()
         failed = record_for(db, db.get(MediaItem, failed_id))
         failed.status, failed.attempted_at = "error", utcnow()
-        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=2, max_attempts=3,
-                            payload={"library_id": lib["id"], "force": True})
+        job = BackgroundJob(
+            job_type="metadata_enrich",
+            status="running",
+            attempts=2,
+            max_attempts=3,
+            payload={"library_id": lib["id"], "force": True},
+        )
         db.add(job)
         db.commit()
         run_metadata_job(db, job, context.config)
@@ -610,8 +749,12 @@ def test_retry_only_job_preserves_complete_reviewable_and_manually_cleared_recor
         failed = record_for(db, db.get(MediaItem, failed_id))
         failed.status, failed.attempted_at = "error", utcnow()
         failed.error_code = "temporarily_unavailable"
-        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1,
-                            payload={"library_id": lib["id"], "force": False, "retry_only": True})
+        job = BackgroundJob(
+            job_type="metadata_enrich",
+            status="running",
+            attempts=1,
+            payload={"library_id": lib["id"], "force": False, "retry_only": True},
+        )
         db.add(job)
         db.commit()
         run_metadata_job(db, job, context.config)
@@ -643,19 +786,30 @@ def test_episode_never_uses_another_providers_series_identifier(owner_context, s
 
 @pytest.mark.parametrize("credential_mode", ["direct", "file", "both", "none"])
 def test_native_activation_exports_private_token_fields_without_serializing_them(
-    context, tmp_path, monkeypatch, capsys, credential_mode,
+    context,
+    tmp_path,
+    monkeypatch,
+    capsys,
+    credential_mode,
 ):
     direct = "unit-test-direct-token-0123456789"
     from_file = "unit-test-file-token-9876543210"
     secret_file = tmp_path / "private-credential.txt"
     secret_file.write_text(from_file, encoding="utf-8")
-    configuration = context.config.model_copy(update={
-        "tmdb_access_token": SecretStr(direct) if credential_mode in {"direct", "both"} else None,
-        "tmdb_token_file": secret_file if credential_mode in {"file", "both"} else None,
-    })
+    configuration = context.config.model_copy(
+        update={
+            "tmdb_access_token": SecretStr(direct) if credential_mode in {"direct", "both"} else None,
+            "tmdb_token_file": secret_file if credential_mode in {"file", "both"} else None,
+        }
+    )
     installation = native_runtime.Installation(
-        program_dir=tmp_path / "program", data_dir=tmp_path,
-        service_prefix="FixtureAgent", port=18080, api_port=18081, web_port=18082, bind_address="127.0.0.1",
+        program_dir=tmp_path / "program",
+        data_dir=tmp_path,
+        service_prefix="FixtureAgent",
+        port=18080,
+        api_port=18081,
+        web_port=18082,
+        bind_address="127.0.0.1",
     )
     environment = {"TMDB_ACCESS_TOKEN": "stale-inherited-value", "TMDB_TOKEN_FILE": "stale-inherited-file"}
     monkeypatch.setattr(os, "environ", environment)
@@ -671,8 +825,9 @@ def test_native_activation_exports_private_token_fields_without_serializing_them
     else:
         assert "TMDB_TOKEN_FILE" not in environment
     reloaded = AppConfig(_env_file=None)
-    assert reloaded.tmdb_token == (direct if credential_mode in {"direct", "both"} else
-                                   from_file if credential_mode == "file" else "")
+    assert reloaded.tmdb_token == (
+        direct if credential_mode in {"direct", "both"} else from_file if credential_mode == "file" else ""
+    )
     for dumped in (configuration.model_dump(), configuration.model_dump_json(), repr(configuration)):
         text = str(dumped)
         for private in ("tmdb_access_token", "tmdb_token_file", direct, from_file, str(secret_file)):

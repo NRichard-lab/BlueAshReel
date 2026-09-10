@@ -261,6 +261,11 @@ class Enricher:
         images.extend(credit.profile for credit in details.credits[:10] if credit.profile is not None)
         profile_ids: dict[str, str] = {}
         retained: set[str] = set()
+        retained.update(
+            value.get("artwork_id")
+            for value in (row.artwork_selections or {}).values()
+            if isinstance(value, dict) and isinstance(value.get("artwork_id"), str)
+        )
         image_error: ProviderError | None = None
         for source in dict.fromkeys(images):
             if season_number is not None and source.kind != "poster":

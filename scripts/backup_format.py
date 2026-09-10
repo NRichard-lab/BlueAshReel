@@ -18,7 +18,7 @@ from typing import Any
 ARCHIVE_FORMAT = "home-media-backup"
 MANIFEST_VERSION = 1
 PHASE1_REVISION = "773863f5a6aa"
-EXPECTED_ALEMBIC_HEAD = "2d0100000001"
+EXPECTED_ALEMBIC_HEAD = "2e0100000001"
 MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database/app.db"
 PRODUCT_CONFIG_MEMBER = "configuration/product/product.json"
@@ -60,17 +60,47 @@ PHASE1_TABLES = frozenset(
 )
 SCHEMAS_BY_REVISION = {
     PHASE1_REVISION: PHASE1_TABLES,
-    "2a0100000001": PHASE1_TABLES | {"user_libraries", "user_preferences", "watch_progress", "media_search"},
-    "2b0100000001": PHASE1_TABLES | {
-        "user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions",
+    "2a0100000001": PHASE1_TABLES
+    | {"user_libraries", "user_preferences", "watch_progress", "media_search"},
+    "2b0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
     },
-    "2c0100000001": PHASE1_TABLES | {
-        "user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions",
-        "portal_grants", "remote_objects",
+    "2c0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
+        "portal_grants",
+        "remote_objects",
     },
-    "2d0100000001": PHASE1_TABLES | {
-        "user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions",
-        "portal_grants", "remote_objects", "metadata_records",
+    "2d0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
+        "portal_grants",
+        "remote_objects",
+        "metadata_records",
+    },
+    "2e0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
+        "portal_grants",
+        "remote_objects",
+        "metadata_records",
     },
 }
 REQUIRED_APPLICATION_TABLES = SCHEMAS_BY_REVISION[EXPECTED_ALEMBIC_HEAD]
@@ -152,7 +182,9 @@ def installed_alembic_head() -> str:
         if directory.is_dir():
             if head := _head_from_migration_directory(directory):
                 return head
-            raise BackupFormatError("Installed migrations do not have one unambiguous head")
+            raise BackupFormatError(
+                "Installed migrations do not have one unambiguous head"
+            )
     return EXPECTED_ALEMBIC_HEAD
 
 
@@ -272,8 +304,13 @@ def assert_no_link_components(path: Path, *, allow_missing: bool = False) -> Non
             if allow_missing:
                 continue
             raise
-        if stat.S_ISLNK(information.st_mode) or getattr(information, "st_file_attributes", 0) & 0x400:
-            raise BackupFormatError("Backup sources and destinations cannot contain symbolic links or reparse points")
+        if (
+            stat.S_ISLNK(information.st_mode)
+            or getattr(information, "st_file_attributes", 0) & 0x400
+        ):
+            raise BackupFormatError(
+                "Backup sources and destinations cannot contain symbolic links or reparse points"
+            )
 
 
 def validate_native_configuration(archive: zipfile.ZipFile, members: set[str]) -> None:
@@ -296,18 +333,41 @@ def validate_native_configuration(archive: zipfile.ZipFile, members: set[str]) -
     if not 0 < archive.getinfo(proxy_name).file_size <= 262144:
         raise BackupFormatError("Native proxy configuration has an invalid size")
     try:
-        metadata = json.loads(archive.read(metadata_name), object_pairs_hook=_strict_object)
+        metadata = json.loads(
+            archive.read(metadata_name), object_pairs_hook=_strict_object
+        )
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise BackupFormatError("Native installation metadata is invalid JSON") from error
+        raise BackupFormatError(
+            "Native installation metadata is invalid JSON"
+        ) from error
     if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
-        raise BackupFormatError("Native installation metadata has an unsupported schema")
-    text_fields = ("instance", "service_prefix", "program_dir", "data_dir", "bind_address")
-    if any(not isinstance(metadata.get(key), str) or not metadata[key].strip() for key in text_fields):
-        raise BackupFormatError("Native installation metadata is missing recovery identity or paths")
+        raise BackupFormatError(
+            "Native installation metadata has an unsupported schema"
+        )
+    text_fields = (
+        "instance",
+        "service_prefix",
+        "program_dir",
+        "data_dir",
+        "bind_address",
+    )
+    if any(
+        not isinstance(metadata.get(key), str) or not metadata[key].strip()
+        for key in text_fields
+    ):
+        raise BackupFormatError(
+            "Native installation metadata is missing recovery identity or paths"
+        )
     for key in ("port", "api_port", "web_port"):
         value = metadata.get(key)
-        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
-            raise BackupFormatError("Native installation metadata has invalid recovery ports")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 1 <= value <= 65535
+        ):
+            raise BackupFormatError(
+                "Native installation metadata has invalid recovery ports"
+            )
 
 
 def validate_backup_archive(

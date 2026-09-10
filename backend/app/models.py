@@ -49,6 +49,7 @@ class ApplicationSetting(Base):
 
 class PortalGrant(Base):
     """Only opaque Portal identities and locally approved permissions live here."""
+
     __tablename__ = "portal_grants"
     portal_user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     agent_id: Mapped[str] = mapped_column(String(36), nullable=False)
@@ -60,6 +61,7 @@ class PortalGrant(Base):
 
 class RemoteObject(Base):
     """Random, Agent-scoped revocable aliases; never disclose local database IDs."""
+
     __tablename__ = "remote_objects"
     __table_args__ = (UniqueConstraint("agent_id", "kind", "local_id", name="uq_remote_object"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -388,9 +390,7 @@ class MetadataRecord(Base):
         Index("ix_metadata_provider_item", "provider", "kind", "provider_id"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    media_item_id: Mapped[str | None] = mapped_column(
-        ForeignKey("media_items.id", ondelete="CASCADE"), unique=True
-    )
+    media_item_id: Mapped[str | None] = mapped_column(ForeignKey("media_items.id", ondelete="CASCADE"), unique=True)
     season_id: Mapped[str | None] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), unique=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="unmatched", nullable=False)
@@ -430,6 +430,10 @@ class MetadataRecord(Base):
     error_code: Mapped[str | None] = mapped_column(String(80))
     # A user-cleared match stays clear until an explicit assign/refresh request.
     auto_match_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Sparse presentation-only values. Provider identity and source metadata stay above.
+    field_overrides: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    # kind -> {provider, provider_path, artwork_id}; extensible to local/upload sources later.
+    artwork_selections: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
 
 class BackgroundJob(Base):

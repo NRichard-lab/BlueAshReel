@@ -152,9 +152,16 @@ def primary_video_height() -> ScalarSelect[int | None]:
 
 def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | None = None) -> list[dict[str, Any]]:
     ids = [item.id for item in items]
-    descriptive = {row.media_item_id: row for row in db.scalars(
-        select(MetadataRecord).where(MetadataRecord.media_item_id.in_(ids), MetadataRecord.title.is_not(None))
-    )} if ids else {}
+    descriptive = (
+        {
+            row.media_item_id: row
+            for row in db.scalars(
+                select(MetadataRecord).where(MetadataRecord.media_item_id.in_(ids), MetadataRecord.title.is_not(None))
+            )
+        }
+        if ids
+        else {}
+    )
     height = primary_video_height()
     ranking = (
         select(
@@ -222,6 +229,7 @@ def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | N
     )
     for item in items:
         metadata = descriptive.get(item.id)
+        selected_poster = (metadata.artwork_selections or {}).get("poster", {}).get("artwork_id") if metadata else None
         file = best.get(item.id)
         video = min(file.video_streams, key=lambda stream: stream.stream_index) if file and file.video_streams else None
         state = progress.get(item.id)
@@ -231,13 +239,21 @@ def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | N
                 "id": item.id,
                 "library_id": item.library_id,
                 "kind": item.kind,
-                "title": metadata.title if metadata and metadata.title else item.title,
-                "year": metadata.year if metadata and metadata.year else item.year,
+                "title": ((metadata.field_overrides or {}).get("title") if metadata else None)
+                or (metadata.title if metadata and metadata.title else item.title),
+                "year": ((metadata.field_overrides or {}).get("year") if metadata else None)
+                or (metadata.year if metadata and metadata.year else item.year),
                 "available": bool(file and file.available) or item.id in available_shows,
                 "file_id": file.id if file and file.available else None,
                 "duration_seconds": file.duration_seconds if file else None,
                 "height": video.height if video else None,
-                "poster_url": f"/api/v1/browse/artwork/{artwork[item.id]}" if item.id in artwork else None,
+                "poster_url": (
+                    f"/api/v1/browse/artwork/{selected_poster}"
+                    if selected_poster
+                    else f"/api/v1/browse/artwork/{artwork[item.id]}"
+                    if item.id in artwork
+                    else None
+                ),
                 "position_seconds": state.position_seconds if state else 0,
                 "watched": state.watched if state else False,
                 "completion": min(100, state.position_seconds / state.duration_seconds * 100)

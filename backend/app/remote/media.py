@@ -107,8 +107,9 @@ class RemoteMedia:
             raise HTTPException(404, "Unavailable")
         return identifier(row.local_id)
 
-    def external(self, db: Any, value: Any, kind: str = "media",
-                 aliases: dict[tuple[str, str], str] | None = None) -> Any:
+    def external(
+        self, db: Any, value: Any, kind: str = "media", aliases: dict[tuple[str, str], str] | None = None
+    ) -> Any:
         if isinstance(value, list):
             return [self.external(db, item, kind, aliases) for item in value]
         if not isinstance(value, dict):
@@ -126,10 +127,20 @@ class RemoteMedia:
         }
         for key, item in value.items():
             if key in {"poster_url", "background_url", "profile_url"}:
-                result[{"poster_url": "artwork_id", "background_url": "background_id",
-                        "profile_url": "profile_artwork_id"}[key]] = (
-                    (aliases[("artwork", item.rsplit("/", 1)[-1])] if aliases is not None
-                     else self.alias(db, "artwork", item.rsplit("/", 1)[-1])) if item else None
+                result[
+                    {
+                        "poster_url": "artwork_id",
+                        "background_url": "background_id",
+                        "profile_url": "profile_artwork_id",
+                    }[key]
+                ] = (
+                    (
+                        aliases[("artwork", item.rsplit("/", 1)[-1])]
+                        if aliases is not None
+                        else self.alias(db, "artwork", item.rsplit("/", 1)[-1])
+                    )
+                    if item
+                    else None
                 )
             elif key == "error_summary":
                 result[key] = "The local scan encountered an error. Review the Agent logs." if item else None
@@ -140,8 +151,12 @@ class RemoteMedia:
             elif key in ids and item is not None:
                 result[key] = aliases[(ids[key], item)] if aliases is not None else self.alias(db, ids[key], item)
             else:
-                child_kind = "file" if key == "files" else "path" if key == "paths" else (
-                    "library" if key == "libraries" else kind
+                child_kind = (
+                    "file"
+                    if key == "files"
+                    else "path"
+                    if key == "paths"
+                    else ("library" if key == "libraries" else kind)
                 )
                 result[key] = self.external(db, item, child_kind, aliases)
         return result
@@ -154,8 +169,12 @@ class RemoteMedia:
             if key == "libraries":
                 continue
             for item in rail:
-                for field, kind in (("id", "media"), ("library_id", "library"),
-                                    ("file_id", "file"), ("show_id", "media")):
+                for field, kind in (
+                    ("id", "media"),
+                    ("library_id", "library"),
+                    ("file_id", "file"),
+                    ("show_id", "media"),
+                ):
                     if item.get(field):
                         references.add((kind, item[field]))
                 if item.get("poster_url"):
@@ -163,10 +182,12 @@ class RemoteMedia:
         aliases = {}
         ordered = sorted(references)
         for offset in range(0, len(ordered), 400):
-            for row in db.scalars(select(RemoteObject).where(
-                RemoteObject.agent_id == self.agent_id,
-                tuple_(RemoteObject.kind, RemoteObject.local_id).in_(ordered[offset:offset + 400]),
-            )):
+            for row in db.scalars(
+                select(RemoteObject).where(
+                    RemoteObject.agent_id == self.agent_id,
+                    tuple_(RemoteObject.kind, RemoteObject.local_id).in_(ordered[offset : offset + 400]),
+                )
+            ):
                 if row.revoked:
                     raise HTTPException(404, "Unavailable")
                 aliases[(row.kind, row.local_id)] = row.id
@@ -398,7 +419,9 @@ class RemoteMedia:
                 policy = read_policy(db, self.config)
                 if op == "transcoding.update":
                     if set(args) - {"mode", "preferred_hardware"} or args.get("mode") not in {
-                        "automatic", "hardware_preferred", "software_only"
+                        "automatic",
+                        "hardware_preferred",
+                        "software_only",
                     }:
                         raise ValueError("Invalid transcoding settings")
                     policy = TranscodingPolicy.model_validate({**policy.model_dump(), **args})
@@ -409,11 +432,15 @@ class RemoteMedia:
                     self.manager.detect_hardware(policy)
                 health = self.manager.health()
                 return {
-                    "mode": policy.mode, "preferred_hardware": policy.preferred_hardware,
-                    "selected_encoder": health["selected_encoder"], "fallback": health["software_fallback"],
+                    "mode": policy.mode,
+                    "preferred_hardware": policy.preferred_hardware,
+                    "selected_encoder": health["selected_encoder"],
+                    "fallback": health["software_fallback"],
                     "fallback_reason": health["failure"],
-                    "hardware_tests": [{k: value[k] for k in ("encoder", "test_status", "last_test_at", "failure")}
-                                       for value in health["hardware_tests"]],
+                    "hardware_tests": [
+                        {k: value[k] for k in ("encoder", "test_status", "last_test_at", "failure")}
+                        for value in health["hardware_tests"]
+                    ],
                 }
             elif op == "streams.list":
                 self.owner(authorization)
@@ -457,20 +484,59 @@ class RemoteMedia:
                 )
             elif op == "catalog.detail":
                 result = catalog.detail(self.resolve(db, "media", args["media_id"]), page, principal, db)
-            elif op in {"metadata.defaults", "metadata.search", "metadata.identify", "metadata.preview"}:
+            elif op in {
+                "metadata.defaults",
+                "metadata.search",
+                "metadata.identify",
+                "metadata.preview",
+                "metadata.edit.read",
+                "metadata.edit.save",
+                "metadata.artwork.candidates",
+                "metadata.artwork.preview",
+                "metadata.artwork.select",
+                "metadata.artwork.restore",
+            }:
                 self.owner(authorization)
                 from app.metadata import identify
                 from app.metadata.provider import ProviderError
                 from app.services.catalog import load_item
 
                 permitted = {"media_id"} | (
-                    {"title", "year"} if op == "metadata.search" else
-                    {"provider_id"} if op in {"metadata.identify", "metadata.preview"} else set())
+                    {"title", "year"}
+                    if op == "metadata.search"
+                    else {"provider_id"}
+                    if op in {"metadata.identify", "metadata.preview"}
+                    else set()
+                )
+                if op == "metadata.edit.save":
+                    permitted |= {"values", "restore"}
+                if op.startswith("metadata.artwork."):
+                    permitted |= {"kind", "candidate_id"}
                 if set(args) - permitted:
                     raise ValueError("Invalid metadata request")
                 item = load_item(db, principal.user.id, self.resolve(db, "media", args["media_id"]))
                 try:
-                    if op == "metadata.defaults":
+                    if op.startswith("metadata.edit.") or op.startswith("metadata.artwork."):
+                        from app.metadata import edit
+
+                        if op == "metadata.edit.read":
+                            return edit.read(db, item)
+                        if op == "metadata.edit.save":
+                            edit.save(db, item, args.get("values", {}), args.get("restore", []))
+                            result = catalog.detail(item.id, page, principal, db)
+                        elif op == "metadata.artwork.candidates":
+                            return edit.artwork_candidates(db, item, self.config, args.get("kind"))
+                        elif op == "metadata.artwork.preview":
+                            return edit.artwork_preview(
+                                db, item, self.config, args.get("kind"), args.get("candidate_id")
+                            )
+                        elif op == "metadata.artwork.select":
+                            edit.select_artwork(db, item, self.config, args.get("kind"), args.get("candidate_id"))
+                            result = catalog.detail(item.id, page, principal, db)
+                        elif op == "metadata.artwork.restore":
+                            edit.restore_artwork(db, item, args.get("kind"))
+                            result = catalog.detail(item.id, page, principal, db)
+                    elif op == "metadata.defaults":
                         return identify.defaults(db, item)
                     if op == "metadata.search":
                         return identify.search(db, item, self.config, args.get("title"), args.get("year"))
