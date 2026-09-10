@@ -14,7 +14,7 @@ _TV_PATTERNS = (
         re.IGNORECASE,
     ),
 )
-_YEAR = re.compile(r"(?:^|[ ._\-(])(?P<year>(?:19|20)\d{2})(?:$|[ ._\-)])")
+_YEAR = re.compile(r"(?:^|[ ._\-(])(?P<year>(?:19|20)\d{2})(?=$|[ ._\-)])")
 _NOISE = re.compile(
     r"\b(?:2160p|1080p|720p|480p|bluray|blu-ray|webrip|web-dl|hdtv|dvdrip|x26[45]|h\.?26[45]|hevc|av1|remux)\b.*$",
     re.IGNORECASE,
@@ -57,7 +57,12 @@ def parse_filename(path: str | Path, library_type: str = "other") -> ParsedFilen
                 confidence=0.92,
             )
 
-    year_match = _YEAR.search(stem)
+    # A release year needs a title before it. Keep a leading year-shaped number
+    # as part of the title, and leave separators available for adjacent years.
+    year_match = next(
+        (match for match in _YEAR.finditer(stem) if _clean(stem[:match.start()]).strip("()[] ")),
+        None,
+    )
     year = int(year_match.group("year")) if year_match else None
     title_source = stem[: year_match.start()] if year_match else stem
     cleaned = _clean(_NOISE.sub("", title_source)) or _clean(stem) or "Untitled"

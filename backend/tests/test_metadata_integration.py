@@ -33,6 +33,7 @@ from app.metadata.service import (
 from app.metadata.types import ArtworkSource, Candidate, Credit, MetadataDetails
 from app.models import (
     BackgroundJob,
+    BackgroundJobEvent,
     Episode,
     LibraryPath,
     LocalArtwork,
@@ -291,6 +292,59 @@ def test_missing_token_uses_truthful_local_data_and_scanner_queue_failure_is_iso
     assert detail["title"] == "Local" and detail["metadata_status"] == "unavailable"
     assert detail["overview"] is None and detail["rating"] is None and detail["credits"] == []
     assert detail["related"] == [] and detail["files"][0]["available"] is True
+
+
+@pytest.mark.parametrize(("cached", "force"), [(False, False), (True, False), (True, True)])
+def test_unconfigured_provider_job_fails_only_when_enrichment_is_needed(owner_context, monkeypatch, cached, force):
+    context, csrf = owner_context
+    lib = library(context, csrf)
+    local_id = movie(context, lib, "Local")
+    monkeypatch.setattr("app.metadata.service.configured_provider", lambda _config: None)
+    with context.session_factory() as db:
+        item = db.get(MediaItem, local_id)
+        row = record_for(db, item)
+        if cached:
+            row.status, row.title, row.metadata_updated_at = "complete", "Cached title", utcnow()
+        job = BackgroundJob(job_type="metadata_enrich", status="running", attempts=1,
+                            locked_by="test-worker", lease_expires_at=utcnow() + timedelta(minutes=15),
+                            payload={"library_id": lib["id"], "force": force})
+        db.add(job)
+        db.commit()
+        run_metadata_job(db, job, context.config)
+        assert job.status == ("succeeded" if cached and not force else "failed")
+        assert job.completed_at and job.locked_by is None and job.lease_expires_at is None
+        assert job.progress_current == 1 and item.available
+        if cached:
+            assert row.status == "complete" and row.title == "Cached title"
+        else:
+            assert row.status == "unavailable" and row.error_code == "provider_not_configured"
+        if not cached or force:
+            assert "not configured" in job.error_summary
+            assert db.scalar(select(BackgroundJobEvent.event_type).where(
+                BackgroundJobEvent.job_id == job.id)) == "failed"
+        assert claim_next_job(db, context.config, "another-worker") is None
+
+
+@pytest.mark.parametrize("contents", [None, "", " \r\n", "too-short", "Bearer invalid-token-0123456789"])
+def test_missing_or_malformed_token_file_disables_provider(context, tmp_path, contents):
+    credential = tmp_path / "tmdb-token.txt"
+    if contents is not None:
+        credential.write_text(contents, encoding="utf-8")
+    config = context.config.model_copy(update={"tmdb_access_token": None, "tmdb_token_file": credential})
+    assert config.tmdb_token == ""
+    assert configured_provider(config) is None
+
+
+def test_token_file_with_bom_and_trailing_newline_is_loaded_privately(context, tmp_path):
+    credential = tmp_path / "tmdb-token.txt"
+    token = "synthetic-test-token-0123456789"  # noqa: S105 - deliberately fake credential
+    credential.write_text(token + "\r\n", encoding="utf-8-sig")
+    config = context.config.model_copy(update={"tmdb_access_token": None, "tmdb_token_file": credential})
+    assert config.tmdb_token == token
+    assert token not in repr(config) and token not in config.model_dump_json()
+    provider = configured_provider(config)
+    assert provider is not None
+    provider.close()
 
 
 def test_manual_match_and_clear_survive_routine_rescan(owner_context, monkeypatch):

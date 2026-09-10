@@ -77,6 +77,7 @@ class Enricher:
         self.visited: set[str] = set()
         self.seasons: set[str] = set()
         self.stop_provider = False
+        self.provider_unconfigured = False
         self.retry_delay_seconds = 15 * 60.0
 
     def _due(self, row: MetadataRecord, force: bool) -> bool:
@@ -98,6 +99,7 @@ class Enricher:
             return row
         self.visited.add(item.id)
         if self.provider is None:
+            self.provider_unconfigured = True
             if not row.title:
                 row.status, row.error_code = "unavailable", "provider_not_configured"
             self.db.commit()
@@ -438,6 +440,11 @@ def run_metadata_job(
                     db.commit()
                 if enricher.stop_provider:
                     break
+        if enricher.provider_unconfigured:
+            from app.services.jobs import fail_job
+
+            fail_job(db, job, "Metadata provider not configured; indexed media remains playable", retryable=False)
+            return
         if enricher.stop_provider:
             from app.services.jobs import fail_job
 

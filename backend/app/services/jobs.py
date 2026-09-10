@@ -161,12 +161,12 @@ def claim_next_job(db: Session, config: AppConfig, worker_id: str | None = None)
     return None
 
 
-def fail_job(db: Session, job: BackgroundJob, summary: str) -> None:
+def fail_job(db: Session, job: BackgroundJob, summary: str, *, retryable: bool = True) -> None:
     now = utcnow()
     job.locked_by = None
     job.lease_expires_at = None
     job.error_summary = summary[:500]
-    if job.attempts < job.max_attempts and not job.cancel_requested:
+    if retryable and job.attempts < job.max_attempts and not job.cancel_requested:
         job.status = "retry_wait"
         job.available_at = now + timedelta(seconds=min(300, 2**job.attempts))
         event_type = "retry_scheduled"
