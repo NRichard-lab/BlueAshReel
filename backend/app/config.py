@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -104,6 +105,9 @@ class AppConfig(BaseSettings):
     # Private connector/tray spool. Per-user native mode serves encrypted media
     # through its outbound canonical Portal connection; media data stays local.
     remote_control_dir: Path | None = None
+    local_transport_enabled: bool = False
+    local_transport_address: str = "127.0.0.1"
+    local_transport_port: int = Field(default=18443, ge=1024, le=65535)
     log_level: str = "INFO"
     ffprobe_path: str = "ffprobe"
     ffmpeg_path: str = "ffmpeg"
@@ -151,6 +155,21 @@ class AppConfig(BaseSettings):
         if any(marker in lowered for marker in placeholders) or len(set(value)) < 12:
             raise ValueError("APP_SECRET_KEY must be a securely generated, non-placeholder secret")
         return value
+
+    @field_validator("local_transport_address")
+    @classmethod
+    def private_local_transport_address(cls, value: str) -> str:
+        address = ipaddress.ip_address(value)
+        private_ranges = tuple(ipaddress.ip_network(item) for item in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+        if value != "127.0.0.1" and (address.version != 4 or not any(address in item for item in private_ranges)):
+            raise ValueError("Local transport requires one RFC1918 IPv4 address")
+        return str(address)
+
+    @model_validator(mode="after")
+    def enabled_local_transport_has_lan_address(self) -> AppConfig:
+        if self.local_transport_enabled and ipaddress.ip_address(self.local_transport_address).is_loopback:
+            raise ValueError("Enabled local transport requires one RFC1918 IPv4 address")
+        return self
 
     @property
     def tmdb_token(self) -> str:

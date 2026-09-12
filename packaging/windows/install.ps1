@@ -440,6 +440,20 @@ function Set-InstanceFirewall {
         if ($taskInbound.Group -ne $TaskPrefix) { throw 'An inbound firewall rule identity conflicts with this installer.' }
         $taskInbound | Remove-NetFirewallRule
     }
+    $taskLocalRule = Get-NetFirewallRule -Name "$TaskPrefix-Inbound-LocalTransport" -ErrorAction SilentlyContinue
+    if ($taskLocalRule) {
+        if ($taskLocalRule.Group -ne $TaskPrefix) { throw 'A firewall rule identity conflicts with this installer.' }
+        $taskLocalRule | Remove-NetFirewallRule
+    }
+    $taskEnvironment = Join-Path $DataDir 'configuration\.env'
+    $taskLocalEnabled = [string](Select-String -LiteralPath $taskEnvironment -Pattern '^LOCAL_TRANSPORT_ENABLED=' | Select-Object -First 1)
+    if ($taskLocalEnabled -match '=\s*"?true"?\s*$') {
+        $taskLocalAddress = ([string](Select-String -LiteralPath $taskEnvironment -Pattern '^LOCAL_TRANSPORT_ADDRESS=' | Select-Object -First 1)).Split('=',2)[1].Trim('"')
+        $taskLocalPort = [int](([string](Select-String -LiteralPath $taskEnvironment -Pattern '^LOCAL_TRANSPORT_PORT=' | Select-Object -First 1)).Split('=',2)[1].Trim('"'))
+        New-NetFirewallRule -Name "$TaskPrefix-Inbound-LocalTransport" -DisplayName "$TaskPrefix authenticated local transport" -Group $TaskPrefix `
+            -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol TCP -LocalPort $taskLocalPort `
+            -LocalAddress $taskLocalAddress -RemoteAddress LocalSubnet -Program (Join-Path $ProgramDir 'runtime\python\python.exe') | Out-Null
+    }
     $taskMetadata = Get-Content -LiteralPath (Join-Path $DataDir 'configuration\installation.json') -Raw | ConvertFrom-Json
     if ($taskMetadata.bind_address -ne '127.0.0.1') {
         New-NetFirewallRule -Name "$TaskPrefix-Inbound-PrivateLAN" -DisplayName "$TaskPrefix private-LAN access" -Group $TaskPrefix `
@@ -449,7 +463,7 @@ function Set-InstanceFirewall {
 }
 
 function Remove-InstanceFirewall {
-    foreach ($taskName in @('Outbound-python','Outbound-node','Outbound-ffmpeg','Outbound-ffprobe','Outbound-caddy','Inbound-PrivateLAN')) {
+    foreach ($taskName in @('Outbound-python','Outbound-node','Outbound-ffmpeg','Outbound-ffprobe','Outbound-caddy','Inbound-PrivateLAN','Inbound-LocalTransport')) {
         $taskRule = Get-NetFirewallRule -Name "$TaskPrefix-$taskName" -ErrorAction SilentlyContinue
         if ($taskRule) {
             if ($taskRule.Group -ne $TaskPrefix) { throw 'A firewall rule identity conflicts with this installer; it was preserved.' }

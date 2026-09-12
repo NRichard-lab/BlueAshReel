@@ -76,10 +76,11 @@ class EncryptedSession:
     last_active: float
     receive_sequence: int = 0
     send_sequence: int = 0
+    max_plaintext: int = MAX_PLAINTEXT
 
     @classmethod
     def accept(
-        cls, offer: dict[str, Any], identity: Ed25519PrivateKey, agent_id: str
+        cls, offer: dict[str, Any], identity: Ed25519PrivateKey, agent_id: str, *, max_plaintext: int = MAX_PLAINTEXT
     ) -> tuple[EncryptedSession, dict[str, Any]]:
         expected = {"type", "protocol", "sid", "ticket_id", "user_id", "session_id", "agent_id", "browser_key"}
         if "role" in offer:
@@ -105,7 +106,7 @@ class EncryptedSession:
             ephemeral.exchange(browser_key)
         )
         now = time.monotonic()
-        session = cls(offer["sid"], digest, material[:32], material[32:], now, now)
+        session = cls(offer["sid"], digest, material[:32], material[32:], now, now, max_plaintext=max_plaintext)
         return session, {
             "type": "accept", "sid": session.sid, "agent_key": agent_key,
             "signature": encode(identity.sign(transcript)),
@@ -129,7 +130,7 @@ class EncryptedSession:
         ):
             raise ValueError("Expired or replayed encrypted frame")
         ciphertext = decode(frame["ciphertext"])
-        if not 16 <= len(ciphertext) <= MAX_PLAINTEXT + 16:
+        if not 16 <= len(ciphertext) <= self.max_plaintext + 16:
             raise ValueError("Oversized diagnostic")
         seq = sequence.to_bytes(8, "big")
         plain = AESGCM(self.inbound_key).decrypt(b"\0" * 4 + seq, ciphertext, self.digest + b"\0" + seq)
@@ -144,7 +145,7 @@ class EncryptedSession:
         if self.expired() or self.send_sequence >= 2**32:
             raise ValueError("Expired encrypted session")
         outbound = json.dumps(response, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        if len(outbound) > MAX_PLAINTEXT:
+        if len(outbound) > self.max_plaintext:
             raise ValueError("Oversized response")
         seq = self.send_sequence.to_bytes(8, "big")
         encrypted = AESGCM(self.outbound_key).encrypt(b"\0" * 4 + seq, outbound, self.digest + b"\1" + seq)

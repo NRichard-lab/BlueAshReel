@@ -134,6 +134,26 @@ def test_4k_conversion_is_opt_in_not_a_direct_play_ban(owner_context: tuple[Test
         assert decide(file, choice, context.config, allowed).method == "transcode"
 
 
+def test_native_tv_capabilities_direct_play_matroska_eac3_multichannel(
+    owner_context: tuple[TestContext, str],
+) -> None:
+    context, csrf = owner_context
+    _lib, _item, fid, _source = playable(context, csrf)
+    with context.session_factory() as db:
+        file = db.get(MediaFile, fid)
+        assert file
+        file.container = "matroska"
+        file.relative_path = "episode.mkv"
+        file.audio_streams[0].codec = "eac3"
+        file.audio_streams[0].channels = 6
+        native = {**CAPS, "matroska": True, "eac3": True, "max_audio_channels": 8, "multi_audio": True}
+        decision = decide(file, PlaybackChoice(file_id=fid, capabilities=native), context.config)
+        assert decision.method == "direct"
+        assert decision.audio_copy and decision.mime == "video/x-matroska"
+        legacy = decide(file, PlaybackChoice(file_id=fid, capabilities=CAPS), context.config)
+        assert legacy.method == "transcode" and legacy.audio_transcode
+
+
 def test_encoder_selection_requires_exact_binary_and_device(owner_context: tuple[TestContext, str]) -> None:
     context, _csrf = owner_context
     manager: PlaybackManager = context.client.app.state.playback_manager

@@ -14,6 +14,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import event, select
+from sqlalchemy.orm import Session
 from test_playback import CAPS, playable
 from test_remote_access import browser_session, encrypted_request
 
@@ -609,8 +611,6 @@ def test_remote_artwork_and_owner_progress_migration(owner_context):
     context, _ = owner_context
     media, auth, (library, media_id, file_id, source) = setup_remote(owner_context)
     with context.session_factory() as db:
-        from sqlalchemy import select
-
         from app.models import Role, User
 
         original_owner = db.scalar(select(User).join(User.roles).where(Role.name == "Owner"))
@@ -739,6 +739,32 @@ def test_media_prefetch_does_not_consume_watch_progress_clock(owner_context):
     call(media, auth, "playback.stop", session_id=started["id"])
     resumed = call(media, auth, "playback.start", file_id=card["file_id"], capabilities=CAPS)
     assert resumed["position_seconds"] == 100
+
+
+def test_repeated_direct_chunks_use_session_cache_without_commits(owner_context):
+    media, auth, _ = setup_remote(owner_context)
+    card = call(media, auth, "catalog.list")["items"][0]
+    started = call(media, auth, "playback.start", file_id=card["file_id"], capabilities=CAPS)
+    args = {"session_id": started["id"], "resource": "file", "offset": 0, "length": 1}
+    call(media, auth, "playback.bytes", **args)
+    commits = 0
+
+    def committed(_session):
+        nonlocal commits
+        commits += 1
+
+    event.listen(Session, "after_commit", committed)
+    try:
+        for offset in range(3):
+            call(media, auth, "playback.bytes", **{**args, "offset": offset})
+    finally:
+        event.remove(Session, "after_commit", committed)
+    assert commits == 0
+    with media.factory() as db:
+        internal = media.resolve(db, "playback", started["id"])
+    assert internal in auth["_playback_cache"]
+    call(media, auth, "playback.stop", session_id=started["id"])
+    assert internal not in auth["_playback_cache"]
 
 
 def test_job_aliases_and_sanitized_bounded_scan_errors(owner_context):

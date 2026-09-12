@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import secrets
 import threading
@@ -12,7 +13,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -46,10 +47,15 @@ from app.services.playback import load_playback
 from app.services.transcoding_policy import TranscodingPolicy, read_policy
 
 MAX_CHUNK = 131072
+MAX_CHUNK_LOCAL = 1048576
 MAX_MANIFEST = 2 * 1048576
 MAX_MANIFEST_SNAPSHOTS = 8
 MAX_MANIFEST_CACHE = 8 * 1048576
 MANIFEST_SNAPSHOT_TTL = 45
+AUTHORIZATION_REVALIDATE_SECONDS = 5.0
+SESSION_EXPIRY_WRITE_SECONDS = 60.0
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -77,15 +83,19 @@ class RemoteMedia:
         self.config, self.factory, self.manager = config, factory, manager
         self.agent_id = ""
         self.owner_id = ""
+        self.identity_fingerprint = ""
         # Segment aliases and short-lived manifest snapshots stay in memory;
         # source objects use persistent random mappings in the Agent database.
         self.segments: dict[str, tuple[str, str]] = {}
         self.manifest_snapshots: dict[str, ManifestSnapshot] = {}
         self._manifest_lock = threading.Lock()
+        self._authorization_lock = threading.Lock()
+        self._authorizations: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.folder_selections: dict[str, str] = {}
 
-    def bind(self, agent_id: str, owner_id: str) -> None:
+    def bind(self, agent_id: str, owner_id: str, identity_fingerprint: str = "") -> None:
         self.agent_id, self.owner_id = identifier(agent_id), identifier(owner_id)
+        self.identity_fingerprint = identity_fingerprint
 
     def alias(self, db: Any, kind: str, local_id: str) -> str:
         row = db.scalar(
@@ -178,9 +188,19 @@ class RemoteMedia:
         if missing:
             db.add_all(missing)
             db.flush()
-        return self.external(db, result, aliases=aliases)
+        return cast(dict[str, Any], self.external(db, result, aliases=aliases))
 
-    def principal(self, db: Any, authorization: dict[str, Any]) -> Principal:
+    def invalidate_authorization(self, authorization: dict[str, Any]) -> None:
+        authorization.pop("_principal_cache", None)
+        authorization.pop("_playback_cache", None)
+
+    def discard_authorization(self, authorization: dict[str, Any]) -> None:
+        self.invalidate_authorization(authorization)
+        binding = (self.agent_id, str(authorization.get("user_id", "")), str(authorization.get("session_id", "")))
+        with self._authorization_lock:
+            self._authorizations.pop(binding, None)
+
+    def principal(self, db: Any, authorization: dict[str, Any], *, initialize: bool = False) -> Principal:
         if (
             authorization.get("authorized") is not True
             or authorization.get("agent_id") != self.agent_id
@@ -188,6 +208,18 @@ class RemoteMedia:
         ):
             raise HTTPException(403, "Access denied")
         user_id = identifier(authorization["user_id"])
+        portal_session = identifier(authorization["session_id"])
+        binding = (self.agent_id, user_id, portal_session)
+        now = time.monotonic()
+        cache = authorization.get("_principal_cache")
+        if (
+            isinstance(cache, dict)
+            and cache.get("binding") == binding
+            and cache.get("role") == authorization.get("role")
+            and cache.get("access_version") == authorization.get("access_version")
+            and now < cache.get("validated_until", 0)
+        ):
+            return cast(Principal, cache["principal"])
         role = authorization.get("role")
         grant = db.get(PortalGrant, user_id)
         if user_id == self.owner_id and role == "owner":
@@ -215,10 +247,13 @@ class RemoteMedia:
                 # current paired Owner's verified grant may follow that change;
                 # retain its local account and watch history, never member grants.
                 grant.agent_id = self.agent_id
-            current = set(db.scalars(select(UserLibrary.library_id).where(UserLibrary.user_id == grant.local_user_id)))
-            for library_id in db.scalars(select(Library.id)):
-                if library_id not in current:
-                    db.add(UserLibrary(user_id=grant.local_user_id, library_id=library_id))
+            if initialize:
+                current = set(
+                    db.scalars(select(UserLibrary.library_id).where(UserLibrary.user_id == grant.local_user_id))
+                )
+                for library_id in db.scalars(select(Library.id)):
+                    if library_id not in current:
+                        db.add(UserLibrary(user_id=grant.local_user_id, library_id=library_id))
         if (
             grant is None
             or grant.agent_id != self.agent_id
@@ -230,7 +265,6 @@ class RemoteMedia:
         user = db.get(User, grant.local_user_id)
         if user is None or not user.is_active:
             raise HTTPException(403, "Access denied")
-        portal_session = identifier(authorization["session_id"])
         session = db.get(UserSession, portal_session)
         if session is None:
             session = UserSession(
@@ -243,10 +277,23 @@ class RemoteMedia:
             db.add(session)
         elif session.user_id != user.id or session.revoked_at is not None:
             raise HTTPException(403, "Access denied")
-        else:
+        elif now - float(authorization.get("_session_expiry_written_at", 0)) >= SESSION_EXPIRY_WRITE_SECONDS:
             session.expires_at = datetime.fromtimestamp(authorization["expires_at"], UTC)
-        db.commit()
-        return Principal(user=user, session=session)
+            authorization["_session_expiry_written_at"] = now
+        if db.new or db.dirty or db.deleted:
+            db.commit()
+        principal = Principal(user=user, session=session)
+        authorization["_principal_cache"] = {
+            "binding": binding,
+            "role": role,
+            "access_version": authorization.get("access_version"),
+            "validated_until": now + AUTHORIZATION_REVALIDATE_SECONDS,
+            "principal": principal,
+        }
+        authorization.setdefault("_playback_cache", {})
+        with self._authorization_lock:
+            self._authorizations[binding] = authorization
+        return principal
 
     @staticmethod
     def new_user(db: Any, portal_user_id: str) -> User:
@@ -267,6 +314,7 @@ class RemoteMedia:
 
     async def dispatch(self, request: dict[str, Any], authorization: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("id")
+        started = time.perf_counter()
         try:
             identifier(request_id)
             if set(request) - {"id", "op", "payload"} or not isinstance(request.get("payload", {}), dict):
@@ -308,6 +356,9 @@ class RemoteMedia:
             code = "local_confirmation_required"
         except Exception:
             code = "operation_failed"
+        finally:
+            logger.debug("remote_media.dispatch op=%s duration_ms=%.3f", request.get("op"),
+                         (time.perf_counter() - started) * 1000)
         return {"id": request_id, "ok": False, "error": code}
 
     def approve_folder(self, path: Path) -> dict[str, Any]:
@@ -353,15 +404,19 @@ class RemoteMedia:
         return [str(roots[identifier(value)]) for value in selected]
 
     def execute(self, request: dict[str, Any], authorization: dict[str, Any]) -> Any:
+        started = time.perf_counter()
         try:
             return self._execute(request, authorization)
         finally:
+            logger.debug("remote_media.execute op=%s duration_ms=%.3f", request.get("op"),
+                         (time.perf_counter() - started) * 1000)
             # A conversion admitted while the relay delivered revocation must
             # also be stopped after its bounded startup has returned.
             if authorization.get("revoked"):
                 self.release(authorization)
 
     def release(self, authorization: dict[str, Any]) -> None:
+        self.discard_authorization(authorization)
         with self.factory() as db:
             rows = list(
                 db.scalars(
@@ -390,8 +445,16 @@ class RemoteMedia:
             page = integer(args.get("page", 1), 1, 1000000)
             size = integer(args.get("page_size", 24), 1, 24)
             kind = "media"
+            result: Any
             if op == "status":
-                result = {"health": "ok", "mode": "relay", "remote_media_available": True}
+                local = authorization.get("transport") == "local"
+                result = {"health": "ok", "mode": "local" if local else "relay", "remote_media_available": True,
+                          "max_chunk_bytes": MAX_CHUNK_LOCAL if local else MAX_CHUNK}
+                if self.config.local_transport_enabled:
+                    result["local_transport"] = {
+                        "version": 1, "port": self.config.local_transport_port,
+                        "identity_fingerprint": self.identity_fingerprint, "max_chunk_bytes": MAX_CHUNK_LOCAL,
+                    }
             elif op in {"transcoding.get", "transcoding.update", "transcoding.test"}:
                 self.owner(authorization)
                 policy = read_policy(db, self.config)
@@ -465,7 +528,7 @@ class RemoteMedia:
                 result = catalog.next_episode(self.resolve(db, "media", args["media_id"]), principal, db)
             elif op == "artwork.bytes":
                 resource = catalog.artwork(self.resolve(db, "artwork", args["artwork_id"]), principal, db, self.config)
-                return self.chunk(Path(resource.path), args, resource.media_type)
+                return self.chunk(Path(resource.path), args, resource.media_type, self.chunk_limit(authorization))
             elif op in {"playback.start", "playback.decision"}:
                 if args.get("delivery", "auto") != "auto":
                     self.owner(authorization)
@@ -491,7 +554,7 @@ class RemoteMedia:
             }:
                 session_id = self.resolve(db, "playback", args["session_id"])
                 if op == "playback.bytes":
-                    return self.playback_bytes(db, principal, session_id, args)
+                    return self.playback_bytes(db, principal, session_id, args, authorization)
                 if op == "playback.manifest.release":
                     if set(args) != {"session_id", "snapshot_id"}:
                         raise ValueError("Invalid manifest release")
@@ -694,6 +757,10 @@ class RemoteMedia:
         elif row.agent_id != self.agent_id or version < row.access_version:
             raise HTTPException(409, "Stale permission")
         row.role, row.enabled, row.access_version = role, enabled, version
+        with self._authorization_lock:
+            affected = [cached for binding, cached in self._authorizations.items() if binding[1] == user_id]
+        for cached in affected:
+            self.invalidate_authorization(cached)
         db.execute(delete(UserLibrary).where(UserLibrary.user_id == row.local_user_id))
         for library_id in libraries if enabled else []:
             db.add(UserLibrary(user_id=row.local_user_id, library_id=library_id))
@@ -714,9 +781,9 @@ class RemoteMedia:
         return {"user_id": user_id, "enabled": enabled, "role": role, "access_version": version}
 
     @staticmethod
-    def chunk(source: Path | bytes, args: Any, mime: str | None) -> dict[str, Any]:
+    def chunk(source: Path | bytes, args: Any, mime: str | None, maximum: int = MAX_CHUNK) -> dict[str, Any]:
         offset = integer(args.get("offset", 0), 0, 2**53 - 1)
-        length = integer(args.get("length", MAX_CHUNK), 1, MAX_CHUNK)
+        length = integer(args.get("length", maximum), 1, maximum)
         total = len(source) if isinstance(source, bytes) else source.stat().st_size
         if offset > total:
             raise HTTPException(422, "Invalid byte range")
@@ -734,7 +801,16 @@ class RemoteMedia:
             "eof": offset + len(body) >= total,
         }
 
+    @staticmethod
+    def chunk_limit(authorization: dict[str, Any]) -> int:
+        return MAX_CHUNK_LOCAL if authorization.get("transport") == "local" else MAX_CHUNK
+
     def forget_playback(self, session_id: str) -> None:
+        with self._authorization_lock:
+            for authorization in self._authorizations.values():
+                cache = authorization.get("_playback_cache")
+                if isinstance(cache, dict):
+                    cache.pop(session_id, None)
         with self._manifest_lock:
             self.segments = {key: value for key, value in self.segments.items() if value[0] != session_id}
             self.manifest_snapshots = {
@@ -825,16 +901,37 @@ class RemoteMedia:
                     )
             return self.chunk(body, args, "application/vnd.apple.mpegurl")
 
-    def playback_bytes(self, db: Any, principal: Principal, session_id: str, args: Any) -> dict[str, Any]:
-        row, file, source = load_playback(db, principal, session_id, self.config)
+    def playback_bytes(
+        self, db: Any, principal: Principal, session_id: str, args: Any, authorization: dict[str, Any]
+    ) -> dict[str, Any]:
         resource = args.get("resource")
         if "snapshot_id" in args and resource != "manifest":
             raise ValueError("Only manifests support snapshots")
         # Watch credit is measured since the previous progress checkpoint.
         # Byte fetches must not reset that clock: prefetching is not watching.
+        playback_cache = authorization.setdefault("_playback_cache", {})
+        cached = playback_cache.get(session_id) if isinstance(playback_cache, dict) else None
+        now = time.monotonic()
+        if resource == "file" and cached and now < cached["validated_until"]:
+            source = Path(cached["path"])
+            info = source.stat()
+            if info.st_size != cached["size"] or info.st_mtime_ns != cached["modified_ns"]:
+                playback_cache.pop(session_id, None)
+                raise HTTPException(409, "Source changed. Start a new playback session after rescanning.")
+            return self.chunk(source, args, cached["mime"], self.chunk_limit(authorization))
+        row, file, source = load_playback(db, principal, session_id, self.config)
         if resource == "file" and row.method == "direct":
-            # Revalidate authorized_file and source fingerprint for every range.
-            return self.chunk(source, args, str(row.decision.get("mime", "video/mp4")))
+            info = source.stat()
+            playback_cache[session_id] = {
+                "path": str(source), "fingerprint": file.fingerprint, "size": file.size_bytes,
+                "modified_ns": file.modified_ns, "mime": str(row.decision.get("mime", "video/mp4")),
+                "validated_until": now + AUTHORIZATION_REVALIDATE_SECONDS,
+            }
+            if info.st_size != file.size_bytes or info.st_mtime_ns != file.modified_ns:
+                playback_cache.pop(session_id, None)
+                raise HTTPException(409, "Source changed. Start a new playback session after rescanning.")
+            return self.chunk(source, args, str(row.decision.get("mime", "video/mp4")),
+                              self.chunk_limit(authorization))
         if resource == "subtitles" and row.subtitle_index is not None:
             response = playback.subtitle(session_id, row.subtitle_index, principal, db, self.config, self.manager)
             return self.chunk(bytes(response.body), args, "text/vtt")

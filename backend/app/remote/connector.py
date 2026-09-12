@@ -130,6 +130,7 @@ class Connector:
         self.tombstone_retry_at = 0.0
         self.tombstone_attempt = 0
         self.media = media
+        self.local_transport: Any = None
         self.next_update_check = 0.0
         self.update_available = False
         self.update_version: str | None = None
@@ -137,7 +138,9 @@ class Connector:
         # Never let debug socket logging serialize authentication frames.
         logging.getLogger("websockets.client").setLevel(logging.CRITICAL + 1)
         if self.media and self.paired:
-            self.media.bind(self.credentials["agent_id"], self.credentials["user_id"])
+            assert self.private_key is not None
+            self.media.bind(self.credentials["agent_id"], self.credentials["user_id"],
+                            fingerprint(self.private_key.public_key().public_bytes_raw()))
 
     def prepare_identity(self, name: str) -> dict[str, str]:
         if self.paired or (self.identity / "revocation.json").exists():
@@ -247,11 +250,14 @@ class Connector:
         self.credentials.update({
             "agent_id": result["agent_id"], "user_id": result["user_id"],
             "account_email": result["account_email"],
+            "local_ticket_public_key": result.get("local_ticket_public_key"),
         })
         write_json(self.identity / "identity.json", self.credentials)
         (self.identity / "revoked.json").unlink(missing_ok=True)
         if self.media:
-            self.media.bind(result["agent_id"], result["user_id"])
+            assert self.private_key is not None
+            self.media.bind(result["agent_id"], result["user_id"],
+                            fingerprint(self.private_key.public_key().public_bytes_raw()))
         self.state = "reconnecting"
         self.pairing_expires_at = 0
         self.attempt = 0
@@ -348,13 +354,35 @@ class Connector:
 
     async def broker_loop(self, socket: Any) -> None:
         while True:
-            await self.send(socket, {"type": "heartbeat", "protocol": 1, "version": self.version, "os": OS_CATEGORY})
+            heartbeat = {"type": "heartbeat", "protocol": 1, "version": self.version, "os": OS_CATEGORY}
+            if self.media and self.media.config.local_transport_enabled:
+                heartbeat["local_transport"] = {
+                    "version": 1,
+                    "endpoints": [
+                        f"{self.media.config.local_transport_address}:{self.media.config.local_transport_port}"
+                    ],
+                    "max_chunk_bytes": 1048576,
+                }
+                local_transport = getattr(self, "local_transport", None)
+                if local_transport:
+                    heartbeat["local_sessions"] = local_transport.bindings()
+            await self.send(socket, heartbeat)
             response = json.loads(await asyncio.wait_for(socket.recv(), timeout=30))
             if response.get("type") != "heartbeat_ack":
                 raise ValueError("Invalid heartbeat response")
+            ticket_key = response.get("local_ticket_public_key")
+            if ticket_key:
+                decode(ticket_key, 32)
+                if self.credentials.get("local_ticket_public_key") != ticket_key:
+                    self.credentials["local_ticket_public_key"] = ticket_key
+                    write_json(self.identity / "identity.json", self.credentials)
+            local_transport = getattr(self, "local_transport", None)
+            revoked = response.get("revoked_local_sessions", [])
+            if local_transport and isinstance(revoked, list):
+                await local_transport.revoke([sid for sid in revoked if isinstance(sid, str)])
             self.last_heartbeat = dt.datetime.now(dt.UTC).isoformat()
             self.publish()
-            await asyncio.sleep(20)
+            await asyncio.sleep(5 if local_transport and local_transport.sessions else 20)
 
     async def check_updates(self) -> None:
         if not self.paired or time.monotonic() < self.next_update_check:
@@ -392,16 +420,34 @@ class Connector:
     async def relay_loop(self, socket: Any) -> None:
         sessions: dict[str, EncryptedSession] = {}
         queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
-        workers: dict[str, asyncio.Task[None]] = {}
+        workers: dict[str, set[asyncio.Task[None]]] = {}
+        send_locks: dict[str, asyncio.Lock] = {}
+        mutation_locks: dict[str, asyncio.Lock] = {}
+        outstanding: dict[str, int] = {}
         authorizations: dict[str, dict[str, Any]] = {}
         next_heartbeat = 0.0
+        concurrent_ops = {
+            "status", "catalog.home", "catalog.list", "catalog.detail", "catalog.seasons",
+            "catalog.episodes", "catalog.next", "artwork.bytes", "playback.bytes",
+            "playback.state", "playback.decision", "grants.get", "grants.list", "libraries.list",
+            "libraries.errors", "libraries.status", "streams.list", "transcoding.get",
+        }
         async def process(sid: str, authorization: dict[str, Any]) -> None:
             try:
                 while sid in sessions:
                     request = await queues[sid].get()
-                    reply = await self.media.dispatch(request, authorization)
-                    if sid in sessions:
-                        await self.send(socket, sessions[sid].seal(reply))
+                    try:
+                        if request.get("op") in concurrent_ops:
+                            reply = await self.media.dispatch(request, authorization)
+                        else:
+                            async with mutation_locks[sid]:
+                                reply = await self.media.dispatch(request, authorization)
+                        if sid in sessions:
+                            async with send_locks[sid]:
+                                await self.send(socket, sessions[sid].seal(reply))
+                    finally:
+                        if sid in outstanding:
+                            outstanding[sid] = max(0, outstanding[sid] - 1)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -413,10 +459,14 @@ class Connector:
             if revoked and authorization:
                 authorization.update(expires_at=0, revoked=True)
                 asyncio.create_task(asyncio.to_thread(self.media.release, authorization))
+            elif authorization:
+                self.media.discard_authorization(authorization)
             sessions.pop(sid, None)
             queues.pop(sid, None)
-            task = workers.pop(sid, None)
-            if task:
+            send_locks.pop(sid, None)
+            mutation_locks.pop(sid, None)
+            outstanding.pop(sid, None)
+            for task in workers.pop(sid, set()):
                 task.cancel()
         try:
             while True:
@@ -449,11 +499,21 @@ class Connector:
                         if authorization:
                             authorizations[sid] = authorization
                             queues[sid] = asyncio.Queue(maxsize=4)
-                            workers[sid] = asyncio.create_task(process(sid, authorization))
+                            send_locks[sid] = asyncio.Lock()
+                            mutation_locks[sid] = asyncio.Lock()
+                            outstanding[sid] = 0
+                            workers[sid] = {asyncio.create_task(process(sid, authorization)) for _ in range(4)}
                         await self.send(socket, reply)
                     elif frame.get("type") == "data" and sid in sessions:
                         if self.media:
-                            queues[sid].put_nowait(sessions[sid].open(frame))
+                            request = sessions[sid].open(frame)
+                            if outstanding[sid] >= 4:
+                                reply = {"id": request.get("id"), "ok": False, "error": "rate_limited"}
+                                async with send_locks[sid]:
+                                    await self.send(socket, sessions[sid].seal(reply))
+                            else:
+                                outstanding[sid] += 1
+                                queues[sid].put_nowait(request)
                         else:
                             reply = sessions[sid].respond(frame, name=self.credentials["name"], version=self.version)
                             await self.send(socket, reply)
@@ -487,7 +547,7 @@ class Connector:
         result["session_id"] = frame["session_id"]
         # Reject before handshake if no matching, locally approved grant exists.
         with self.media.factory() as db:
-            self.media.principal(db, result)
+            self.media.principal(db, result, initialize=True)
         return result
 
     async def connected(self) -> None:

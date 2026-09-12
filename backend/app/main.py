@@ -47,6 +47,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _app.state.playback_manager = manager
     connector_task = None
     callback_listener = None
+    local_transport = None
     try:
         manager.start()
         if (
@@ -71,8 +72,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await callback_listener.start()
             _app.state.portal_callback_origin = callback_listener.origin
             connector_task = asyncio.create_task(connector.run())
+            if local_config.local_transport_enabled:
+                from app.remote.local_transport import LocalTransport
+
+                local_transport = LocalTransport(connector)
+                connector.local_transport = local_transport
+                await local_transport.start()
         yield
     finally:
+        if local_transport:
+            await local_transport.close()
         if callback_listener:
             await callback_listener.close()
         if connector_task:

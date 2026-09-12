@@ -156,6 +156,8 @@ def ffmpeg_command(
         "hls",
         "-hls_time",
         "4",
+        "-hls_init_time",
+        "1",
         "-hls_list_size",
         "0",
         "-hls_playlist_type",

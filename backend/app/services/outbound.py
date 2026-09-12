@@ -32,12 +32,13 @@ _BLOCKED_REMOTE_RANGES = (
     "0.0.0.0-126.255.255.255", "128.0.0.0-255.255.255.255",
     "::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
 )
-_firewall_cache: dict[tuple[str, str], tuple[float, NetworkEnforcementPublic]] = {}
+_firewall_cache: dict[tuple[str, ...], tuple[float, NetworkEnforcementPublic]] = {}
 _firewall_lock = threading.Lock()
 _native_guard_installed = False
 _portal_allowed = False
 _portal_ips: set[str] = set()
 _metadata_allowed = False
+_local_bind: tuple[str, int] | None = None
 _METADATA_HOSTS = frozenset({"api.themoviedb.org", "image.tmdb.org"})
 _metadata_ips: dict[str, set[str]] = {}
 
@@ -120,6 +121,8 @@ def native_network_audit(event: str, arguments: tuple[object, ...]) -> None:
     elif event in {"socket.bind", "socket.connect", "socket.sendto", "socket.sendmsg"}:
         address = arguments[-1] if arguments else None
         connection = arguments[0] if arguments else None
+        if event == "socket.bind" and _local_bind and address == _local_bind:
+            return
         if event == "socket.connect" and (_portal_address(address) or _metadata_address(address, connection)):
             return
         if not isinstance(address, tuple) or not address or not _loopback_host(address[0]):
@@ -148,6 +151,8 @@ def _guarded_address(connection: socket.socket, address: object) -> tuple[object
 
 def _guard_socket_method(method: Callable[..., Any]) -> Callable[..., Any]:
     def guarded(connection: socket.socket, address: object, *args: Any, **kwargs: Any) -> Any:
+        if method.__name__ == "bind" and _local_bind and address == _local_bind:
+            return method(connection, address, *args, **kwargs)
         if method.__name__ in {"connect", "connect_ex"} and (
             _portal_address(address) or _metadata_address(address, connection)
         ):
@@ -239,12 +244,14 @@ def _install_native_socket_wrappers() -> None:
 
 
 def install_native_network_guard(config: AppConfig, *, allow_portal: bool = False) -> None:
-    global _native_guard_installed, _portal_allowed, _metadata_allowed
+    global _native_guard_installed, _portal_allowed, _metadata_allowed, _local_bind
     if (
         config.deployment_mode == "native_windows"
         and not config.outbound_integrations_enabled and not _native_guard_installed
     ):
         _portal_allowed = allow_portal
+        _local_bind = ((config.local_transport_address, config.local_transport_port)
+                       if getattr(config, "local_transport_enabled", False) else None)
         _metadata_allowed = bool(config.tmdb_token)
         _metadata_ips.clear()
         sys.addaudithook(native_network_audit)
@@ -282,7 +289,9 @@ def _ranges(value: object) -> frozenset[tuple[int, int, int]]:
     return frozenset(ranges)
 
 
-def _verified_firewall(payload: dict[str, Any], group: str, program_dir: Path) -> bool:
+def _verified_firewall(
+    payload: dict[str, Any], group: str, program_dir: Path, local_bind: tuple[str, int] | None = None
+) -> bool:
     profiles = payload.get("profiles")
     rules = payload.get("rules")
     if not isinstance(profiles, list) or len(profiles) != 3 or any(item != "True" for item in profiles):
@@ -312,7 +321,23 @@ def _verified_firewall(payload: dict[str, Any], group: str, program_dir: Path) -
                 return False
         except ValueError:
             return False
-    return True
+    local_rules = [
+        rule for rule in rules
+        if isinstance(rule, dict) and rule.get("name") == f"{group}-Inbound-LocalTransport"
+    ]
+    if local_bind is None:
+        return not local_rules
+    if len(local_rules) != 1:
+        return False
+    rule = local_rules[0]
+    return (
+        rule.get("enabled") == "True" and rule.get("direction") == "Inbound" and rule.get("action") == "Allow"
+        and rule.get("profile") == "Private" and rule.get("protocol") == "TCP"
+        and rule.get("remote") == ["LocalSubnet"] and rule.get("local") == [local_bind[0]]
+        and rule.get("local_port") == [str(local_bind[1])]
+        and isinstance(rule.get("program"), str)
+        and Path(rule["program"]) == program_dir / _WINDOWS_PROGRAMS["python"]
+    )
 
 
 def network_enforcement(config: AppConfig) -> NetworkEnforcementPublic:
@@ -326,13 +351,15 @@ def network_enforcement(config: AppConfig) -> NetworkEnforcementPublic:
         return NetworkEnforcementPublic(
             platform="windows", status="unknown", detail="Native firewall verification is not configured.",
         )
-    key = (group, str(program_dir))
+    local_bind = ((config.local_transport_address, config.local_transport_port)
+                  if config.local_transport_enabled else None)
+    key = (group, str(program_dir), *(str(item) for item in local_bind or ()))
     with _firewall_lock:
         cached = _firewall_cache.get(key)
         if cached is not None and time.monotonic() - cached[0] < 15:
             return cached[1]
         try:
-            verified = _verified_firewall(_query_windows_firewall(group), group, program_dir)
+            verified = _verified_firewall(_query_windows_firewall(group), group, program_dir, local_bind)
             status = NetworkEnforcementPublic(
                 platform="windows", status="enforced" if verified and _native_guard_installed else "not_enforced",
                 checked_at=datetime.now(UTC),
