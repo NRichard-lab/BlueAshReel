@@ -324,7 +324,7 @@ def validate_native_configuration(archive: zipfile.ZipFile, members: set[str]) -
         metadata = json.loads(archive.read(metadata_name), object_pairs_hook=_strict_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BackupFormatError("Native installation metadata is invalid JSON") from error
-    if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
+    if not isinstance(metadata, dict) or metadata.get("schema_version") not in {1, 2}:
         raise BackupFormatError("Native installation metadata has an unsupported schema")
     text_fields = (
         "instance",
@@ -339,6 +339,16 @@ def validate_native_configuration(archive: zipfile.ZipFile, members: set[str]) -
         value = metadata.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
             raise BackupFormatError("Native installation metadata has invalid recovery ports")
+    if metadata["schema_version"] == 2:
+        storage = metadata.get("storage")
+        expected_storage = {"app_data", "artwork", "backups", "database", "logs", "temp"}
+        if (
+            metadata.get("runtime_mode") != "per_user"
+            or not isinstance(storage, dict)
+            or set(storage) != expected_storage
+            or any(not isinstance(value, str) or not value.strip() for value in storage.values())
+        ):
+            raise BackupFormatError("Native installation metadata has invalid per-user storage")
 
 
 def validate_backup_archive(path: Path, expected_revision: str = EXPECTED_ALEMBIC_HEAD) -> ArchiveSummary:

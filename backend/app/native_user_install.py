@@ -69,6 +69,7 @@ def configure(program: Path, data: Path, instance: str, port: int,
         if record.get("runtime_mode") != "per_user":
             raise ValueError("Use the validated service-to-user migration before updating this existing installation")
         # All previous locations, secrets, identity and resource settings survive repair.
+        native_install.render_proxy(record)
         return record
     storage = validate_storage(program, data, requested)
     if not 1 <= max_processes <= 8 or not 1 <= threads <= 16:

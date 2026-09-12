@@ -49,11 +49,14 @@ def test_repair_preserves_every_storage_setting_and_secret(user_layout: tuple[Pa
     program, data = user_layout
     original = native_user_install.configure(program, data, "development", 19080, {}, max_processes=1, threads=3)
     before = (data / "configuration/.env").read_bytes()
+    proxy = data / "configuration/Caddyfile"
+    proxy.unlink()
     repaired = native_user_install.configure(
         program, data, "development", 29080, {"temp": str(data.parent / "ignored")})
     assert repaired == original
     assert (data / "configuration/.env").read_bytes() == before
     assert dotenv_values(data / "configuration/.env")["TRANSCODE_THREADS"] == "3"
+    assert proxy.is_file() and "reverse_proxy 127.0.0.1:19081" in proxy.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("custom_token_path", [False, True])
