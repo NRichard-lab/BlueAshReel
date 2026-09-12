@@ -23,7 +23,7 @@ HLS/subtitle output is disposable and should not be backed up as application dat
 
 The validator recognizes exact Phase 1, 2A, 2B, 2C and 2D table sets, preserving the existing
 pre-upgrade workflow when new scripts inspect an older installed image. The current
-migration head is 2d0100000001. Test clean and populated upgrades before installation.
+migration head is 2f0100000001. Test clean and populated upgrades before installation.
 Restored active sessions are expired on API startup; durable watch checkpoints
 remain resumable after login. Downgrading Phase 2 discards its new history/grants;
 use a verified pre-upgrade backup if that loss is unacceptable.

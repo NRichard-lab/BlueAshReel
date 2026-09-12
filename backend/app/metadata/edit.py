@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import AppConfig
 from app.metadata.artwork import _format, cache_image
 from app.metadata.provider import ProviderError
-from app.metadata.service import configured_provider
+from app.metadata.service import configured_provider, record_for
 from app.metadata.view import artwork_url, metadata_for
 from app.models import MediaItem
 
@@ -35,9 +35,15 @@ LIMITS = {"title": 500, "original_title": 500, "overview": 20000, "tagline": 100
 
 
 def _row(db: Session, item: MediaItem):
-    row = metadata_for(db, item.id)
-    if item.kind != "movie" or row is None or not row.provider_id:
-        raise ValueError("Editable provider metadata is unavailable for this item")
+    if item.kind not in {"movie", "series"}:
+        raise ValueError("Only movies and series have editable information")
+    return metadata_for(db, item.id) or record_for(db, item)
+
+
+def _provider_row(db: Session, item: MediaItem):
+    row = _row(db, item)
+    if not row.provider_id:
+        raise ValueError("Identify this title before choosing provider artwork")
     return row
 
 
@@ -122,7 +128,7 @@ def _sources(row, config: AppConfig, kind: str):
 
 
 def artwork_candidates(db: Session, item: MediaItem, config: AppConfig, kind: str) -> dict:
-    row = _row(db, item)
+    row = _provider_row(db, item)
     provider, sources = _sources(row, config, kind)
     try:
         return {
@@ -136,7 +142,7 @@ def artwork_candidates(db: Session, item: MediaItem, config: AppConfig, kind: st
 
 
 def artwork_preview(db: Session, item: MediaItem, config: AppConfig, kind: str, candidate_id: str) -> dict:
-    row = _row(db, item)
+    row = _provider_row(db, item)
     provider, sources = _sources(row, config, kind)
     try:
         source = next((s for s in sources if _key(s.provider_path) == candidate_id), None)
@@ -152,7 +158,7 @@ def artwork_preview(db: Session, item: MediaItem, config: AppConfig, kind: str, 
 
 
 def select_artwork(db: Session, item: MediaItem, config: AppConfig, kind: str, candidate_id: str) -> dict:
-    row = _row(db, item)
+    row = _provider_row(db, item)
     provider, sources = _sources(row, config, kind)
     try:
         source = next((s for s in sources if _key(s.provider_path) == candidate_id), None)

@@ -201,6 +201,7 @@ def save_progress(
         progress.duration_seconds = playback.duration_seconds
         progress.watched_seconds += credit
         progress.last_played_at = now
+        progress.continue_dismissed_at = None
         threshold = setting(db, "watched_threshold", config.playback_watched_threshold)
         minimum = min(
             setting(db, "minimum_watch_seconds", config.playback_minimum_watch_seconds), playback.duration_seconds * 0.5

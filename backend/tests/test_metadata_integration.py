@@ -343,6 +343,19 @@ def test_episode_hierarchy_reuses_series_and_season_and_reads_normalized_season(
     assert provider.calls == before
 
 
+def test_series_information_overrides_use_the_same_persistent_metadata_record(owner_context):
+    context, csrf = owner_context
+    _, show_id, _, episode_ids = make_hierarchy(context, csrf)
+    provider = FixtureProvider()
+    with context.session_factory() as db:
+        Enricher(db, context.config, provider).enrich(db.get(MediaItem, episode_ids[0]))
+        show = db.get(MediaItem, show_id)
+        edit.save(db, show, {"overview": "Owner series overview", "genres": ["Crime", "Drama"]}, [])
+    with context.session_factory() as db:
+        values = edit.read(db, db.get(MediaItem, show_id))["values"]
+        assert values["overview"] == "Owner series overview" and values["genres"] == ["Crime", "Drama"]
+
+
 def test_scanning_enqueues_enrichment_and_provider_failure_keeps_files_indexed(owner_context, monkeypatch):
     context, csrf = owner_context
     lib = library(context, csrf)

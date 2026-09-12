@@ -71,14 +71,21 @@ def test_metadata_upgrade_preserves_catalog_identity_and_history(tmp_path: Path)
             "portal_grants",
             "remote_objects",
         )
-        baseline = {table: db.execute(text(f"SELECT * FROM {table}")).all() for table in preserved}  # noqa: S608
+        baseline_columns = {
+            table: [row[1] for row in db.execute(text(f"PRAGMA table_info({table})"))]
+            for table in preserved  # noqa: S608
+        }
+        baseline = {
+            table: db.execute(text(f"SELECT {','.join(baseline_columns[table])} FROM {table}")).all()  # noqa: S608
+            for table in preserved
+        }
     with patch("app.config.get_config", return_value=config):
         command.upgrade(migration, "head")
     with Session(engine) as db:
         assert db.execute(text("PRAGMA integrity_check")).scalar() == "ok"
         assert db.execute(text("PRAGMA foreign_key_check")).all() == []
         for table, rows in baseline.items():
-            assert db.execute(text(f"SELECT * FROM {table}")).all() == rows  # noqa: S608
+            assert db.execute(text(f"SELECT {','.join(baseline_columns[table])} FROM {table}")).all() == rows  # noqa: S608
         db.add(
             MetadataRecord(
                 media_item_id="media",
@@ -117,7 +124,7 @@ def test_metadata_upgrade_preserves_catalog_identity_and_history(tmp_path: Path)
         command.downgrade(migration, "2c0100000001")
     with engine.connect() as db:
         for table, rows in baseline.items():
-            assert db.execute(text(f"SELECT * FROM {table}")).all() == rows  # noqa: S608
+            assert db.execute(text(f"SELECT {','.join(baseline_columns[table])} FROM {table}")).all() == rows  # noqa: S608
         assert db.execute(text("PRAGMA integrity_check")).scalar() == "ok"
     engine.dispose()
 

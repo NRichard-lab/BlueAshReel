@@ -461,26 +461,64 @@ class RemoteMedia:
                 return result
             elif op == "catalog.list":
                 media_kind, history, query = args.get("kind"), args.get("history"), args.get("q", "")
+                sort = args.get("sort", "title")
+                watch_state = args.get("watch_state")
+                resolution_class = args.get("resolution_class")
+                genre = args.get("genre")
                 if (
                     media_kind not in {None, "movie", "series", "episode", "other"}
                     or history not in {None, "continue", "recent"}
+                    or sort not in {"title", "year", "added", "duration", "watch"}
+                    or watch_state not in {None, "unwatched", "in_progress", "watched"}
+                    or resolution_class not in {None, "4k", "1080p", "720p", "sd"}
+                    or genre is not None
+                    and (not isinstance(genre, str) or len(genre) > 100)
                     or not isinstance(query, str)
                     or len(query) > 200
+                    or set(args)
+                    - {
+                        "page",
+                        "page_size",
+                        "kind",
+                        "history",
+                        "q",
+                        "library_id",
+                        "sort",
+                        "watch_state",
+                        "resolution_class",
+                        "genre",
+                    }
                 ):
                     raise ValueError("Invalid view")
                 result = catalog.catalog(
-                    page,
-                    size,
-                    media_kind,
-                    query,
-                    self.resolve(db, "library", args["library_id"]) if args.get("library_id") else None,
-                    "title",
-                    None,
-                    None,
-                    None,
-                    history,
-                    principal,
-                    db,
+                    page=page,
+                    page_size=size,
+                    kind=media_kind,
+                    q=query,
+                    library_id=self.resolve(db, "library", args["library_id"]) if args.get("library_id") else None,
+                    sort=sort,
+                    watch_state=watch_state,
+                    resolution_class=resolution_class,
+                    genre=genre,
+                    history=history,
+                    principal=principal,
+                    db=db,
+                )
+            elif op == "catalog.facets":
+                media_kind = args.get("kind")
+                if set(args) - {"kind"} or media_kind not in {None, "movie", "series", "episode", "other"}:
+                    raise ValueError("Invalid view")
+                result = catalog.catalog_facets(db, principal.user.id, media_kind)
+            elif op in {"catalog.watched", "catalog.continue.remove"}:
+                allowed = {"media_id", "watched"} if op == "catalog.watched" else {"media_id"}
+                if set(args) != allowed or (op == "catalog.watched" and type(args.get("watched")) is not bool):
+                    raise ValueError("Invalid watch-state request")
+                media_id = self.resolve(db, "media", args["media_id"])
+                catalog.load_item(db, principal.user.id, media_id)
+                result = (
+                    catalog.set_watched(db, principal.user.id, media_id, args["watched"])
+                    if op == "catalog.watched"
+                    else catalog.dismiss_continue(db, principal.user.id, media_id)
                 )
             elif op == "catalog.detail":
                 result = catalog.detail(self.resolve(db, "media", args["media_id"]), page, principal, db)

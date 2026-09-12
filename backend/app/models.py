@@ -180,6 +180,7 @@ class WatchProgress(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     last_played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    continue_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Library(Base, TimestampMixin):

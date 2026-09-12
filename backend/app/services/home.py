@@ -32,6 +32,7 @@ def home_catalog(db: Session, user_id: str) -> dict[str, Any]:
                 query = query.where(
                     WatchProgress.watched.is_(False),
                     WatchProgress.completed_at.is_(None),
+                    WatchProgress.continue_dismissed_at.is_(None),
                     WatchProgress.position_seconds >= 5,
                     or_(
                         WatchProgress.duration_seconds <= 0,
