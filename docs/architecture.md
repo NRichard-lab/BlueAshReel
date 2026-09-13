@@ -16,7 +16,7 @@ require compatibility review and a TV handoff.
 The Portal repository is `NRichard-lab/BlueAshReelPortal`, locally at
 `C:/Users/dog10/OneDrive/Documents/ChatGPT/BlueAshReel`. The Agent checkout is
 `C:/Users/dog10/OneDrive/Documents/ChatGPT/BlueReel/BlueAshReel`.
-Both current development branches are `codex/remote-streaming-settings`, descended
+Both current development branches are `codex/transcoding-settings`, descended
 from the deployed Libraries and Blue Home work. Do not substitute `origin/main`
 for the deployed branch without reconciling its ancestry and component pins.
 
@@ -76,7 +76,7 @@ other component pins, account database and downloads intact. A frontend restart
 interrupts existing browser relay circuits: reconnect and verify playback after
 the final activation. Never use a full-stack deployment for a frontend-only edit.
 
-Current frontend source: `78fbd520d7ba37b702a272a6788f68675f028e7c`.
+Current frontend source: `dd243808ba18677c685f40a3b0a11f6169c0c77c`.
 API/broker/relay/mailer remain on `b4e11665e38cd6b440f984f45621acdf3e4a5fce`. Documentation
 commits after this SHA do not imply a new running frontend image.
 
@@ -597,3 +597,20 @@ FFmpeg diagnostics (existing supervisor discards raw stderr); universal client
 negotiation; hard network shaping; richer resource telemetry; independently adjustable
 storage/process pool UI. H.264 generated tests do not certify HDR or hardware decode.
 See the Portal TRANSCODING_COMPLETION_REPORT.md and CLAUDE_TRANSCODING_HANDOFF.md.
+
+
+Development activation verified September 13, 2026: Portal frontend source
+`dd243808ba18677c685f40a3b0a11f6169c0c77c` is healthy on blue-reel-web01 /
+192.168.50.107. API/broker/relay/mailer remain on `b4e11665`. Windows Agent source
+`921897d2fbbec99ca8abfb2c8b884c9690f0d107` is active through the six-file overlay;
+readiness is 200 and tray is Connected/healthy/paired. Receipt is
+`state/transcoding-deployment.json` beneath the Development data root. Installed
+source generated-media validation passed 12 tests; all deployed hashes match.
+Original configuration, identity, settings, watch history and counts (2 libraries,
+31 media items, 28 files, 1 watch row, 34 metadata records) were preserved. No version
+change (0.1.0-development.6), installer or release. Development branches are now
+`codex/transcoding-settings`; later documentation/test commits do not change image pins.
+Signed-in browser Settings/playback validation remains pending: the task browser was
+signed out and its temporary tab subsequently became unavailable. No credentials or
+authentication bypass were used. Automated integration and installed-source synthetic
+playback are verified; they are not claimed as authenticated live browser verification.

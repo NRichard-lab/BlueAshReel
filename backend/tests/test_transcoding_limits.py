@@ -133,6 +133,12 @@ def test_independent_audio_video_admission(owner_context: tuple[TestContext, str
     first = begin(context, csrf, fid)
     manager = context.client.app.state.playback_manager
     assert manager.for_session(first["id"]).encoder == "copy"
+    rejected_audio = context.client.post(
+        "/api/v1/playback/sessions", headers={"X-CSRF-Token": csrf},
+        json={"file_id": fid, "capabilities": CAPS, "quality": "480p"},
+    )
+    assert rejected_audio.status_code == 429 and "audio transcode limit" in rejected_audio.text
+    assert len(manager.jobs) == 1
     with context.session_factory() as db:
         file = db.get(MediaFile, fid)
         assert file
