@@ -14,6 +14,7 @@ dependencies = [
   "fastapi>=0.115,<1",
   "pydantic-settings>=2.7,<3",
   "sqlalchemy>=2.0.36,<3",
+  "tzdata>=2026.3",
   "uvicorn[standard]>=0.34,<1",
   "websockets>=14,<16",
 ]
