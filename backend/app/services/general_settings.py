@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import locale
 import os
 import re
@@ -11,10 +12,10 @@ from typing import Any, Literal
 from zoneinfo import available_timezones
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import AppConfig, get_product_config
-from app.models import ApplicationSetting
 
 SETTING_KEY = "general.settings"
 LANGUAGES = ("en-US",)
@@ -172,8 +173,15 @@ def _existing_name(config: AppConfig) -> str:
 
 
 def _stored(db: Session) -> Mapping[str, Any]:
-    row = db.get(ApplicationSetting, SETTING_KEY)
-    return row.value if row and isinstance(row.value, dict) else {}
+    raw = db.execute(
+        text("SELECT value FROM application_settings WHERE key = :key"), {"key": SETTING_KEY}
+    ).scalar_one_or_none()
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def defaults(db: Session, config: AppConfig) -> GeneralSettings:
@@ -234,6 +242,8 @@ def update_general(
     durable = validated.model_dump(exclude={"capabilities"})
     # Registry state is authoritative and is never restored later from SQLite.
     durable["startup_connection"].pop("start_with_windows", None)
+    from app.models import ApplicationSetting
+
     db.merge(ApplicationSetting(key=SETTING_KEY, value=durable))
     try:
         db.commit()
