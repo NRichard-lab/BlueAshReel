@@ -610,7 +610,42 @@ Original configuration, identity, settings, watch history and counts (2 librarie
 31 media items, 28 files, 1 watch row, 34 metadata records) were preserved. No version
 change (0.1.0-development.6), installer or release. Development branches are now
 `codex/transcoding-settings`; later documentation/test commits do not change image pins.
-Signed-in browser Settings/playback validation remains pending: the task browser was
-signed out and its temporary tab subsequently became unavailable. No credentials or
-authentication bypass were used. Automated integration and installed-source synthetic
-playback are verified; they are not claimed as authenticated live browser verification.
+Signed-in browser verification completed September 13, 2026 after the user signed in.
+Live Save/reload/Discard, hardware testing, Direct Play and software-transcoded playback
+passed; see the live verification record below. No authentication bypass was used.
+
+
+## Authenticated live verification — September 13, 2026
+
+The user signed in through the normal Portal UI. Settings loaded the actual Agent
+policy: Automatic, Balanced, 1080p, 8 Mbps, two video/two audio slots, fallback on,
+4K conversion off. Saved 7.5 Mbps and one video slot; reload/reconnection retained
+the values. Staged a different slot count and fallback switch; Discard restored the
+saved baseline. Restored and saved the original 8 Mbps/two-video limit; read-only
+SQLite confirmed 8000 kbps and two slots for both workloads. The original default
+policy now exists as a persisted record because the live Save flow was exercised.
+
+The live Owner hardware test completed with QSV, NVENC and AMF failures and no
+false availability. The visible adapters were Hyper-V Video and Remote Display;
+next encoder was libx264. Global IN DEVELOPMENT, disabled/off HDR and decoding,
+and absent active streams were visible. Layout was inspected at narrow and wide
+browser widths. Direct Play readout now displays copied audio as unchanged rather
+than rendering the backend's encoder sentinel 'none'.
+
+Resumed existing media at 83.712 seconds. A first in-app browser renderer crashed
+when its native playback control was invoked; the Agent remained Connected/healthy
+with readiness 200 and no playback error. A fresh browser tab played successfully,
+with changing frames and elapsed time advancing to 1:33 and beyond. Crash cause was
+not established; no server restart or browser security bypass was used.
+
+Selected 480p for a short subsequent playback test. Live output used libx264 plus
+AAC CPU audio, 1152×480 estimated output from 1920×800 source, 1200 kbps video target,
+about 1400 kbps observed muxed average, 8.23× encoding speed and Healthy client buffer.
+The readout correctly showed Full Transcode, PRECISE_SEEK, and software fallback
+because no hardware was verified. Video frames and playback time advanced normally.
+The source file was not altered. Resume progressed through ordinary playback updates.
+
+Owner Stop Stream completed for both remaining test sessions. Final database state:
+zero active sessions; latest transcode stopped at 140.870872 seconds and Direct Play
+stopped at 102.700074 seconds. Generated representation directories were cleaned up;
+Agent readiness remained 200. The Settings page is left open with original limits.
