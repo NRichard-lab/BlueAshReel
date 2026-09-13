@@ -18,7 +18,7 @@ from typing import Any
 ARCHIVE_FORMAT = "home-media-backup"
 MANIFEST_VERSION = 1
 PHASE1_REVISION = "773863f5a6aa"
-EXPECTED_ALEMBIC_HEAD = "2d0100000001"
+EXPECTED_ALEMBIC_HEAD = "300100000001"
 MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database/app.db"
 PRODUCT_CONFIG_MEMBER = "configuration/product/product.json"
@@ -61,18 +61,59 @@ PHASE1_TABLES = frozenset(
 SCHEMAS_BY_REVISION = {
     PHASE1_REVISION: PHASE1_TABLES,
     "2a0100000001": PHASE1_TABLES | {"user_libraries", "user_preferences", "watch_progress", "media_search"},
-    "2b0100000001": PHASE1_TABLES | {
-        "user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions",
+    "2b0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
     },
-    "2c0100000001": PHASE1_TABLES | {
-        "user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions",
-        "portal_grants", "remote_objects",
+    "2c0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
+        "portal_grants",
+        "remote_objects",
     },
-    "2d0100000001": PHASE1_TABLES | {
-        "user_libraries", "user_preferences", "watch_progress", "media_search", "playback_sessions",
-        "portal_grants", "remote_objects", "metadata_records",
+    "2d0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
+        "portal_grants",
+        "remote_objects",
+        "metadata_records",
+    },
+    "2e0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
+        "portal_grants",
+        "remote_objects",
+        "metadata_records",
+    },
+    "2f0100000001": PHASE1_TABLES
+    | {
+        "user_libraries",
+        "user_preferences",
+        "watch_progress",
+        "media_search",
+        "playback_sessions",
+        "portal_grants",
+        "remote_objects",
+        "metadata_records",
     },
 }
+SCHEMAS_BY_REVISION["300100000001"] = SCHEMAS_BY_REVISION["2f0100000001"] | {"blue_home_state"}
 REQUIRED_APPLICATION_TABLES = SCHEMAS_BY_REVISION[EXPECTED_ALEMBIC_HEAD]
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -128,9 +169,7 @@ def _head_from_migration_directory(directory: Path) -> str | None:
         if revision is None or down_revision is None:
             continue
         revisions.add(revision.group(1))
-        parent_revisions.update(
-            _QUOTED_REVISION_PATTERN.findall(down_revision.group(1))
-        )
+        parent_revisions.update(_QUOTED_REVISION_PATTERN.findall(down_revision.group(1)))
     heads = revisions.difference(parent_revisions)
     return next(iter(heads)) if len(heads) == 1 else None
 
@@ -209,9 +248,7 @@ def _sha256_member(archive: zipfile.ZipFile, member: str) -> tuple[str, int]:
     return digest.hexdigest(), total
 
 
-def validate_database(
-    path: Path, expected_revision: str = EXPECTED_ALEMBIC_HEAD
-) -> DatabaseSummary:
+def validate_database(path: Path, expected_revision: str = EXPECTED_ALEMBIC_HEAD) -> DatabaseSummary:
     """Require an intact application database at this code's exact schema head."""
 
     if expected_revision not in SCHEMAS_BY_REVISION:
@@ -223,16 +260,10 @@ def validate_database(
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
         foreign_key_error = connection.execute("PRAGMA foreign_key_check").fetchone()
         tables = tuple(
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            )
+            row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         )
         pages = int(connection.execute("PRAGMA page_count").fetchone()[0])
-        revisions = tuple(
-            row[0]
-            for row in connection.execute("SELECT version_num FROM alembic_version")
-        )
+        revisions = tuple(row[0] for row in connection.execute("SELECT version_num FROM alembic_version"))
     except sqlite3.Error as error:
         raise BackupFormatError(f"SQLite schema validation failed: {error}") from error
     finally:
@@ -245,15 +276,10 @@ def validate_database(
         raise BackupFormatError("SQLite foreign-key validation failed")
     missing_tables = sorted(SCHEMAS_BY_REVISION[expected_revision].difference(tables))
     if missing_tables:
-        raise BackupFormatError(
-            "Database is missing required application tables: "
-            + ", ".join(missing_tables)
-        )
+        raise BackupFormatError("Database is missing required application tables: " + ", ".join(missing_tables))
     if revisions != (expected_revision,):
         found = ", ".join(str(revision) for revision in revisions) or "none"
-        raise BackupFormatError(
-            f"Database Alembic revision must be {expected_revision}; found {found}"
-        )
+        raise BackupFormatError(f"Database Alembic revision must be {expected_revision}; found {found}")
     return DatabaseSummary(
         bytes=path.stat().st_size,
         pages=pages,
@@ -299,20 +325,34 @@ def validate_native_configuration(archive: zipfile.ZipFile, members: set[str]) -
         metadata = json.loads(archive.read(metadata_name), object_pairs_hook=_strict_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise BackupFormatError("Native installation metadata is invalid JSON") from error
-    if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
+    if not isinstance(metadata, dict) or metadata.get("schema_version") not in {1, 2}:
         raise BackupFormatError("Native installation metadata has an unsupported schema")
-    text_fields = ("instance", "service_prefix", "program_dir", "data_dir", "bind_address")
+    text_fields = (
+        "instance",
+        "service_prefix",
+        "program_dir",
+        "data_dir",
+        "bind_address",
+    )
     if any(not isinstance(metadata.get(key), str) or not metadata[key].strip() for key in text_fields):
         raise BackupFormatError("Native installation metadata is missing recovery identity or paths")
     for key in ("port", "api_port", "web_port"):
         value = metadata.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
             raise BackupFormatError("Native installation metadata has invalid recovery ports")
+    if metadata["schema_version"] == 2:
+        storage = metadata.get("storage")
+        expected_storage = {"app_data", "artwork", "backups", "database", "logs", "temp"}
+        if (
+            metadata.get("runtime_mode") != "per_user"
+            or not isinstance(storage, dict)
+            or set(storage) != expected_storage
+            or any(not isinstance(value, str) or not value.strip() for value in storage.values())
+        ):
+            raise BackupFormatError("Native installation metadata has invalid per-user storage")
 
 
-def validate_backup_archive(
-    path: Path, expected_revision: str = EXPECTED_ALEMBIC_HEAD
-) -> ArchiveSummary:
+def validate_backup_archive(path: Path, expected_revision: str = EXPECTED_ALEMBIC_HEAD) -> ArchiveSummary:
     """Validate an archive without extracting members into application paths."""
 
     if not path.is_file():
@@ -324,13 +364,9 @@ def validate_backup_archive(
             raise BackupFormatError("Backup archive contains duplicate ZIP members")
         for info in infos:
             if not safe_member(info.filename):
-                raise BackupFormatError(
-                    f"Backup archive contains an unsafe member path: {info.filename}"
-                )
+                raise BackupFormatError(f"Backup archive contains an unsafe member path: {info.filename}")
             if not _regular_member(info):
-                raise BackupFormatError(
-                    f"Backup archive contains a non-regular or encrypted member: {info.filename}"
-                )
+                raise BackupFormatError(f"Backup archive contains a non-regular or encrypted member: {info.filename}")
         corrupt = archive.testzip()
         if corrupt is not None:
             raise BackupFormatError(f"ZIP validation failed for member: {corrupt}")
@@ -339,15 +375,10 @@ def validate_backup_archive(
         except KeyError as error:
             raise BackupFormatError("Backup manifest is missing") from error
 
-        if (
-            manifest.get("format") != ARCHIVE_FORMAT
-            or manifest.get("format_version") != MANIFEST_VERSION
-        ):
+        if manifest.get("format") != ARCHIVE_FORMAT or manifest.get("format_version") != MANIFEST_VERSION:
             raise BackupFormatError("Backup manifest has an unsupported format")
         if manifest.get("database_revision") != expected_revision:
-            raise BackupFormatError(
-                f"Backup manifest does not target Alembic head {expected_revision}"
-            )
+            raise BackupFormatError(f"Backup manifest does not target Alembic head {expected_revision}")
         records = manifest.get("files")
         if not isinstance(records, list):
             raise BackupFormatError("Backup manifest file list is invalid")
@@ -356,37 +387,20 @@ def validate_backup_archive(
         normalized_records: list[tuple[str, str, int]] = []
         for record in records:
             if not isinstance(record, dict):
-                raise BackupFormatError(
-                    "Backup manifest contains an invalid file record"
-                )
+                raise BackupFormatError("Backup manifest contains an invalid file record")
             member = record.get("path")
             expected_hash = record.get("sha256")
             expected_size = record.get("size")
             if not isinstance(member, str) or not safe_member(member):
                 raise BackupFormatError("Backup manifest contains an unsafe file path")
             if member == MANIFEST_MEMBER:
-                raise BackupFormatError(
-                    "Backup manifest must not list itself as a file record"
-                )
+                raise BackupFormatError("Backup manifest must not list itself as a file record")
             if member in recorded_names:
-                raise BackupFormatError(
-                    f"Backup manifest contains a duplicate file record: {member}"
-                )
-            if (
-                not isinstance(expected_hash, str)
-                or _SHA256_PATTERN.fullmatch(expected_hash) is None
-            ):
-                raise BackupFormatError(
-                    f"Backup manifest contains an invalid SHA-256 for {member}"
-                )
-            if (
-                isinstance(expected_size, bool)
-                or not isinstance(expected_size, int)
-                or expected_size < 0
-            ):
-                raise BackupFormatError(
-                    f"Backup manifest contains an invalid size for {member}"
-                )
+                raise BackupFormatError(f"Backup manifest contains a duplicate file record: {member}")
+            if not isinstance(expected_hash, str) or _SHA256_PATTERN.fullmatch(expected_hash) is None:
+                raise BackupFormatError(f"Backup manifest contains an invalid SHA-256 for {member}")
+            if isinstance(expected_size, bool) or not isinstance(expected_size, int) or expected_size < 0:
+                raise BackupFormatError(f"Backup manifest contains an invalid size for {member}")
             recorded_names.add(member)
             normalized_records.append((member, expected_hash, expected_size))
 
@@ -395,13 +409,9 @@ def validate_backup_archive(
         missing = sorted(expected_names.difference(actual_names))
         extra = sorted(actual_names.difference(expected_names))
         if missing:
-            raise BackupFormatError(
-                f"Backup archive is missing a manifested member: {missing[0]}"
-            )
+            raise BackupFormatError(f"Backup archive is missing a manifested member: {missing[0]}")
         if extra:
-            raise BackupFormatError(
-                f"Backup archive contains an unmanifested member: {extra[0]}"
-            )
+            raise BackupFormatError(f"Backup archive contains an unmanifested member: {extra[0]}")
         for required_member in (DATABASE_MEMBER, PRODUCT_CONFIG_MEMBER):
             if required_member not in recorded_names:
                 raise BackupFormatError(f"Backup does not contain {required_member}")
@@ -418,9 +428,7 @@ def validate_backup_archive(
 
         validate_native_configuration(archive, recorded_names)
 
-        with tempfile.TemporaryDirectory(
-            prefix="application-backup-check-"
-        ) as temporary:
+        with tempfile.TemporaryDirectory(prefix="application-backup-check-") as temporary:
             database = Path(temporary) / "app.db"
             with (
                 archive.open(DATABASE_MEMBER, "r") as source,

@@ -43,3 +43,36 @@ def test_success_keeps_updated_files_and_rejects_escape_or_runtime_components(tm
     for name in ["../outside.py", "runtime.dll", "missing.py"]:
         with pytest.raises((ValueError, FileNotFoundError)):
             update.program_file(program, name)
+
+
+def test_explicit_new_program_file_is_added_and_removed_during_rollback(tmp_path):
+    program, staged = tmp_path / "program", tmp_path / "staged"
+    (program / "services").mkdir(parents=True)
+    (staged / "services").mkdir(parents=True)
+    (staged / "services" / "settings.py").write_text("enabled = True\n")
+    result = update.update_program(
+        program,
+        staged,
+        tmp_path / "successful-backup",
+        ["services/settings.py"],
+        stop=lambda: None,
+        start=lambda: None,
+        validate=lambda: True,
+        new_names=["services/settings.py"],
+    )
+    assert len(result["services/settings.py"]) == 64
+    assert (program / "services" / "settings.py").is_file()
+
+    (program / "services" / "settings.py").unlink()
+    with pytest.raises(RuntimeError, match="rolled back automatically"):
+        update.update_program(
+            program,
+            staged,
+            tmp_path / "failed-backup",
+            ["services/settings.py"],
+            stop=lambda: None,
+            start=lambda: None,
+            validate=lambda: False,
+            new_names=["services/settings.py"],
+        )
+    assert not (program / "services" / "settings.py").exists()

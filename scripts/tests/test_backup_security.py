@@ -535,6 +535,29 @@ def test_native_extension_rejects_invalid_metadata_without_exposing_it(tmp_path:
         backup_format_validate_native(archive, set(archive.namelist()))
 
 
+def test_native_extension_accepts_complete_per_user_schema_two(tmp_path: Path) -> None:
+    metadata = {
+        "schema_version": 2,
+        "instance": "development",
+        "service_prefix": "BlueReelDevelopment",
+        "program_dir": "C:/Users/Test/Programs/BlueAshReel",
+        "data_dir": "C:/Users/Test/BlueAshReel",
+        "bind_address": "127.0.0.1",
+        "port": 18080,
+        "api_port": 18081,
+        "web_port": 18082,
+        "runtime_mode": "per_user",
+        "storage": {name: f"C:/Users/Test/BlueAshReel/{name}" for name in ("app_data", "artwork", "backups", "database", "logs", "temp")},
+    }
+    path = tmp_path / "native-v2.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(NATIVE_CONFIG_MEMBERS[0], json.dumps(metadata))
+        archive.writestr(NATIVE_CONFIG_MEMBERS[1], "proxy config")
+        archive.writestr("configuration/.env", "secret")
+    with zipfile.ZipFile(path) as archive:
+        backup_format_validate_native(archive, set(archive.namelist()))
+
+
 def test_native_option_cannot_accidentally_read_default_docker_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

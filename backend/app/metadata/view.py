@@ -16,6 +16,11 @@ def metadata_for(db: Session, media_id: str | None) -> MetadataRecord | None:
 
 
 def artwork_url(db: Session, media_id: str, kind: str) -> str | None:
+    metadata = metadata_for(db, media_id)
+    selection = (metadata.artwork_selections or {}).get(kind) if metadata else None
+    selected_id = selection.get("artwork_id") if isinstance(selection, dict) else None
+    if selected_id and db.get(LocalArtwork, selected_id):
+        return f"/api/v1/browse/artwork/{selected_id}"
     value = db.scalar(
         select(LocalArtwork.id)
         .join(LibraryPath)
@@ -40,15 +45,22 @@ def detail_metadata(db: Session, user_id: str, item: MediaItem) -> dict[str, Any
     show = metadata_for(db, show_id)
     context = show or row
     fields = ("original_title", "release_date", "runtime_seconds", "overview", "tagline", "original_language")
-    result: dict[str, Any] = {field: getattr(row, field) if row else None for field in fields}
+    overrides = row.field_overrides or {} if row else {}
+
+    def value(field: str, fallback: Any = None) -> Any:
+        return overrides[field] if field in overrides else (getattr(row, field) if row else fallback)
+
+    result: dict[str, Any] = {field: value(field) for field in fields}
     result.update(
         {
+            "title": value("title", item.title) or item.title,
+            "year": value("year", item.year),
             "metadata_status": row.status if row else "unmatched",
             "metadata_provider": row.provider if row else None,
             "external_ids": row.external_ids if row else {},
-            "content_rating": (row.content_rating if row else None) or (context.content_rating if context else None),
-            "rating": {"provider": row.provider, "value": row.vote_average, "vote_count": row.vote_count}
-            if row and row.vote_average is not None and row.vote_count
+            "content_rating": value("content_rating") or (context.content_rating if context else None),
+            "rating": {"provider": row.provider, "value": value("vote_average"), "vote_count": row.vote_count}
+            if row and value("vote_average") is not None and row.vote_count
             else None,
             "metadata_updated_at": row.metadata_updated_at if row else None,
             "series_status": context.series_status if context else None,
@@ -57,8 +69,10 @@ def detail_metadata(db: Session, user_id: str, item: MediaItem) -> dict[str, Any
             "last_air_date": context.last_air_date if context else None,
         }
     )
+    result["poster_url"] = artwork_url(db, item.id, "poster")
+    result["background_url"] = artwork_url(db, item.id, "background")
     for field in ("genres", "studios", "networks", "creators", "countries"):
-        result[field] = (getattr(row, field) if row else []) or (getattr(context, field) if context else [])
+        result[field] = value(field, []) or (getattr(context, field) if context else [])
     credits = list(row.credits if row else [])
     if show:
         # Show cast is useful episode context; show-level directors/writers are

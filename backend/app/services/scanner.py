@@ -33,6 +33,7 @@ from app.models import (
 from app.services.ffprobe import FFprobeError, ProbeResult, run_ffprobe
 from app.services.filename_parser import ParsedFilename, parse_filename
 from app.services.jobs import release_scan_lock
+from app.services.library_settings import ScanAnalysis, read_library_settings
 from app.services.media_state import recompute_media_availability
 from app.services.paths import UnsafeMediaPath, is_link_or_reparse, safe_discovered_file, validate_media_directory
 
@@ -173,10 +174,15 @@ def _create_media_item(db: Session, library: Library, parsed: ParsedFilename) ->
     return item
 
 
-def _replace_streams(db: Session, media_file: MediaFile, result: ProbeResult) -> None:
+def _replace_streams(
+    db: Session, media_file: MediaFile, result: ProbeResult, analysis: ScanAnalysis | None = None,
+) -> None:
+    analysis = analysis or ScanAnalysis()
     db.execute(delete(VideoStream).where(VideoStream.media_file_id == media_file.id))
-    db.execute(delete(AudioStream).where(AudioStream.media_file_id == media_file.id))
-    db.execute(delete(SubtitleStream).where(SubtitleStream.media_file_id == media_file.id))
+    if analysis.analyze_audio_tracks:
+        db.execute(delete(AudioStream).where(AudioStream.media_file_id == media_file.id))
+    if analysis.analyze_subtitle_tracks:
+        db.execute(delete(SubtitleStream).where(SubtitleStream.media_file_id == media_file.id))
     for stream in result.video:
         db.add(
             VideoStream(
@@ -194,7 +200,7 @@ def _replace_streams(db: Session, media_file: MediaFile, result: ProbeResult) ->
                 bit_depth=stream.details.get("bit_depth"),
             )
         )
-    for stream in result.audio:
+    for stream in result.audio if analysis.analyze_audio_tracks else ():
         db.add(
             AudioStream(
                 media_file_id=media_file.id,
@@ -207,7 +213,7 @@ def _replace_streams(db: Session, media_file: MediaFile, result: ProbeResult) ->
                 title=stream.title,
             )
         )
-    for stream in result.subtitles:
+    for stream in result.subtitles if analysis.analyze_subtitle_tracks else ():
         db.add(
             SubtitleStream(
                 media_file_id=media_file.id,
@@ -304,6 +310,12 @@ def _check_cancelled(db: Session, job: BackgroundJob) -> None:
     db.refresh(job, attribute_names=["cancel_requested"])
     if job.cancel_requested:
         raise ScanCancelled("Scan cancellation requested")
+    if job.payload.get("trigger") in {"schedule", "watcher"}:
+        policy = read_library_settings(db).scan_policy
+        if not policy.automatic_scanning or job.payload.get("trigger") == "watcher" and not policy.scan_on_change:
+            raise ScanCancelled("Automatic scanning disabled")
+        if job.payload.get("trigger") == "schedule" and policy.schedule.frequency == "off":
+            raise ScanCancelled("Scheduled scanning disabled")
 
 
 def run_scan(
@@ -315,6 +327,7 @@ def run_scan(
     library = db.get(Library, scan.library_id)
     if library is None or not library.enabled:
         raise ScanFailed("Library is missing or disabled")
+    analysis = read_library_settings(db).scan_analysis
 
     extension_setting = db.get(ApplicationSetting, "scanner.extensions")
     ignored_setting = db.get(ApplicationSetting, "scanner.ignored_directories")
@@ -450,7 +463,7 @@ def run_scan(
                         media_file.analysis_duration_ms = duration_ms
                         media_file.analyzed_at = utcnow()
                         media_file.analysis_error = None
-                        _replace_streams(db, media_file, probe)
+                        _replace_streams(db, media_file, probe, analysis)
                         observed_artwork.update(_record_local_sidecars(db, media_file, source, root))
                     except FFprobeError:
                         media_file.container = None

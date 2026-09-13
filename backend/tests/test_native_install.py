@@ -187,6 +187,17 @@ def test_repair_preserves_private_configuration_roots_and_database(configured: d
     assert environment.read_bytes() == initial
 
 
+def test_per_user_native_configuration_renders_recoverable_proxy_configuration(layout) -> None:
+    program, data, media = layout
+    with patch.object(native_install, "validate_ports"):
+        configured = native_install.configure(
+            program, data, "development", 18080, "127.0.0.1", [str(media)], runtime_mode="per_user"
+        )
+    proxy = data / "configuration/Caddyfile"
+    assert proxy.is_file() and "reverse_proxy 127.0.0.1:18081" in proxy.read_text(encoding="utf-8")
+    assert configured["runtime_mode"] == "per_user"
+
+
 def test_winsw_service_xml_is_localservice_bounded_delayed_and_secret_free(configured: dict) -> None:
     program, data = Path(configured["program_dir"]), Path(configured["data_dir"])
     secret = dotenv_values(data / "configuration/.env", interpolate=False)["APP_SECRET_KEY"]

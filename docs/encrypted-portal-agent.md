@@ -96,9 +96,13 @@ dispatched. Relevant operations:
 | Operation | Payload |
 | --- | --- |
 | `catalog.home` | empty |
-| `catalog.list` | `kind`, `q`, `history`, `page`, `page_size` (maximum 24), optional `library_id` |
+| `catalog.list` | `kind`, `q`, `history`, `page`, `page_size` (maximum 24), optional `library_id`, `sort`, `watch_state`, `resolution_class`, `genre` |
+| `catalog.facets` | optional `kind`; returns authorized libraries and metadata-derived genres |
+| `catalog.watched` | opaque `media_id`, boolean `watched`; current user's canonical progress record |
+| `catalog.continue.remove` | opaque `media_id`; persists a Continue Watching dismissal without deleting history |
 | `catalog.detail`, `catalog.next`, `catalog.seasons` | opaque `media_id`; optional page |
 | `catalog.episodes` | opaque `season_id`; optional page |
+| `metadata.*` | Owner-only identification, curated overrides and provider-artwork selection using opaque `media_id` |
 | `artwork.bytes` | opaque `artwork_id`, byte offset and length |
 | `folders.select` | optional manual path, always requiring native confirmation |
 | `libraries.create` | name, library_type movies/tv/other, approved selection_ids |
@@ -108,6 +112,8 @@ dispatched. Relevant operations:
 | `grants.set` | user_id, viewer/manager role, enabled, access_version, local library_ids |
 | `grants.list` | optional page |
 | `grants.get` | user_id; exact member grant, independent of list pagination; maximum 100 library assignments |
+| `settings.general.get` | empty; Owner-only versioned local General settings and capabilities |
+| `settings.general.update` | Owner-only partial `identity`, `language_region`, and `startup_connection` groups |
 | `playback.decision`, `playback.start` | file_id, browser capabilities, audio_index, subtitle_index, quality, position_seconds |
 | `playback.bytes` | session_id, resource file/manifest/segment/subtitles, optional segment UUID, offset, length; optional snapshot_id UUID for manifests |
 | `playback.manifest.release` | session_id, snapshot_id; idempotent release of an authorized manifest snapshot |

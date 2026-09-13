@@ -18,6 +18,7 @@ from app.services.catalog import authorized_file
 from app.services.compatibility import TEXT_SUBTITLES, Capabilities, Decision, PlaybackChoice, decide
 from app.services.playback import byte_range, file_chunks, load_playback, playback_budget, save_progress, setting
 from app.services.process_supervisor import owned_size
+from app.services.remote_streaming import LIMIT_REACHED, require_remote_enabled
 from app.services.subtitles import extract_subtitles, retime_vtt
 from app.services.transcoding import SEGMENT_NAME, PlaybackManager, no_links
 from app.services.transcoding_policy import (
@@ -68,7 +69,8 @@ def decision(
 ) -> Decision:
     playback_budget.check(f"decision:{principal.user.id}", 60)
     file, _source = authorized_file(db, principal.user.id, payload.file_id, config)
-    return decide(file, payload, config, read_policy(db, config))
+    remote = require_remote_enabled(db, config) if principal.remote_playback else None
+    return decide(file, payload, config, read_policy(db, config), remote)
 
 
 @router.post("/playback/sessions", status_code=201)
@@ -85,12 +87,14 @@ def create_playback(
     db.execute(text("BEGIN IMMEDIATE"))
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
+    remote = require_remote_enabled(db, config) if principal.remote_playback else None
     recovery: PlaybackSession | None = None
     if payload.recovery_from:
         recovery = db.get(PlaybackSession, payload.recovery_from)
         if (
             recovery is None
             or recovery.user_id != principal.user.id
+            or recovery.decision.get("viewing_user_id", recovery.user_id) != principal.watch_user_id
             or recovery.auth_session_id != principal.session.id
             or recovery.media_file_id != payload.file_id
         ):
@@ -113,7 +117,7 @@ def create_playback(
         recovery.state, recovery.ended_at, recovery.was_playing = "failed", utcnow(), False
         recovery.error = "Hardware conversion failed during playback. A software recovery was requested."
         recovery.decision = {**recovery.decision, "recovery_used": True}
-    choice = decide(file, payload, config, policy)
+    choice = decide(file, payload, config, policy, remote)
     if choice.method == "unsupported":
         raise HTTPException(422, choice.reason)
     for old in db.scalars(select(PlaybackSession).where(PlaybackSession.state == "active")):
@@ -122,6 +126,18 @@ def create_playback(
         ):
             old.state, old.ended_at = "expired", utcnow()
     db.flush()
+    if remote:
+        remote_count = (
+            db.scalar(
+                select(func.count(PlaybackSession.id)).where(
+                    PlaybackSession.state == "active",
+                    PlaybackSession.decision["remote_playback"].as_boolean().is_(True),
+                )
+            )
+            or 0
+        )
+        if remote_count >= remote.session_limit:
+            raise HTTPException(429, LIMIT_REACHED)
     total = db.scalar(select(func.count(PlaybackSession.id)).where(PlaybackSession.state == "active")) or 0
     own = (
         db.scalar(
@@ -135,7 +151,7 @@ def create_playback(
         raise HTTPException(429, "Active stream limit reached. Stop another stream first.")
     progress = db.scalar(
         select(WatchProgress).where(
-            WatchProgress.user_id == principal.user.id, WatchProgress.media_item_id == file.media_item_id
+            WatchProgress.user_id == principal.watch_user_id, WatchProgress.media_item_id == file.media_item_id
         )
     )
     position = progress.position_seconds if progress and not progress.watched and not payload.restart else 0
@@ -159,6 +175,7 @@ def create_playback(
                 "video_copy": False,
                 "audio_copy": False,
                 "reason": "Precise local seek/resume requires video conversion at this position.",
+                "reason_codes": ["PRECISE_SEEK"],
             }
         )
     playback = PlaybackSession(
@@ -168,7 +185,13 @@ def create_playback(
         media_file_id=file.id,
         fingerprint=file.fingerprint,
         method=choice.method,
-        decision={**choice.model_dump(), "settings": policy.model_dump()},
+        decision={
+            **choice.model_dump(),
+            "settings": policy.model_dump(),
+            "viewing_user_id": principal.watch_user_id,
+            "remote_playback": principal.remote_playback,
+            "remote_settings": remote.model_dump() if remote else None,
+        },
         capabilities=payload.capabilities.model_dump(),
         audio_index=payload.audio_index
         if payload.audio_index is not None
@@ -281,7 +304,12 @@ def playback_recovery(
     manager: PlaybackManager = Depends(get_playback_manager),
 ) -> dict[str, Any]:
     row = db.get(PlaybackSession, session_id)
-    if row is None or row.user_id != principal.user.id or row.auth_session_id != principal.session.id:
+    if (
+        row is None
+        or row.user_id != principal.user.id
+        or row.auth_session_id != principal.session.id
+        or row.decision.get("viewing_user_id", row.user_id) != principal.watch_user_id
+    ):
         raise HTTPException(404, "Playback session not found")
     recoverable = manager.can_recover(row)
     return {
@@ -305,8 +333,11 @@ def progress(
         raise HTTPException(401, "Authentication required")
     playback, _file, _source = load_playback(db, principal, session_id, config)
     if payload.telemetry is not None and payload.sequence > playback.sequence:
-        playback.decision = {**playback.decision, "client_health": payload.telemetry.model_dump(),
-                             "client_health_at": utcnow().isoformat()}
+        playback.decision = {
+            **playback.decision,
+            "client_health": payload.telemetry.model_dump(),
+            "client_health_at": utcnow().isoformat(),
+        }
     return save_progress(
         db, playback, payload.position_seconds, payload.playing, payload.reason, payload.sequence, config
     )
@@ -320,7 +351,12 @@ def stop(
     manager: PlaybackManager = Depends(get_playback_manager),
 ) -> None:
     playback = db.get(PlaybackSession, session_id)
-    if playback is None or playback.user_id != principal.user.id or playback.auth_session_id != principal.session.id:
+    if (
+        playback is None
+        or playback.user_id != principal.user.id
+        or playback.auth_session_id != principal.session.id
+        or playback.decision.get("viewing_user_id", playback.user_id) != principal.watch_user_id
+    ):
         raise HTTPException(404, "Playback session not found")
     was_failed = playback.state == "failed"
     playback.state = "failed" if was_failed else "stopping"
@@ -433,14 +469,34 @@ def streams(
                 "id": row.id,
                 "username": username,
                 "method": row.method,
+                "playback_mode": (
+                    "direct"
+                    if row.method == "direct"
+                    else "remux"
+                    if row.method == "remux"
+                    else "audio_transcode"
+                    if row.decision.get("video_copy")
+                    else "video_transcode"
+                    if row.decision.get("audio_copy") or row.audio_index is None
+                    else "full_transcode"
+                ),
+                "reason": row.decision.get("reason"),
+                "reason_codes": row.decision.get("reason_codes", []),
+                "source_video_codec": video.codec if video else None,
+                "source_audio_codec": next(
+                    (a.codec for a in file.audio_streams if a.stream_index == row.audio_index), None
+                ),
                 "state": row.state,
                 "source_height": video.height if video else None,
                 "source_width": video.width if video else None,
                 "source_bitrate_kbps": file.bitrate / 1000 if file.bitrate else None,
                 "output_width": (
-                    video.width if row.decision.get("video_copy") else
-                    round(video.width * row.decision.get("output_height", 0) / video.height / 2) * 2
-                ) if video and video.width and video.height else None,
+                    video.width
+                    if row.decision.get("video_copy")
+                    else round(video.width * row.decision.get("output_height", 0) / video.height / 2) * 2
+                )
+                if video and video.width and video.height
+                else None,
                 "subtitle_mode": "WebVTT" if row.subtitle_index is not None else "Off",
                 "started_at": _as_utc(row.started_at).isoformat(),
                 "client_health": row.decision.get("client_health"),
@@ -457,6 +513,7 @@ def streams(
                 "selected_mode": row.decision.get("settings", {}).get("mode", "automatic"),
                 "fallback": job.fallback if job else bool(row.decision.get("fallback")),
                 "fallback_reason": job.fallback_reason if job else row.decision.get("fallback_reason"),
+                "fallback_reason_code": row.decision.get("fallback_reason_code"),
                 "elapsed_seconds": max(0, (utcnow() - _as_utc(row.started_at)).total_seconds()),
                 "startup_ms": row.decision.get("client_health", {}).get("playable_ms"),
                 "temp_bytes": owned_size(job.directory) if job else 0,

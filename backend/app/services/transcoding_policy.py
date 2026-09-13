@@ -28,8 +28,11 @@ class TranscodingPolicy(BaseModel):
 
     mode: Mode = "automatic"
     max_processes: int = Field(default=2, ge=1, le=8)
-    max_height: int = Field(default=2160, ge=240, le=4320)
-    max_bitrate_kbps: int = Field(default=12000, ge=500, le=50000)
+    max_video_transcodes: int = Field(default=2, ge=1, le=8, strict=True)
+    max_audio_transcodes: int = Field(default=2, ge=1, le=8, strict=True)
+    allow_software_fallback: bool = Field(default=True, strict=True)
+    max_height: int | None = Field(default=2160, ge=240, le=4320, strict=True)
+    max_bitrate_kbps: int = Field(default=12000, ge=500, le=50000, strict=True)
     cpu_preset: Literal["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"] = "veryfast"
     preferred_hardware: Hardware = "auto"
     hardware_device: str = Field(default="auto", pattern=r"^(auto|[0-9]{1,2})$")
@@ -37,6 +40,19 @@ class TranscodingPolicy(BaseModel):
     temp_directory: str = Field(default="", max_length=1000)
     max_storage_mb: int = Field(default=4096, ge=64, le=1048576)
     inactive_session_seconds: int = Field(default=90, ge=30, le=600)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_limits(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            for key in ("max_video_transcodes", "max_audio_transcodes"):
+                value.setdefault(key, value.get("max_processes", 2))
+        return value
+
+    @property
+    def software_fallback_allowed(self) -> bool:
+        return self.mode in ("automatic", "hardware_preferred") and self.allow_software_fallback
 
     @model_validator(mode="after")
     def required_encoder(self) -> TranscodingPolicy:
@@ -49,6 +65,8 @@ def default_policy(config: AppConfig) -> TranscodingPolicy:
     return TranscodingPolicy(
         mode=config.transcode_mode,
         max_processes=config.transcode_max_processes,
+        max_video_transcodes=config.transcode_max_processes,
+        max_audio_transcodes=config.transcode_max_processes,
         max_height=config.transcode_max_height,
         max_bitrate_kbps=config.transcode_max_bitrate_kbps,
         cpu_preset=config.transcode_cpu_preset,

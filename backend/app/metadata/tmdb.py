@@ -281,6 +281,7 @@ class TMDBMetadataProvider:
                         name,
                         _text(row.get("original_" + title_key)),
                         int(release_date[:4]) if release_date else None,
+                        overview=_text(row.get("overview"), 1200),
                     )
                 )
         return tuple(candidates)
@@ -341,6 +342,10 @@ class TMDBMetadataProvider:
     ) -> tuple[ArtworkSource, ...]:
         path = self._resource(kind, provider_id, season_number, episode_number)
         return self._images(self._json(path + "/images", include_image_language="en,null"), {}, kind)
+
+    def get_image_candidates(self, kind: str, provider_id: str) -> tuple[ArtworkSource, ...]:
+        path = self._resource(kind, provider_id, None, None)
+        return self._images(self._json(path + "/images", include_image_language="en,null"), {}, kind, all_images=True)
 
     def get_external_ids(
         self, kind: str, provider_id: str, season_number: int | None = None, episode_number: int | None = None
@@ -427,7 +432,9 @@ class TMDBMetadataProvider:
             _text(details.get("iso_639_1"), 8),
         )
 
-    def _images(self, images: dict[str, Any], data: dict[str, Any], kind: str) -> tuple[ArtworkSource, ...]:
+    def _images(
+        self, images: dict[str, Any], data: dict[str, Any], kind: str, *, all_images: bool = False
+    ) -> tuple[ArtworkSource, ...]:
         kinds = ("still",) if kind == "episode" else (("poster",) if kind == "season" else ("poster", "backdrop"))
         result: list[ArtworkSource] = []
         for image_kind in kinds:
@@ -447,9 +454,12 @@ class TMDBMetadataProvider:
                 )
                 candidates.append((rank, source.provider_path, source))
             candidates.sort(key=lambda row: (row[0], row[1]))
-            source = candidates[0][2] if candidates else self._source(data.get(image_kind + "_path"), image_kind)
-            if source:
-                result.append(source)
+            if all_images:
+                result.extend(candidate[2] for candidate in candidates[:60])
+            else:
+                source = candidates[0][2] if candidates else self._source(data.get(image_kind + "_path"), image_kind)
+                if source:
+                    result.append(source)
         return tuple(result)
 
     def _details(

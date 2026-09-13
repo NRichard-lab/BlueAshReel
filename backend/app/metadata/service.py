@@ -77,6 +77,7 @@ class Enricher:
         self.visited: set[str] = set()
         self.seasons: set[str] = set()
         self.stop_provider = False
+        self.provider_unconfigured = False
         self.retry_delay_seconds = 15 * 60.0
 
     def _due(self, row: MetadataRecord, force: bool) -> bool:
@@ -98,6 +99,7 @@ class Enricher:
             return row
         self.visited.add(item.id)
         if self.provider is None:
+            self.provider_unconfigured = True
             if not row.title:
                 row.status, row.error_code = "unavailable", "provider_not_configured"
             self.db.commit()
@@ -259,6 +261,11 @@ class Enricher:
         images.extend(credit.profile for credit in details.credits[:10] if credit.profile is not None)
         profile_ids: dict[str, str] = {}
         retained: set[str] = set()
+        retained.update(
+            artwork_id
+            for value in (row.artwork_selections or {}).values()
+            if isinstance(value, dict) and isinstance(artwork_id := value.get("artwork_id"), str)
+        )
         image_error: ProviderError | None = None
         for source in dict.fromkeys(images):
             if season_number is not None and source.kind != "poster":
@@ -438,6 +445,11 @@ def run_metadata_job(
                     db.commit()
                 if enricher.stop_provider:
                     break
+        if enricher.provider_unconfigured:
+            from app.services.jobs import fail_job
+
+            fail_job(db, job, "Metadata provider not configured; indexed media remains playable", retryable=False)
+            return
         if enricher.stop_provider:
             from app.services.jobs import fail_job
 

@@ -86,7 +86,7 @@ async def start(request: Request, purpose: str = "status", retry: bool = False) 
         "callback": callback_origin + "/portal/callback",
     }
     if purpose == "pair":
-        identity = connector.prepare_identity("Blue Ash Reel Agent")
+        identity = connector.prepare_identity(connector.agent_name())
         parameters.update(identity)
     else:
         parameters["agent_id"] = connector.credentials["agent_id"]

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import AppConfig
 from app.models import MediaFile
+from app.services.remote_streaming import RemoteStreamingSettings
 from app.services.transcoding_policy import TranscodingPolicy, default_policy
 
 RULES_VERSION = 3
@@ -60,6 +61,7 @@ class Decision(BaseModel):
     version: int = RULES_VERSION
     method: Literal["direct", "remux", "transcode", "unsupported"]
     reason: str
+    reason_codes: list[str] = Field(default_factory=list)
     video_copy: bool = False
     audio_copy: bool = False
     output_height: int = 0
@@ -71,7 +73,11 @@ class Decision(BaseModel):
 
 
 def decide(
-    file: MediaFile, choice: PlaybackChoice, config: AppConfig, policy: TranscodingPolicy | None = None
+    file: MediaFile,
+    choice: PlaybackChoice,
+    config: AppConfig,
+    policy: TranscodingPolicy | None = None,
+    remote: RemoteStreamingSettings | None = None,
 ) -> Decision:
     policy = policy or default_policy(config)
 
@@ -98,15 +104,26 @@ def decide(
             ["subtitle_format"],
         )
     quality_height, quality_bitrate = {
-        "original": (policy.max_height, policy.max_bitrate_kbps),
+        "original": (policy.max_height or video.height or caps.max_height, policy.max_bitrate_kbps),
         "1080p": (1080, 6000),
         "720p": (720, 3000),
         "480p": (480, 1200),
     }[choice.quality]
-    height = min(video.height or 1080, quality_height, caps.max_height, policy.max_height)
+    height = min(video.height or 1080, quality_height, caps.max_height, policy.max_height or caps.max_height)
+    if remote and remote.max_height is not None:
+        if not video.height:
+            return unsupported("Remote quality cannot be verified for this source. Rescan this file.")
+        height = min(height, remote.max_height)
     height = max(2, height // 2 * 2)
     bitrate = min(quality_bitrate, policy.max_bitrate_kbps)
     reduce = (video.height or 0) > height or bool(file.bitrate and file.bitrate > bitrate * 1000)
+    remote_bitrate = remote.bitrate_limit_bps if remote else None
+    if remote_bitrate:
+        # Container bitrate is the existing probe's aggregate source measurement.
+        # Unknown bitrate must not silently bypass an explicitly configured cap.
+        reduce = reduce or not file.bitrate or file.bitrate > remote_bitrate
+        # Reserve audio (160 kbps) and 5% mux overhead; FFmpeg maxrate is video-only.
+        bitrate = min(bitrate, int(remote_bitrate * 0.95) // 1000 - 160)
     burn = False
     h264 = (
         caps.h264
@@ -169,6 +186,7 @@ def decide(
         return Decision(
             method="direct",
             reason="Compatible source video, audio, and container; decoding is verified by the player.",
+            reason_codes=["DIRECT_COMPATIBLE"],
             video_copy=True,
             audio_copy=True,
             output_height=video.height or 0,
@@ -193,6 +211,7 @@ def decide(
         return Decision(
             method="direct",
             reason="Compatible WebM video and audio.",
+            reason_codes=["DIRECT_COMPATIBLE"],
             video_copy=True,
             audio_copy=True,
             output_height=height,
@@ -202,6 +221,8 @@ def decide(
         return unsupported("This browser cannot play the source or the local H.264/AAC streaming output.", blockers)
     video_copy = h264 and not reduce and not burn and choice.delivery != "transcode"
     legacy_aac = audio is None or (caps.aac and audio.codec == "aac" and channels <= 2)
+    if remote_bitrate and not legacy_aac:
+        video_copy = False
     if choice.delivery == "remux" and not (video_copy and legacy_aac):
         return unsupported("Forced Remux requires compatible video and audio without quality reduction.")
     method = "remux" if video_copy and legacy_aac else "transcode"
@@ -213,11 +234,19 @@ def decide(
         )
     return Decision(
         method=method,
+        reason_codes=(
+            (["CONTAINER_OR_TRACK_REMAPPING"] if method == "remux" else [])
+            + (["VIDEO_CODEC_INCOMPATIBLE"] if not h264 else [])
+            + (["AUDIO_CODEC_INCOMPATIBLE"] if not legacy_aac else [])
+            + (["RESOLUTION_LIMIT"] if (video.height or 0) > height else [])
+            + (["BITRATE_LIMIT"] if reduce and (video.height or 0) <= height else [])
+            + (["CLIENT_REQUESTED_TRANSCODE"] if choice.delivery == "transcode" else [])
+        ),
         reason="Local container/audio-track remapping."
         if method == "remux"
         else "Local conversion is required by the selected video, audio, subtitle, or quality settings.",
         video_copy=video_copy,
-        audio_copy=legacy_aac,
+        audio_copy=legacy_aac and (not remote_bitrate or video_copy),
         audio_transcode=video_copy and not legacy_aac,
         output_height=height,
         bitrate_kbps=bitrate,

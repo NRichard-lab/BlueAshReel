@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -21,6 +21,7 @@ from app.models import (
     LocalArtwork,
     MediaFile,
     MediaItem,
+    MetadataRecord,
     Season,
     Series,
     UserLibrary,
@@ -64,6 +65,44 @@ def libraries(
     }
 
 
+def catalog_facets(db: Session, user_id: str, kind: str | None = None) -> dict[str, Any]:
+    library_query = (
+        select(Library.id, Library.name, Library.library_type)
+        .join(UserLibrary)
+        .where(UserLibrary.user_id == user_id, Library.enabled.is_(True))
+    )
+    if kind == "movie":
+        library_query = library_query.where(Library.library_type == "movies")
+    elif kind in {"series", "episode"}:
+        library_query = library_query.where(Library.library_type == "tv")
+    metadata_query = (
+        select(MetadataRecord)
+        .join(MediaItem, MetadataRecord.media_item_id == MediaItem.id)
+        .where(permitted_library(user_id))
+    )
+    if kind:
+        metadata_query = metadata_query.where(MediaItem.kind == kind)
+    genres = {
+        genre.strip()
+        for row in db.scalars(metadata_query)
+        for genre in (row.field_overrides or {}).get("genres", row.genres or [])
+        if isinstance(genre, str) and genre.strip()
+    }
+    return {
+        "libraries": [dict(row._mapping) for row in db.execute(library_query.order_by(Library.name, Library.id))],
+        "genres": sorted(genres, key=str.casefold),
+    }
+
+
+@router.get("/facets")
+def facets(
+    kind: Literal["movie", "series", "episode", "other"] | None = None,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return catalog_facets(db, principal.user.id, kind)
+
+
 @router.get("/media")
 def catalog(
     page: int = Query(1, ge=1, le=1000000),
@@ -73,20 +112,36 @@ def catalog(
     library_id: str | None = None,
     sort: Literal["title", "year", "added", "duration", "watch"] = "title",
     watched: bool | None = None,
+    watch_state: Literal["unwatched", "in_progress", "watched"] | None = None,
     available: bool | None = None,
-    resolution: int | None = Query(None, ge=1, le=10000),
+    resolution: Annotated[int | None, Query(ge=1, le=10000)] = None,
+    resolution_class: Literal["4k", "1080p", "720p", "sd"] | None = None,
+    genre: Annotated[str | None, Query(max_length=100)] = None,
     history: Literal["continue", "recent"] | None = None,
     principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     user_id = principal.user.id
-    query = select(MediaItem).outerjoin(WatchProgress, progress_join(user_id)).where(permitted_library(user_id))
+    query = (
+        select(MediaItem)
+        .outerjoin(WatchProgress, progress_join(principal.watch_user_id))
+        .where(permitted_library(user_id))
+    )
     if kind:
         query = query.where(MediaItem.kind == kind)
     if library_id:
         query = query.where(MediaItem.library_id == library_id)
     if watched is not None:
         query = query.where(func.coalesce(WatchProgress.watched, False) == watched)
+    if watch_state == "watched":
+        query = query.where(WatchProgress.watched.is_(True))
+    elif watch_state == "in_progress":
+        query = query.where(WatchProgress.watched.is_(False), WatchProgress.position_seconds >= 5)
+    elif watch_state == "unwatched":
+        query = query.where(
+            func.coalesce(WatchProgress.watched, False).is_(False),
+            func.coalesce(WatchProgress.position_seconds, 0) < 5,
+        )
     if available is not None:
         query = query.where(file_available() == available)
     if resolution:
@@ -102,17 +157,55 @@ def catalog(
                 )
             )
         )
+    if resolution_class:
+        minimum, maximum = {
+            "4k": (2160, None),
+            "1080p": (1080, 2160),
+            "720p": (720, 1080),
+            "sd": (1, 720),
+        }[resolution_class]
+        video_query = (
+            select(MediaFile.media_item_id)
+            .join(LibraryPath)
+            .where(
+                primary_video_height() >= minimum,
+                MediaFile.available.is_(True),
+                MediaFile.analysis_error.is_(None),
+                LibraryPath.enabled.is_(True),
+            )
+        )
+        if maximum:
+            video_query = video_query.where(primary_video_height() < maximum)
+        query = query.where(MediaItem.id.in_(video_query))
+    if genre and genre.strip():
+        genre_ids = select(MetadataRecord.media_item_id).where(
+            text(
+                "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(metadata_records.field_overrides, "
+                "'$.genres') = 'array' THEN json_extract(metadata_records.field_overrides, '$.genres') "
+                "ELSE metadata_records.genres END) AS genre_values "
+                "WHERE lower(genre_values.value) = lower(:catalog_genre))"
+            ).bindparams(catalog_genre=genre.strip())
+        )
+        query = query.where(MediaItem.id.in_(genre_ids))
     if history:
         query = query.where(WatchProgress.id.is_not(None))
         if history == "continue":
-            query = query.where(WatchProgress.watched.is_(False), WatchProgress.position_seconds >= 5, file_available())
+            query = query.where(
+                WatchProgress.watched.is_(False),
+                WatchProgress.position_seconds >= 5,
+                WatchProgress.continue_dismissed_at.is_(None),
+                file_available(),
+            )
         else:
             query = query.where(WatchProgress.watched.is_(True))
     if q.strip():
         identifier = re.search(r"\bs(\d{1,3})(?:e(\d{1,4}))?\b", q, re.I)
+        year_match = re.search(r"(?<!\d)(18\d{2}|19\d{2}|20\d{2}|21\d{2})(?!\d)", q)
         title_query = (q[: identifier.start()] + q[identifier.end() :]) if identifier else q
+        if year_match:
+            title_query = title_query.replace(year_match.group(0), " ", 1)
         tokens = re.findall(r"\w+", title_query, re.UNICODE)[:16]
-        if not tokens and not identifier:
+        if not tokens and not identifier and not year_match:
             return {"items": [], "total": 0, "page": page, "page_size": page_size}
         match = " AND ".join('"' + token.replace('"', "") + '"*' for token in tokens)
         matched_ids = text(
@@ -129,6 +222,21 @@ def catalog(
             query = query.where(MediaItem.id.in_(episode_query))
         if tokens:
             query = query.where(or_(*criteria))
+        if year_match:
+            year = int(year_match.group(0))
+            query = query.where(
+                or_(
+                    MediaItem.year == year,
+                    MediaItem.id.in_(
+                        select(MetadataRecord.media_item_id).where(
+                            func.coalesce(
+                                func.json_extract(MetadataRecord.field_overrides, "$.year"), MetadataRecord.year
+                            )
+                            == year
+                        )
+                    ),
+                )
+            )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     duration = (
         select(func.max(MediaFile.duration_seconds)).where(MediaFile.media_item_id == MediaItem.id).scalar_subquery()
@@ -150,12 +258,17 @@ def catalog(
             .limit(page_size)
         )
     )
-    return {"items": cards(db, user_id, items, resolution), "total": total, "page": page, "page_size": page_size}
+    return {
+        "items": cards(db, user_id, items, resolution, watch_user_id=principal.watch_user_id),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/home", response_model=HomeResponse)
 def home(principal: Principal = Depends(current_principal), db: Session = Depends(get_db)) -> dict[str, Any]:
-    return home_catalog(db, principal.user.id)
+    return home_catalog(db, principal.user.id, principal.watch_user_id)
 
 
 @router.get("/media/{media_id}")
@@ -166,7 +279,7 @@ def detail(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     item = load_item(db, principal.user.id, media_id)
-    result = cards(db, principal.user.id, [item])[0]
+    result = cards(db, principal.user.id, [item], watch_user_id=principal.watch_user_id)[0]
     files = db.scalars(
         select(MediaFile)
         .join(LibraryPath)
@@ -300,7 +413,12 @@ def episodes(
             .limit(page_size)
         )
     )
-    return {"items": cards(db, principal.user.id, items), "total": total, "page": page, "page_size": page_size}
+    return {
+        "items": cards(db, principal.user.id, items, watch_user_id=principal.watch_user_id),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/media/{media_id}/next")
@@ -316,7 +434,7 @@ def next_episode(
         select(MediaItem)
         .join(Episode)
         .join(Season)
-        .outerjoin(WatchProgress, progress_join(principal.user.id))
+        .outerjoin(WatchProgress, progress_join(principal.watch_user_id))
         .where(Season.series_id == series_id, permitted_library(principal.user.id), file_available())
     )
     if season and episode:
@@ -335,11 +453,41 @@ def next_episode(
         if series_id
         else None
     )
-    return {"item": cards(db, principal.user.id, [found])[0] if found else None}
+    return {"item": cards(db, principal.user.id, [found], watch_user_id=principal.watch_user_id)[0] if found else None}
 
 
 class WatchInput(BaseModel):
     watched: bool
+
+
+def set_watched(db: Session, user_id: str, media_id: str, value: bool) -> dict[str, bool]:
+    progress = db.scalar(
+        select(WatchProgress).where(WatchProgress.user_id == user_id, WatchProgress.media_item_id == media_id)
+    )
+    if progress is None:
+        progress = WatchProgress(user_id=user_id, media_item_id=media_id)
+        db.add(progress)
+    progress.watched = value
+    progress.completed_at = utcnow() if value else None
+    progress.last_played_at = utcnow()
+    progress.continue_dismissed_at = None
+    if not value:
+        progress.position_seconds = 0
+        progress.watched_seconds = 0
+    db.commit()
+    return {"watched": value}
+
+
+def dismiss_continue(db: Session, user_id: str, media_id: str) -> dict[str, bool]:
+    progress = db.scalar(
+        select(WatchProgress).where(WatchProgress.user_id == user_id, WatchProgress.media_item_id == media_id)
+    )
+    if progress is None:
+        progress = WatchProgress(user_id=user_id, media_item_id=media_id)
+        db.add(progress)
+    progress.continue_dismissed_at = utcnow()
+    db.commit()
+    return {"removed": True}
 
 
 @router.put("/media/{media_id}/watched")
@@ -351,20 +499,19 @@ def watched(
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
     load_item(db, principal.user.id, media_id)
-    progress = db.scalar(
-        select(WatchProgress).where(WatchProgress.user_id == principal.user.id, WatchProgress.media_item_id == media_id)
-    )
-    if progress is None:
-        progress = WatchProgress(user_id=principal.user.id, media_item_id=media_id)
-        db.add(progress)
-    progress.watched = payload.watched
-    progress.completed_at = utcnow() if payload.watched else None
-    progress.last_played_at = utcnow()
-    if not payload.watched:
-        progress.position_seconds = 0
-        progress.watched_seconds = 0
-    db.commit()
-    return {"watched": payload.watched}
+    return set_watched(db, principal.watch_user_id, media_id, payload.watched)
+
+
+@router.delete("/media/{media_id}/continue")
+def remove_from_continue(
+    media_id: str, principal: Principal = Depends(require_user_csrf), db: Session = Depends(get_db)
+) -> dict[str, bool]:
+    db.rollback()
+    db.execute(text("BEGIN IMMEDIATE"))
+    if not principal.user.is_active or principal.session.revoked_at is not None:
+        raise HTTPException(401, "Authentication required")
+    load_item(db, principal.user.id, media_id)
+    return dismiss_continue(db, principal.watch_user_id, media_id)
 
 
 @router.get("/artwork/{artwork_id}")
@@ -382,8 +529,10 @@ def artwork(
             LocalArtwork.id == artwork_id,
             permitted_library(principal.user.id),
             LibraryPath.enabled.is_(True),
-            or_(LocalArtwork.artwork_type.in_(["poster", "background", "profile"]),
-                LocalArtwork.artwork_type.like("season_poster_%")),
+            or_(
+                LocalArtwork.artwork_type.in_(["poster", "background", "profile"]),
+                LocalArtwork.artwork_type.like("season_poster_%"),
+            ),
         )
     )
     if art is None:

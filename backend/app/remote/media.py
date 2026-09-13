@@ -18,7 +18,7 @@ from typing import Any, cast
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, select, tuple_, update
+from sqlalchemy import delete, select, text, tuple_, update
 
 from app.api import catalog, playback
 from app.api import router as administration
@@ -38,13 +38,15 @@ from app.models import (
 )
 from app.remote.protocol import encode
 from app.remote.storage import read_json, write_json
-from app.schemas import LibraryCreate, LibraryPathCreate, LibraryUpdate, ScanRequest
+from app.schemas import LibraryCreate, LibraryUpdate, ScanRequest
 from app.services.catalog import safe_text
 from app.services.compatibility import PlaybackChoice
+from app.services.general_settings import GeneralSettings, read_general, update_general
 from app.services.media_roots import _ensure_not_protected
 from app.services.paths import assert_no_link_components, native_directory_guard, validate_windows_path_text
 from app.services.playback import load_playback
 from app.services.transcoding_policy import TranscodingPolicy, read_policy
+from app.services.windows_startup import startup_registration
 
 MAX_CHUNK = 131072
 MAX_CHUNK_LOCAL = 1048576
@@ -97,6 +99,10 @@ class RemoteMedia:
         self.agent_id, self.owner_id = identifier(agent_id), identifier(owner_id)
         self.identity_fingerprint = identity_fingerprint
 
+    def general_settings(self) -> GeneralSettings:
+        with self.factory() as db:
+            return read_general(db, self.config, startup_registration(self.config))
+
     def alias(self, db: Any, kind: str, local_id: str) -> str:
         row = db.scalar(
             select(RemoteObject).where(
@@ -117,8 +123,9 @@ class RemoteMedia:
             raise HTTPException(404, "Unavailable")
         return identifier(row.local_id)
 
-    def external(self, db: Any, value: Any, kind: str = "media",
-                 aliases: dict[tuple[str, str], str] | None = None) -> Any:
+    def external(
+        self, db: Any, value: Any, kind: str = "media", aliases: dict[tuple[str, str], str] | None = None
+    ) -> Any:
         if isinstance(value, list):
             return [self.external(db, item, kind, aliases) for item in value]
         if not isinstance(value, dict):
@@ -136,10 +143,20 @@ class RemoteMedia:
         }
         for key, item in value.items():
             if key in {"poster_url", "background_url", "profile_url"}:
-                result[{"poster_url": "artwork_id", "background_url": "background_id",
-                        "profile_url": "profile_artwork_id"}[key]] = (
-                    (aliases[("artwork", item.rsplit("/", 1)[-1])] if aliases is not None
-                     else self.alias(db, "artwork", item.rsplit("/", 1)[-1])) if item else None
+                result[
+                    {
+                        "poster_url": "artwork_id",
+                        "background_url": "background_id",
+                        "profile_url": "profile_artwork_id",
+                    }[key]
+                ] = (
+                    (
+                        aliases[("artwork", item.rsplit("/", 1)[-1])]
+                        if aliases is not None
+                        else self.alias(db, "artwork", item.rsplit("/", 1)[-1])
+                    )
+                    if item
+                    else None
                 )
             elif key == "error_summary":
                 result[key] = "The local scan encountered an error. Review the Agent logs." if item else None
@@ -150,8 +167,12 @@ class RemoteMedia:
             elif key in ids and item is not None:
                 result[key] = aliases[(ids[key], item)] if aliases is not None else self.alias(db, ids[key], item)
             else:
-                child_kind = "file" if key == "files" else "path" if key == "paths" else (
-                    "library" if key == "libraries" else kind
+                child_kind = (
+                    "file"
+                    if key == "files"
+                    else "path"
+                    if key == "paths"
+                    else ("library" if key == "libraries" else kind)
                 )
                 result[key] = self.external(db, item, child_kind, aliases)
         return result
@@ -164,8 +185,12 @@ class RemoteMedia:
             if key == "libraries":
                 continue
             for item in rail:
-                for field, kind in (("id", "media"), ("library_id", "library"),
-                                    ("file_id", "file"), ("show_id", "media")):
+                for field, kind in (
+                    ("id", "media"),
+                    ("library_id", "library"),
+                    ("file_id", "file"),
+                    ("show_id", "media"),
+                ):
                     if item.get(field):
                         references.add((kind, item[field]))
                 if item.get("poster_url"):
@@ -173,10 +198,12 @@ class RemoteMedia:
         aliases = {}
         ordered = sorted(references)
         for offset in range(0, len(ordered), 400):
-            for row in db.scalars(select(RemoteObject).where(
-                RemoteObject.agent_id == self.agent_id,
-                tuple_(RemoteObject.kind, RemoteObject.local_id).in_(ordered[offset:offset + 400]),
-            )):
+            for row in db.scalars(
+                select(RemoteObject).where(
+                    RemoteObject.agent_id == self.agent_id,
+                    tuple_(RemoteObject.kind, RemoteObject.local_id).in_(ordered[offset : offset + 400]),
+                )
+            ):
                 if row.revoked:
                     raise HTTPException(404, "Unavailable")
                 aliases[(row.kind, row.local_id)] = row.id
@@ -198,7 +225,8 @@ class RemoteMedia:
         self.invalidate_authorization(authorization)
         binding = (self.agent_id, str(authorization.get("user_id", "")), str(authorization.get("session_id", "")))
         with self._authorization_lock:
-            self._authorizations.pop(binding, None)
+            if self._authorizations.get(binding) is authorization:
+                self._authorizations.pop(binding, None)
 
     def principal(self, db: Any, authorization: dict[str, Any], *, initialize: bool = False) -> Principal:
         if (
@@ -207,6 +235,8 @@ class RemoteMedia:
             or authorization.get("expires_at", 0) <= time.time()
         ):
             raise HTTPException(403, "Access denied")
+        if not db.in_transaction():
+            db.execute(text("BEGIN IMMEDIATE"))
         user_id = identifier(authorization["user_id"])
         portal_session = identifier(authorization["session_id"])
         binding = (self.agent_id, user_id, portal_session)
@@ -216,6 +246,8 @@ class RemoteMedia:
             isinstance(cache, dict)
             and cache.get("binding") == binding
             and cache.get("role") == authorization.get("role")
+            and cache.get("blue_home") == authorization.get("blue_home")
+            and cache.get("transport") == authorization.get("transport")
             and cache.get("access_version") == authorization.get("access_version")
             and now < cache.get("validated_until", 0)
         ):
@@ -280,11 +312,18 @@ class RemoteMedia:
         elif now - float(authorization.get("_session_expiry_written_at", 0)) >= SESSION_EXPIRY_WRITE_SECONDS:
             session.expires_at = datetime.fromtimestamp(authorization["expires_at"], UTC)
             authorization["_session_expiry_written_at"] = now
-        if db.new or db.dirty or db.deleted:
-            db.commit()
-        principal = Principal(user=user, session=session)
+        from app.services.blue_home import viewing_user
+
+        state_user_id = viewing_user(db, authorization, self.owner_id, user)
+        # viewing_user flushes new subjects/mappings; flush clears db.new but
+        # does not persist them across the playback admission rollback.
+        db.commit()
+        principal = Principal(user=user, session=session, profile_user_id=state_user_id,
+                              remote_playback=authorization.get("transport") != "local")
         authorization["_principal_cache"] = {
             "binding": binding,
+            "blue_home": authorization.get("blue_home"),
+            "transport": authorization.get("transport"),
             "role": role,
             "access_version": authorization.get("access_version"),
             "validated_until": now + AUTHORIZATION_REVALIDATE_SECONDS,
@@ -341,6 +380,14 @@ class RemoteMedia:
                 result = await asyncio.to_thread(self.execute, request, authorization)
             return {"id": request_id, "ok": True, "result": result}
         except HTTPException as error:
+            from app.services.remote_streaming import DISABLED, LIMIT_REACHED
+
+            if error.detail in (DISABLED, LIMIT_REACHED):
+                return {
+                    "id": request_id,
+                    "ok": False,
+                    "error": ("remote_streaming_disabled" if error.detail == DISABLED else "remote_session_limit"),
+                }
             code = {
                 401: "access_denied",
                 403: "access_denied",
@@ -349,11 +396,14 @@ class RemoteMedia:
                 410: "session_expired",
                 422: "invalid_request",
                 429: "rate_limited",
+                503: "metadata_unavailable",
             }.get(error.status_code, "operation_failed")
         except (ValueError, TypeError, KeyError):
             code = "invalid_request"
         except (TimeoutError, ImportError):
             code = "local_confirmation_required"
+        except OSError:
+            code = "system_operation_failed"
         except Exception:
             code = "operation_failed"
         finally:
@@ -418,6 +468,12 @@ class RemoteMedia:
     def release(self, authorization: dict[str, Any]) -> None:
         self.discard_authorization(authorization)
         with self.factory() as db:
+            from app.models import BlueHomeState
+
+            context = authorization.get("blue_home") or {}
+            mapping = db.get(BlueHomeState, context.get("profile_id")) if context.get("profile_id") else None
+            grant = db.get(PortalGrant, authorization["user_id"])
+            watch_id = mapping.local_user_id if mapping else grant.local_user_id if grant else None
             rows = list(
                 db.scalars(
                     select(PlaybackSession).where(
@@ -426,6 +482,7 @@ class RemoteMedia:
                     )
                 )
             )
+            rows = [row for row in rows if row.decision.get("viewing_user_id", row.user_id) == watch_id]
             for row in rows:
                 row.state, row.ended_at, row.was_playing = "stopped", utcnow(), False
                 self.forget_playback(row.id)
@@ -435,7 +492,7 @@ class RemoteMedia:
             self.manifest_snapshots = {
                 key: value
                 for key, value in self.manifest_snapshots.items()
-                if value.binding[2] != authorization["session_id"]
+                if value.binding[3] not in {row.id for row in rows}
             }
 
     def _execute(self, request: dict[str, Any], authorization: dict[str, Any]) -> Any:
@@ -455,14 +512,51 @@ class RemoteMedia:
                         "version": 1, "port": self.config.local_transport_port,
                         "identity_fingerprint": self.identity_fingerprint, "max_chunk_bytes": MAX_CHUNK_LOCAL,
                     }
+                result.update(blue_home_profiles=True, blue_home=authorization.get("blue_home"))
+            elif op in {"settings.general.get", "settings.general.update"}:
+                self.owner(authorization)
+                if op == "settings.general.get":
+                    if args:
+                        raise ValueError("General settings read does not accept a payload")
+                    return read_general(db, self.config, startup_registration(self.config)).model_dump()
+                return update_general(db, self.config, args, startup_registration(self.config)).model_dump()
+            elif op in {"settings.libraries.get", "settings.libraries.update"}:
+                from app.services.library_settings import read_library_settings, update_library_settings
+
+                self.owner(authorization)
+                if op == "settings.libraries.get":
+                    if args:
+                        raise ValueError("Libraries settings read does not accept a payload")
+                    return read_library_settings(db).model_dump()
+                return update_library_settings(db, args).model_dump()
+            elif op in {"settings.remote_streaming.get", "settings.remote_streaming.update"}:
+                from app.services.remote_streaming import read_remote_settings, update_remote_settings
+
+                self.owner(authorization)
+                if op == "settings.remote_streaming.get":
+                    if args:
+                        raise ValueError("Remote Streaming settings read does not accept a payload")
+                    return read_remote_settings(db, self.config).model_dump()
+                return update_remote_settings(db, self.config, args).model_dump()
             elif op in {"transcoding.get", "transcoding.update", "transcoding.test"}:
                 self.owner(authorization)
                 policy = read_policy(db, self.config)
                 if op == "transcoding.update":
-                    if set(args) - {"mode", "preferred_hardware"} or args.get("mode") not in {
-                        "automatic", "hardware_preferred", "software_only"
+                    if not args or set(args) - {
+                        "mode",
+                        "preferred_hardware",
+                        "cpu_preset",
+                        "max_height",
+                        "max_bitrate_kbps",
+                        "max_video_transcodes",
+                        "max_audio_transcodes",
+                        "allow_software_fallback",
+                        "allow_4k",
                     }:
                         raise ValueError("Invalid transcoding settings")
+                    db.rollback()
+                    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                    policy = read_policy(db, self.config)
                     policy = TranscodingPolicy.model_validate({**policy.model_dump(), **args})
                     playback.update_transcoding_policy(policy, principal, db, self.config, self.manager)
                 elif op == "transcoding.test":
@@ -471,11 +565,21 @@ class RemoteMedia:
                     self.manager.detect_hardware(policy)
                 health = self.manager.health()
                 return {
-                    "mode": policy.mode, "preferred_hardware": policy.preferred_hardware,
-                    "selected_encoder": health["selected_encoder"], "fallback": health["software_fallback"],
+                    "settings_schema": 1,
+                    **{key: value for key, value in policy.model_dump().items() if key != "temp_directory"},
+                    "mode": policy.mode,
+                    "preferred_hardware": policy.preferred_hardware,
+                    "selected_encoder": health["selected_encoder"],
+                    "fallback": health["software_fallback"],
                     "fallback_reason": health["failure"],
-                    "hardware_tests": [{k: value[k] for k in ("encoder", "test_status", "last_test_at", "failure")}
-                                       for value in health["hardware_tests"]],
+                    "detected_gpus": health["detected_gpus"],
+                    "hardware_status": "in_development",
+                    "hardware_decoding": False,
+                    "hdr_tone_mapping": False,
+                    "hardware_tests": [
+                        {k: value[k] for k in ("encoder", "test_status", "last_test_at", "failure")}
+                        for value in health["hardware_tests"]
+                    ],
                 }
             elif op == "streams.list":
                 self.owner(authorization)
@@ -496,29 +600,131 @@ class RemoteMedia:
                 return result
             elif op == "catalog.list":
                 media_kind, history, query = args.get("kind"), args.get("history"), args.get("q", "")
+                sort = args.get("sort", "title")
+                watch_state = args.get("watch_state")
+                resolution_class = args.get("resolution_class")
+                genre = args.get("genre")
                 if (
                     media_kind not in {None, "movie", "series", "episode", "other"}
                     or history not in {None, "continue", "recent"}
+                    or sort not in {"title", "year", "added", "duration", "watch"}
+                    or watch_state not in {None, "unwatched", "in_progress", "watched"}
+                    or resolution_class not in {None, "4k", "1080p", "720p", "sd"}
+                    or genre is not None
+                    and (not isinstance(genre, str) or len(genre) > 100)
                     or not isinstance(query, str)
                     or len(query) > 200
+                    or set(args)
+                    - {
+                        "page",
+                        "page_size",
+                        "kind",
+                        "history",
+                        "q",
+                        "library_id",
+                        "sort",
+                        "watch_state",
+                        "resolution_class",
+                        "genre",
+                    }
                 ):
                     raise ValueError("Invalid view")
                 result = catalog.catalog(
-                    page,
-                    size,
-                    media_kind,
-                    query,
-                    self.resolve(db, "library", args["library_id"]) if args.get("library_id") else None,
-                    "title",
-                    None,
-                    None,
-                    None,
-                    history,
-                    principal,
-                    db,
+                    page=page,
+                    page_size=size,
+                    kind=media_kind,
+                    q=query,
+                    library_id=self.resolve(db, "library", args["library_id"]) if args.get("library_id") else None,
+                    sort=sort,
+                    watch_state=watch_state,
+                    resolution_class=resolution_class,
+                    genre=genre,
+                    history=history,
+                    principal=principal,
+                    db=db,
+                )
+            elif op == "catalog.facets":
+                media_kind = args.get("kind")
+                if set(args) - {"kind"} or media_kind not in {None, "movie", "series", "episode", "other"}:
+                    raise ValueError("Invalid view")
+                result = catalog.catalog_facets(db, principal.user.id, media_kind)
+            elif op in {"catalog.watched", "catalog.continue.remove"}:
+                allowed = {"media_id", "watched"} if op == "catalog.watched" else {"media_id"}
+                if set(args) != allowed or (op == "catalog.watched" and type(args.get("watched")) is not bool):
+                    raise ValueError("Invalid watch-state request")
+                media_id = self.resolve(db, "media", args["media_id"])
+                from app.services.catalog import load_item
+
+                load_item(db, principal.user.id, media_id)
+                result = (
+                    catalog.set_watched(db, principal.watch_user_id, media_id, args["watched"])
+                    if op == "catalog.watched"
+                    else catalog.dismiss_continue(db, principal.watch_user_id, media_id)
                 )
             elif op == "catalog.detail":
                 result = catalog.detail(self.resolve(db, "media", args["media_id"]), page, principal, db)
+            elif op in {
+                "metadata.defaults",
+                "metadata.search",
+                "metadata.identify",
+                "metadata.preview",
+                "metadata.edit.read",
+                "metadata.edit.save",
+                "metadata.artwork.candidates",
+                "metadata.artwork.preview",
+                "metadata.artwork.select",
+                "metadata.artwork.restore",
+            }:
+                self.owner(authorization)
+                from app.metadata import identify
+                from app.metadata.provider import ProviderError
+                from app.services.catalog import load_item
+
+                permitted = {"media_id"} | (
+                    {"title", "year"}
+                    if op == "metadata.search"
+                    else {"provider_id"}
+                    if op in {"metadata.identify", "metadata.preview"}
+                    else set()
+                )
+                if op == "metadata.edit.save":
+                    permitted |= {"values", "restore"}
+                if op.startswith("metadata.artwork."):
+                    permitted |= {"kind", "candidate_id"}
+                if set(args) - permitted:
+                    raise ValueError("Invalid metadata request")
+                item = load_item(db, principal.user.id, self.resolve(db, "media", args["media_id"]))
+                try:
+                    if op.startswith("metadata.edit.") or op.startswith("metadata.artwork."):
+                        from app.metadata import edit
+
+                        if op == "metadata.edit.read":
+                            return edit.read(db, item)
+                        if op == "metadata.edit.save":
+                            edit.save(db, item, args.get("values", {}), args.get("restore", []))
+                            result = catalog.detail(item.id, page, principal, db)
+                        elif op == "metadata.artwork.candidates":
+                            return edit.artwork_candidates(db, item, self.config, args.get("kind"))
+                        elif op == "metadata.artwork.preview":
+                            return edit.artwork_preview(
+                                db, item, self.config, args.get("kind"), args.get("candidate_id")
+                            )
+                        elif op == "metadata.artwork.select":
+                            edit.select_artwork(db, item, self.config, args.get("kind"), args.get("candidate_id"))
+                            result = catalog.detail(item.id, page, principal, db)
+                        elif op == "metadata.artwork.restore":
+                            edit.restore_artwork(db, item, args.get("kind"))
+                            result = catalog.detail(item.id, page, principal, db)
+                    elif op == "metadata.defaults":
+                        return identify.defaults(db, item)
+                    if op == "metadata.search":
+                        return identify.search(db, item, self.config, args.get("title"), args.get("year"))
+                    if op == "metadata.preview":
+                        return identify.preview(db, item, self.config, args.get("provider_id"))
+                    identify.identify(db, item, self.config, args.get("provider_id"))
+                    result = catalog.detail(item.id, page, principal, db)
+                except ProviderError as error:
+                    raise HTTPException(503, "Metadata provider unavailable") from error
             elif op == "catalog.seasons":
                 result = catalog.seasons(self.resolve(db, "media", args["media_id"]), page, size, principal, db)
                 kind = "season"
@@ -648,6 +854,58 @@ class RemoteMedia:
                 "page_size": size,
             }, "file"
         if op == "libraries.update":
+            if args.get("add_selection_ids") or args.get("remove_path_ids"):
+                from app.models import LibraryPath, MediaFile, utcnow
+                from app.services.media_state import recompute_media_availability
+
+                administration._ensure_library_not_scanning(db, library_id)
+                folder_update = LibraryUpdate.model_validate(
+                    {key: args[key] for key in ("name", "enabled") if key in args}
+                )
+                if folder_update.enabled is not None:
+                    raise ValueError("Change library state separately from folders")
+                # Resolve and validate the entire edit before changing any configuration.
+                additions = (
+                    administration._validated_paths(
+                        self.selected_paths(args.get("add_selection_ids", [])),
+                        self.config,
+                    )
+                    if args.get("add_selection_ids")
+                    else []
+                )
+                removed = args.get("remove_path_ids", [])
+                if not isinstance(removed, list) or len(removed) > 16:
+                    raise ValueError("Invalid paths")
+                remove_ids = {self.resolve(db, "path", value) for value in removed}
+                paths = list(db.scalars(select(LibraryPath).where(LibraryPath.library_id == library_id)))
+                if remove_ids - {path.id for path in paths}:
+                    raise ValueError("Folder does not belong to this library")
+                library = db.get(Library, library_id)
+                assert library is not None
+                if folder_update.name is not None:
+                    library.name = folder_update.name.strip()
+                for path in additions:
+                    existing = next((row for row in paths if row.canonical_path == str(path)), None)
+                    if existing is not None:
+                        existing.enabled = True
+                    else:
+                        db.add(LibraryPath(library_id=library_id, canonical_path=str(path)))
+                for path in paths:
+                    if path.id in remove_ids:
+                        path.enabled = False
+                if remove_ids:
+                    db.execute(
+                        update(MediaFile)
+                        .where(
+                            MediaFile.library_path_id.in_(remove_ids),
+                            MediaFile.available.is_(True),
+                        )
+                        .values(available=False, missing_since=utcnow())
+                    )
+                db.flush()
+                recompute_media_availability(db, library_id)
+                db.commit()
+                return administration.get_library(library_id, principal, db, self.config), "library"
             administration.update_library(
                 library_id,
                 LibraryUpdate.model_validate({key: args[key] for key in ("name", "enabled") if key in args}),
@@ -655,16 +913,6 @@ class RemoteMedia:
                 db,
                 self.config,
             )
-            if args.get("add_selection_ids"):
-                for path in self.selected_paths(args["add_selection_ids"]):
-                    administration.add_library_path(
-                        library_id, LibraryPathCreate(path=path), principal, db, self.config
-                    )
-            removed = args.get("remove_path_ids", [])
-            if not isinstance(removed, list) or len(removed) > 16:
-                raise ValueError("Invalid paths")
-            for path_id in removed:
-                administration.remove_library_path(library_id, self.resolve(db, "path", path_id), principal, db)
             return administration.get_library(library_id, principal, db, self.config), "library"
         if op == "libraries.delete":
             if db.get(ScanLock, library_id):
@@ -912,7 +1160,11 @@ class RemoteMedia:
         playback_cache = authorization.setdefault("_playback_cache", {})
         cached = playback_cache.get(session_id) if isinstance(playback_cache, dict) else None
         now = time.monotonic()
-        if resource == "file" and cached and now < cached["validated_until"]:
+        if (resource == "file" and cached and now < cached["validated_until"]
+                and cached.get("viewing_user_id") == principal.watch_user_id):
+            from app.services.remote_streaming import require_remote_enabled
+            if principal.remote_playback or cached.get("remote_playback"):
+                require_remote_enabled(db, self.config)
             source = Path(cached["path"])
             info = source.stat()
             if info.st_size != cached["size"] or info.st_mtime_ns != cached["modified_ns"]:
@@ -926,6 +1178,8 @@ class RemoteMedia:
                 "path": str(source), "fingerprint": file.fingerprint, "size": file.size_bytes,
                 "modified_ns": file.modified_ns, "mime": str(row.decision.get("mime", "video/mp4")),
                 "validated_until": now + AUTHORIZATION_REVALIDATE_SECONDS,
+                "viewing_user_id": principal.watch_user_id,
+                "remote_playback": row.decision.get("remote_playback", False),
             }
             if info.st_size != file.size_bytes or info.st_mtime_ns != file.modified_ns:
                 playback_cache.pop(session_id, None)

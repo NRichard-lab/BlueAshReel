@@ -332,7 +332,7 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
         validate_ports(int(previous["port"]), str(previous["bind_address"]))
         if runtime_mode == "legacy_service":
             render_services(previous)
-            render_proxy(previous)
+        render_proxy(previous)
         return previous
     # The elevated wrapper may precreate empty, ACL-protected state folders.
     if data.exists() and any(
@@ -406,7 +406,7 @@ def configure(program: Path, data: Path, instance: str, port: int, bind: str, ro
     (data / MARKER).write_text(prefix + "\n", encoding="utf-8")
     if runtime_mode == "legacy_service":
         render_services(metadata)
-        render_proxy(metadata)
+    render_proxy(metadata)
     return metadata
 
 

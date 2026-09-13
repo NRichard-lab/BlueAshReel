@@ -52,7 +52,7 @@ class LocalTransport:
         }
         now = int(time.time())
         if (
-            not isinstance(payload, dict) or set(payload) != expected or payload["version"] != 1
+            not isinstance(payload, dict) or set(payload) - {"blue_home"} != expected or payload["version"] != 1
             or payload["purpose"] != "local" or payload["agent_id"] != self.connector.credentials.get("agent_id")
             or payload["client_key"] != offer.get("browser_key") or payload["jti"] != offer.get("sid")
             or payload["jti"] != offer.get("ticket_id") or payload["user_id"] != offer.get("user_id")
@@ -115,6 +115,8 @@ class LocalTransport:
                 "access_version": payload["access_version"],
                 "expires_at": payload["authorization_expires_at"], "transport": "local",
             }
+            if "blue_home" in payload:
+                authorization["blue_home"] = payload["blue_home"]
             self.sessions[payload["jti"]] = (socket, authorization)
             await socket.send(json.dumps(reply, separators=(",", ":")))
 
@@ -149,7 +151,8 @@ class LocalTransport:
 
     def bindings(self) -> list[dict[str, Any]]:
         return [{"sid": sid, "user_id": auth["user_id"], "session_id": auth["session_id"],
-                 "role": auth["role"], "access_version": auth["access_version"]}
+                 "role": auth["role"], "access_version": auth["access_version"],
+                 **({"blue_home": auth["blue_home"]} if "blue_home" in auth else {})}
                 for sid, (_, auth) in self.sessions.items()]
 
     async def revoke(self, session_ids: list[str]) -> None:

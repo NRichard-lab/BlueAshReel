@@ -17,6 +17,12 @@ from app.services.setup_session import valid_setup_csrf, valid_setup_session
 class Principal:
     user: User
     session: UserSession
+    profile_user_id: str | None = None
+    remote_playback: bool = False  # Set only by the Agent relay dispatcher, never a client payload.
+
+    @property
+    def watch_user_id(self) -> str:
+        return self.profile_user_id or self.user.id
 
 
 @dataclass(frozen=True)
@@ -36,9 +42,7 @@ def require_setup_csrf(
 ) -> None:
     # Completed setup is rejected by the endpoint with 409. Before completion,
     # only the short-lived browser-bound setup capability may create the Owner.
-    if setup_is_pending(db) and not valid_setup_csrf(
-        request.cookies.get(config.setup_cookie_name), csrf_token, config
-    ):
+    if setup_is_pending(db) and not valid_setup_csrf(request.cookies.get(config.setup_cookie_name), csrf_token, config):
         raise HTTPException(status_code=403, detail="A valid first-run setup session and CSRF token are required")
 
 

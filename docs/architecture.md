@@ -1,3 +1,387 @@
+# Blue Ash Reel architecture
+
+Verified against source and the live development environment on September 13,
+2026 (America/Denver; Remote Streaming verification). This is a map:
+verify repository state and runtime evidence before architectural or deployment work.
+
+This updates the existing Agent `docs/architecture.md`; the Portal guide is a pointer here.
+
+## Ownership and repositories
+
+Codex owns the Agent, main Portal/Web, supporting APIs, local configuration and
+development deployment. Claude owns the TV app. **Do not modify the TV app.**
+Shared API, authentication, transport, discovery, library and playback changes
+require compatibility review and a TV handoff.
+
+The Portal repository is `NRichard-lab/BlueAshReelPortal`, locally at
+`C:/Users/dog10/OneDrive/Documents/ChatGPT/BlueAshReel`. The Agent checkout is
+`C:/Users/dog10/OneDrive/Documents/ChatGPT/BlueReel/BlueAshReel`.
+Canonical main integrates Blue Home, secure local transport, Remote Streaming and
+completed Transcoding. The codex feature branches remain historical development
+lines. Canonical source and installed component pins are distinct; see reconciliation.
+
+## System and data ownership
+
+The React/Vite Portal is served by nginx behind Caddy. FastAPI account API,
+broker, encrypted relay and optional mail worker use PostgreSQL 17. Accounts,
+MFA/session security, invitations, authorization, Agent registration, pairing
+and device challenge state live centrally. The Portal server does not own a
+media catalog, filesystem browser, FFmpeg workload or media storage.
+
+The Windows Agent runs a tray supervisor, API and separate worker under the
+signed-in user. It owns SQLite, libraries, approved paths, media records,
+technical streams, metadata/manual matches, artwork, watch history, playback
+work, private identity and settings. Its outbound connections reach the Portal.
+The browser exchanges encrypted operations with the Agent through the relay.
+Opaque remote object IDs replace local database IDs and paths in browser URLs.
+Folder labels are intentionally sanitized; the native folder chooser confirms
+locations on the workstation. Do not move browsing into the Portal server.
+
+## Current development deployment — critical
+
+**CURRENT ACTIVE SERVER:** `blue-reel-web01`, LAN `192.168.50.107`, SSH user
+`blueashreel`, Ubuntu 26.04.1 LTS, Hyper-V. Docker Engine 29.8.0 / Compose v5.5.1
+were recorded during the migration. Hostname/OS, running services and checkout
+were independently checked over authenticated SSH during this task.
+
+Portal checkout: `/srv/blueashreel-portal`. Compose project:
+`blueashreel-portal`; services: frontend, api, broker, relay, mailer, db.
+The five configured health checks are healthy; mailer is running without its
+own configured health check. Shared Caddy and unrelated application projects
+must not be recreated or pruned. Only frontend joins the shared edge network.
+Database ports remain unpublished and networks remain isolated.
+
+**OLD SERVER: `docker-vm` / historical `DockerVm`, `192.168.50.227`.**
+**DO NOT DEPLOY BLUE ASH REEL HERE.** The September 12 migration report records
+its application containers stopped and data retained for rollback. Its SSH port
+timed out in this session; current container state there was not reverified.
+The `docker-vm` SSH alias and historical sections of Portal `docs/deployment.md` still
+reference it. They are not evidence of the current destination. The sibling
+`BlueAshReelMove/MIGRATION_FINAL_REPORT.md` records the migration, but is also
+historical evidence to cross-check rather than blindly trust.
+
+Before deployment verify explicit IP, SSH host identity, `hostname`, OS,
+`docker ps`, checkout status/HEAD, and running image revision. Print current
+and retired targets and both source SHAs immediately before activation. Stop
+when evidence conflicts. Do not infer the target from an alias, old env file,
+Docker context or old README.
+
+For frontend-only development: transfer and verify a Git bundle when needed,
+fast-forward a clean checkout to the reviewed commit, then run
+`bash scripts/deploy-component.sh frontend`. It builds a `git archive` of HEAD,
+labels/pins that exact revision, updates only `PORTAL_FRONTEND_IMAGE_TAG`, uses
+`--no-deps --no-build` for activation, checks image/health and restores the prior
+pin on health failure. Keep `.env.production`, its mail overlay, secret mounts,
+other component pins, account database and downloads intact. A frontend restart
+interrupts existing browser relay circuits: reconnect and verify playback after
+the final activation. Never use a full-stack deployment for a frontend-only edit.
+
+Current frontend source: `ccbc023aaa592c8e9531706d8bb4df9ea23e61f7`.
+API/broker/relay/mailer remain on `b4e11665e38cd6b440f984f45621acdf3e4a5fce`. Documentation
+commits after this SHA do not imply a new running frontend image.
+
+## Native Agent environment and updates
+
+Program: `C:/Users/dog10/AppData/Local/Programs/BlueAshReel-Development`.
+State: `C:/Users/dog10/AppData/Local/BlueAshReel-Development`.
+`configuration/installation.json` declares schema 2, `runtime_mode=per_user`,
+loopback binding and stable storage paths. Effective native API readiness is
+`http://127.0.0.1:18080/api/v1/health/ready` (do not assume the legacy API port).
+`configuration/.env` and protected identity files must never be printed or committed.
+SQLite is `database/app.db`; configuration, artwork, logs, temp, backups and
+remote identity have distinct directories. `state/tray-status.json`, native
+heartbeats and `remote-control/status.json` expose operational status.
+
+Use the existing `scripts/dev_program_update.py` for explicit Python source-file
+replacement with compile checks, immutable source backup, clean tray pause/start
+callbacks, startup/reconnection/playback validation and automatic program rollback.
+Online SQLite backup is additional protection, never a reason to restore older
+mutable data during an ordinary program update. Tray maintenance commands bind to
+the current runtime ID/PID and expire; use `pause`/`restart`, never unpair/reset.
+
+The historical Libraries deployment used Agent source `b5b47260c132b6703ce1898806d4a539a77e1938`,
+plus dependency declaration `8392dde35d682fd86c17ef75caf19cb9ae29e36f`.
+Windows needs IANA zone data: `tzdata==2026.3` is now declared and hash-pinned.
+The existing packaged runtime lacked it. Its 627 package files were added to
+the existing runtime and verified against the pinned wheel. No installer was
+built. The durable local deployment receipt is
+`state/libraries-settings-deployment.json`; it records exact source-file hashes,
+backup paths and the dependency. Product identity remains `0.1.0-development.6`.
+
+## Agent settings
+
+`application_settings` is the existing local SQLite key/value table; do not
+create a parallel settings database or central Portal preference copy.
+General uses `general.settings`, schema 1. Windows startup reads/writes the
+existing per-user Run registration rather than treating SQLite as authoritative.
+`services/general_settings.py` validates identity, locale, IANA timezone and
+startup/connection behavior. General changes are dynamic, with no restart needed.
+
+Libraries uses `libraries.settings`, schema 1, implemented in
+`services/library_settings.py`. Owner-only encrypted RPC operations
+`settings.libraries.get` and `settings.libraries.update` return the full validated
+model. Updates accept partial `scan_policy` and `scan_analysis` objects; nested
+schedule updates merge omitted fields. Unknown groups, malformed values and
+unsupported true capabilities fail validation before commit. Persistence failure
+is not reported as success. No SQLite DDL migration was necessary.
+
+Defaults preserve pre-existing behavior: automatic scanning off, schedule off
+(`03:00`, Monday retained as inert configuration), watcher off, permanent cleanup
+off, audio/subtitle analysis on, preview/chapter generation off. Merely reading
+does not persist defaults or start work. Existing extension/ignored-directory
+preferences remain under their original scanner keys.
+
+Portal `viewer/settings/settings-ui.tsx` owns the existing Save/Discard context.
+General and Libraries maintain independent Agent-loaded baselines; only changed
+groups are sent. Partial success updates the successful baseline; failed groups
+retain edits. Duplicate saves are guarded synchronously. Periodic connection
+refreshes do not overwrite active edits. Unsupported or unloaded Libraries
+controls do not display frontend placeholders as real Agent configuration.
+Save applies policy for future coordinator ticks and new analysis work; no
+restart is requested. Analysis is captured at scan start, not changed mid-probe.
+
+## Remote Streaming policy and Settings relocation
+
+September 13, 2026 verified deployment: Agent source overlay
+`afeefd0d3f2def36a273be04ea5a5f2f04ae6f98` and Portal frontend
+`78fbd520d7ba37b702a272a6788f68675f028e7c` are active in development. Receipt
+`state/remote-streaming-deployment.json` records the six exact source hashes,
+immutable program backup and online SQLite snapshot. Pairing/configuration,
+original watch rows and catalog counts passed preservation checks. The tray's
+installation source_revision remains its baseline; the source receipt identifies
+this overlay. Live Save/refresh/Discard, reconnect, movie/TV browsing and resumed
+Direct Play passed. Original remote defaults were restored after verification.
+See Portal `docs/REMOTE_STREAMING_COMPLETION_REPORT.md` for exact evidence.
+
+Portal Settings now displays Remote
+Streaming while retaining `remote-access` hashes/component identifiers. Connection
+status is extracted intact into a single System card after the existing Agent
+summary; other System placeholders/actions remain unimplemented and unchanged.
+The companion Portal `docs/ARCHITECTURE.md` documents the UI and full contract.
+
+Agent `services/remote_streaming.py` owns schema 1 in existing
+`application_settings`, key `remote_streaming.settings`. Owner-only encrypted RPC
+`settings.remote_streaming.get/update` reads/partially updates strict `enabled`,
+`max_quality`, `bitrate_limit_bps` and `session_limit`. Defaults are enabled,
+original/no additional quality cap, null/no additional bitrate cap, and the
+existing overall session ceiling (bounded 1–100). Explicit bitrate is integer
+1,000,000–50,000,000 bps; sessions are integer 1–100. Reads do not write. Atomic
+SQLite updates validate and commit; Web's existing Save/Discard has an independent
+remote baseline and retains failed edits. No DDL migration/restart is required.
+
+`RemoteMedia.principal` sets an internal `remote_playback` flag for relay operations;
+clients cannot assert locality. The installed Windows overlay uses relay, including
+LAN browsers; canonical source also retains the optional secure LAN WebSocket listener. Native loopback authorization provides status, not a LAN playback
+listener. The retained container HTTP API remains a local-network ingress and keeps
+its local classification. No forwarded-header or request-payload trust was added.
+The canonical listener verifies signed local tickets and marks those sessions local.
+It is disabled by default and has not been activated in the installed overlay.
+
+Disabled remote streaming rejects decisions, new admission and further remote
+media/state/progress reads with `remote_streaming_disabled` (403 internally).
+Stop, catalog, settings, pairing and Portal connectivity remain available. Buffered
+media may finish; unchanged inactivity cleanup reaps abandoned processes. Local
+playback is unaffected. The existing admission `BEGIN IMMEDIATE` expires stale
+sessions then atomically counts active `decision.remote_playback=true` rows across
+users. Full quota returns `remote_session_limit` (429 internally), preserving active
+streams. Existing total/per-user limits and inactivity timeout (default 90s, range
+30–600s) still apply. Startup expires old unmarked active rows as it already did.
+
+Compatibility `decide` accepts an internal optional remote policy, composing ceilings
+with existing transcoding policy/capabilities. Resolution never upscales. Missing
+height with explicit quality ceiling fails pending rescan. Known sources below
+limits keep Direct Play/remux; unknown/excess aggregate bitrate under an explicit
+cap requires the current converter. Forced-remux/direct-only/4K restrictions still
+reject unsupported conversions. Policy is snapshotted in existing decision JSON;
+no parallel playback system or client request schema was introduced.
+
+The bitrate control is a per-stream media encoding budget. Conversion subtracts
+5% mux allowance and 160 kbps AAC from decimal bps, then caps existing video
+`-b:v`/`-maxrate`/`-bufsize`; audio uses the existing 160 kbps AAC path when video
+converts under an explicit cap. Source estimates, VBR peaks and actual mux overhead
+mean this is not an instantaneous wire-rate guarantee; UI and Portal docs state
+that limitation. Original/null preserve the existing global transcoding behavior.
+
+TV contracts remain additive; old request shapes, authentication and opaque IDs
+are unchanged. TV sources are untouched. Optional error-message support is described
+in Portal `docs/CLAUDE_REMOTE_STREAMING_HANDOFF.md`. Deferred: native direct playback
+locality, exact wire-rate shaping, richer probe/peak measurements, complete client
+negotiation, codec matrices, hardware profiles and dynamic encoder discovery.
+
+## Libraries and safety
+
+Models: `Library`, `LibraryPath`, `MediaItem`, `MediaFile` in Agent `app/models.py`.
+Existing encrypted `libraries.list/create/update/delete/scan/stop/status/errors`
+use local Owner authorization. The list is paginated (Portal pages of 24);
+aggregate queries return real media/file/error counts without fetching the whole
+catalog. Cards display enabled state, active scan, enabled folder count and last
+successful scan. TV media counts include series records, so 15 TV items is not
+the same as 15 video files.
+
+Manage Folders retains name/type, stages removal checkboxes and selected folders,
+then saves or cancels. The native Agent confirms added locations. Duplicate,
+unapproved, missing and inaccessible paths follow existing path validation.
+Combined folder edits validate before mutation and commit together. Removing a
+folder disables its path and marks associated files unavailable; records remain.
+Temporarily inaccessible roots do not trigger destructive missing-file cleanup.
+
+Disabling a library retains configuration, media, metadata and watch history,
+while stopping future automatic scanning/watching. Existing behavior marks its
+files unavailable. **After re-enabling, Scan Changes restores availability**;
+enabling alone does not re-probe files. Configuration changes are rejected while
+a scan lock is active. The UI disables incompatible actions during active scans.
+
+Remove Library requires an explicit browser confirmation explaining that indexed
+records, associated metadata and history are removed. SQL cascades remove local
+index records. **No code deletes source media files.** Account, keys and pairing
+are unaffected. Test removal only against disposable libraries.
+
+## Scanner and media analysis
+
+`services/jobs.py` owns persistent `BackgroundJob`, `ScanJob`, events, leases,
+retries and per-library `ScanLock` uniqueness. A single normal worker claims jobs
+atomically. Interrupted work is requeued and stale leases recovered. Manual,
+scheduled and watcher work all call the same `enqueue_scan` and `run_scan`.
+Scans yield to active conversion playback before job claim. FFprobe is bounded
+by timeout and scans commit batches; there is no unbounded per-file subprocess fanout.
+
+Changed scans enumerate approved paths and reuse relative-path/size/mtime
+fingerprints, skipping unnecessary probes. Renames generally appear as a new
+path plus a missing old entry; this is not a content-hash rename tracker. Full
+rescans refresh existing indexing/naming and sidecars without deleting/recreating
+identities or manual metadata decisions. They do not blindly re-probe every
+unchanged file. Existing identification and metadata regression coverage remains.
+
+Only complete readable traversal marks unseen files unavailable and records
+`missing_since`; incomplete/offline traversal cannot trigger permanent deletion.
+There is no supported permanent trash purge. Scan status exposes actual queue
+state, processed files, known final total, timestamps and safe errors. No fake
+percentages are generated. Library lists refresh every 10 seconds; an opened
+scan-status panel refreshes every 5 seconds while the page is visible.
+
+FFprobe remains a single probe per analyzed file. Audio captures codec, language,
+channels, layout and bitrate; subtitle capture includes embedded codec/language,
+forced and hearing-impaired flags. Disabling a category suppresses new/replacement
+stream rows and retains existing rows. Toggling does not regenerate the catalog;
+unchanged files keep the existing probe-skip behavior. Previously stored technical
+rows can consequently remain stale while that category is disabled.
+No scrub-preview or chapter-thumbnail generator exists; both settings remain
+explicitly unavailable/false. Poster/backdrop/sidecar artwork is a separate system.
+
+## Automatic scanning
+
+`services/automatic_scanning.py` runs one daemon coordinator beside the worker.
+It checks locally persisted preferences, enabled libraries and approved roots,
+then feeds incremental work into the existing queue. The master switch gates
+scheduling and watching while retaining their configuration. Automatic scans
+check policy at safe cancellation points; manual scans remain independent.
+
+Daily/weekly schedules use the General IANA timezone and structured frequency,
+HH:MM time and weekday (Monday=0). A local-date slot in
+`scanner.schedule.<library_id>` is committed with the queued job. Missed earlier
+times on the current eligible day run when the Agent next checks; historical
+days are not replayed. A repeated DST hour does not duplicate a slot; skipped
+times run after the gap. Changing the configured schedule can create a new slot.
+
+`watchfiles` (already supplied by uvicorn standard) uses filesystem notifications,
+with no forced polling. It groups events (5-second maximum batch, 1-second quiet
+step); affected libraries retain one pending request until 30 seconds of quiet.
+An existing scan lock retains pending work for a later incremental scan. Disabling
+the master/watcher or a library removes it from future automatic consideration.
+Native watcher failures retry after 30 seconds with sanitized logs. Filesystems
+without reliable native notifications may require scheduled/manual scanning;
+no special network-share watcher guarantee is made. The library root inventory
+is revalidated on coordinator ticks; large root counts may warrant future caching.
+
+## Connections and TV compatibility
+
+### Blue Home profile integration
+
+Verified development source overlay: `a348ae759dfebd14b6b93dca8eaef3797e21415c`,
+paired with Portal `b4e11665e38cd6b440f984f45621acdf3e4a5fce` on current server
+`blue-reel-web01` / `192.168.50.107` (2026-09-13 UTC). Source-only update receipt:
+`state/blue-home-deployment.json` beneath the Development data root. The tray's
+installation-baseline source_revision is not rewritten by source overlays.
+Migration `300100000001`, pairing/configuration preservation, owner resume mapping
+and live Direct Play were verified. Additive migration and backup schema registry
+remain available on a runtime-source rollback; mutable data is never overwritten
+by this source update. Full evidence is in the Portal completion report.
+
+The central household domain is documented in the companion Portal's
+`docs/ARCHITECTURE.md` (Blue Home identity foundation) and
+`docs/CLAUDE_BLUE_HOME_HANDOFF.md`. It is separate from account authentication,
+Agent ownership and local library permissions. Do not merge the separate Blue Ash
+launch portal and Reel account databases by email; no federation currently exists.
+
+The Agent trusts an additive `blue_home` claim only from existing authenticated
+Portal authorization validation. Migration `300100000001` adds `blue_home_state`:
+stable profile/home/owner-account IDs map to a local viewing-state subject. Owner
+profiles reuse existing local owner IDs; new profiles use non-login state subjects
+without roles or library grants. No existing watch rows are copied/reset. The
+backup schema registry recognizes both the old schema and this additive migration.
+
+`Principal.user` remains the authenticated account for authorization and stream
+quotas; `Principal.watch_user_id` is used only for viewing state and preferences.
+Playback decisions freeze `viewing_user_id`; catalog/history/resume and progress
+writes use it. Watch-state identity does not confer library access. Linked external
+accounts need existing Portal membership and explicit local library grants, even
+when they share a viewing identity with a locally selected profile. New profiles
+do not see the owner's watch history. Names, PINs and custom avatar bytes remain
+central, not in Agent state. Disabled/unlinked profiles retain their history.
+
+Profile switches expire prior Portal media authorizations, causing existing relay
+revocation to retire circuits. Cleanup filters the old viewing identity; another
+profile's new playback is preserved. Missing claims retain legacy account state;
+trusted owner claims map losslessly to the original owner's state. The encrypted
+status operation advertises `blue_home_profiles: true`. The TV app has not been
+modified; consumers must implement the documented selection/PIN/reconnect flow.
+
+Pairing uses permanent Agent identity and protected private keys. Signed service
+authentication is independent from interactive MFA. General friendly-name
+projection is capability-negotiated. Portal inventory/status checks, outbound
+Agent reconnect policy and bounded encrypted circuit queues remain unchanged.
+See Portal `docs/backend-control-plane.md`, `docs/deployment.md` and Agent remote modules
+for authentication, broker routing, relay lifetime and local transport details.
+
+Libraries RPC additions are optional Owner administration operations. Existing
+catalog, media IDs, authorization, transport and playback payload shapes were not
+changed. Claude does not need a TV release for this work. If TV adds these settings,
+handle unsupported operations from older Agents and preserve missing-track cases
+when an Owner disables new audio/subtitle analysis. Native TV playback itself was
+not exercised by this task; browser movie playback and TV browsing were verified.
+
+## Development workflow and invariants
+
+Inspect repo/runtime -> reconcile source of truth -> implement narrowly -> run
+backend/frontend tests, lint, type checks and production build -> explicitly verify
+and print deployment target -> deploy development source -> verify live -> update
+this guide. Use isolated test databases ending `_test`, never the account database.
+Native synthetic media tests require the existing FFmpeg/FFprobe paths.
+
+Development changes do not mean a version bump, tag, release or installer rebuild.
+Those are separate deliberate tasks. Never reinstall, reset SQLite, regenerate
+install identity, re-pair, delete media/history or deploy to the retired host as
+a shortcut. Preserve manual identification, stable media IDs and locally owned
+settings. Do not write secrets into architecture or handoff documents.
+
+Functional inventory: real library management and counts; incremental/full scans;
+persistent status/queue; Save/Discard; automatic master, daily/weekly scheduler,
+debounced change detection; audio/subtitle preferences; unchanged local playback,
+pairing, encrypted catalog and metadata flows. Intentional gaps: thumbnail
+generators, permanent trash purge, reliable rename matching, watcher diagnostics
+in the UI, automatic file availability restoration on Enable, and applying new
+analysis preferences retroactively to unchanged files. See
+the companion Portal `docs/LIBRARIES_IMPLEMENTATION_REPORT.md` for exact acceptance results and limits.
+
+
+## Retained Docker and subsystem reference
+
+The following existing reference remains for the separate local Docker/legacy
+deployment and established subsystem details. It is not a deployment target for
+the active Windows Agent/public Portal environment verified above. Historical
+validation observations retain their original scope and must be rechecked before
+using the legacy deployment. The current environment sections above take precedence.
+
 # Architecture overview
 
 The Windows product uses the public Portal as its interface and a per-user tray
@@ -138,3 +522,186 @@ Startup expires old playback sessions but keeps durable resume points.
 The reverse proxy never exposes a media directory. Every direct, HLS and subtitle
 request passes authenticated authorization; only generated segment basenames are
 accepted. No media URL grants access by possession alone. See [conversion](transcoding.md).
+
+
+## Settings → Transcoding development stage (September 13, 2026)
+
+The current source review found a real H.264 FFmpeg pipeline beneath a duplicated
+Portal preview. The Portal now uses its shared Agent-backed Save/Discard provider
+for `transcoding.get` / partial `transcoding.update`. The response advertises
+`settings_schema: 1`; older Agents remain disabled with an upgrade explanation.
+Only the Owner can read/update/test. Partial writes merge under SQLite
+`BEGIN IMMEDIATE`; no central settings copy, new database, migration or version bump.
+The existing `transcoding.policy` record and per-playback snapshots remain authoritative.
+Private temporary-directory paths are omitted from encrypted settings responses.
+
+New policy fields: strict positive integer `max_video_transcodes` and
+`max_audio_transcodes` (1–8), plus strict boolean `allow_software_fallback` (true).
+Old records/snapshots inherit both workload caps from their existing `max_processes`.
+The existing total conversion/storage reservation limit remains separately enforced;
+completed output keeps reservations until its last session stops. Video-copy/audio
+encoding consumes only an audio workload slot. Full encoding consumes both; Direct
+Play consumes neither. Admission is under the manager lock, refuses excess work
+with HTTP 429, and never evicts existing playback. Source restarts and existing
+watchdog/supervisor ownership, timeout, disk quota and cleanup behavior remain intact.
+
+Quality labels map to existing CPU presets: Performance=ultrafast,
+Balanced=veryfast, Quality=medium. Legacy custom presets remain visible/preserved.
+Hardware retains backend-specific defaults; no libx264 preset is sent to QSV/NVENC/AMF.
+`max_height` now accepts null for no additional Agent height ceiling, while client
+caps and the source height still apply. Existing numeric defaults are unchanged
+(native 1080p/8 Mbps, shared configuration 2160p/12 Mbps). Scaling preserves aspect
+ratio with even dimensions. The bitrate field remains integer decimal kbps internally,
+shown as Mbps /1000 (0.5–50 Mbps); it targets video output, not a hard network rate.
+Existing playback policy ALREADY used global bitrate/resolution ceilings to decide
+conversion, including otherwise codec-compatible media. This behavior is preserved
+and disclosed, not silently changed. Remote Streaming still has its separate policy
+and audio/mux budget. The separate existing 4K source-conversion opt-in remains.
+
+The fallback switch applies to unverified hardware, failed/timed-out startup and
+post-start recovery. Disabled fallback fails video conversion cleanly. Software Only
+still encodes on CPU, and Hardware Required always disallows fallback regardless of
+the stored switch. Settings changes affect new streams; recovery follows its original
+snapshot. `fallback_reason_code` distinguishes unavailable hardware from failed hardware.
+
+Hardware acceleration is globally IN DEVELOPMENT. The existing H.264 prototype is
+retained, gated by a real generated-frame encode AND software decode of that output
+with the exact FFmpeg binary/device. Vendor hints no longer prevent attempting a
+listed encoder. Missing encoders report unavailable; attempted failures report failed;
+only passed tests enable experimental encoding. Tests are bounded, supervised and
+clean up their tiny private artifacts; active conversions prevent testing. Results
+remain process-local and expire/retest as before. Hardware decoding, HEVC output,
+HDR tone mapping, subtitle burn-in and image subtitles remain unimplemented/untested.
+The disabled HDR and decoding controls display off. GPU inventory alone proves nothing.
+
+Active stream fields are additive: `playback_mode` (direct, remux, audio_transcode,
+video_transcode, full_transcode), existing human-readable reason, optional reason_codes,
+source_video_codec/source_audio_codec and fallback_reason_code. Existing method and
+method_label retain their meanings. The readout shows actual encoder/audio work,
+known source dimensions and estimated output dimensions, target video bitrate,
+observed output average, client buffer freshness, session state and start time.
+No CPU percentages, file paths or invented client capability claims are added.
+Reason codes describe the current conservative rule engine; no universal negotiation
+engine is implemented. Existing precise HLS seek uses PRECISE_SEEK and converts both
+tracks for alignment. Direct/range endpoints, opaque aliases, authorization, source
+fingerprint checks, track selection and watch state remain compatible.
+
+Workstation verification: AMD Ryzen 7 2700X; visible adapters are Microsoft Hyper-V
+Video and Microsoft Remote Display Adapter. Installed FFmpeg real generated H.264
+encode/decode passed for libx264; h264_qsv, h264_nvenc and h264_amf failed. No working
+hardware prototype is claimed on this host and none was removed from the product.
+
+Deferred: broader physical GPU/device/driver testing; actual hardware decoding and
+HEVC capability/output work; correct HDR metadata/colorspace/tone-mapping pipeline;
+precise measured output geometry for unusual sample aspect ratios; richer sanitized
+FFmpeg diagnostics (existing supervisor discards raw stderr); universal client
+negotiation; hard network shaping; richer resource telemetry; independently adjustable
+storage/process pool UI. H.264 generated tests do not certify HDR or hardware decode.
+See the Portal TRANSCODING_COMPLETION_REPORT.md and CLAUDE_TRANSCODING_HANDOFF.md.
+
+
+Development activation verified September 13, 2026: Portal frontend source
+`dd243808ba18677c685f40a3b0a11f6169c0c77c` is healthy on blue-reel-web01 /
+192.168.50.107. API/broker/relay/mailer remain on `b4e11665`. Windows Agent source
+`921897d2fbbec99ca8abfb2c8b884c9690f0d107` is active through the six-file overlay;
+readiness is 200 and tray is Connected/healthy/paired. Receipt is
+`state/transcoding-deployment.json` beneath the Development data root. Installed
+source generated-media validation passed 12 tests; all deployed hashes match.
+Original configuration, identity, settings, watch history and counts (2 libraries,
+31 media items, 28 files, 1 watch row, 34 metadata records) were preserved. No version
+change (0.1.0-development.6), installer or release. Development branches are now
+`codex/transcoding-settings`; later documentation/test commits do not change image pins.
+Signed-in browser verification completed September 13, 2026 after the user signed in.
+Live Save/reload/Discard, hardware testing, Direct Play and software-transcoded playback
+passed; see the live verification record below. No authentication bypass was used.
+
+
+## Authenticated live verification — September 13, 2026
+
+The user signed in through the normal Portal UI. Settings loaded the actual Agent
+policy: Automatic, Balanced, 1080p, 8 Mbps, two video/two audio slots, fallback on,
+4K conversion off. Saved 7.5 Mbps and one video slot; reload/reconnection retained
+the values. Staged a different slot count and fallback switch; Discard restored the
+saved baseline. Restored and saved the original 8 Mbps/two-video limit; read-only
+SQLite confirmed 8000 kbps and two slots for both workloads. The original default
+policy now exists as a persisted record because the live Save flow was exercised.
+
+The live Owner hardware test completed with QSV, NVENC and AMF failures and no
+false availability. The visible adapters were Hyper-V Video and Remote Display;
+next encoder was libx264. Global IN DEVELOPMENT, disabled/off HDR and decoding,
+and absent active streams were visible. Layout was inspected at narrow and wide
+browser widths. Direct Play readout now displays copied audio as unchanged rather
+than rendering the backend's encoder sentinel 'none'.
+
+Resumed existing media at 83.712 seconds. A first in-app browser renderer crashed
+when its native playback control was invoked; the Agent remained Connected/healthy
+with readiness 200 and no playback error. A fresh browser tab played successfully,
+with changing frames and elapsed time advancing to 1:33 and beyond. Crash cause was
+not established; no server restart or browser security bypass was used.
+
+Selected 480p for a short subsequent playback test. Live output used libx264 plus
+AAC CPU audio, 1152×480 estimated output from 1920×800 source, 1200 kbps video target,
+about 1400 kbps observed muxed average, 8.23× encoding speed and Healthy client buffer.
+The readout correctly showed Full Transcode, PRECISE_SEEK, and software fallback
+because no hardware was verified. Video frames and playback time advanced normally.
+The source file was not altered. Resume progressed through ordinary playback updates.
+
+Owner Stop Stream completed for both remaining test sessions. Final database state:
+zero active sessions; latest transcode stopped at 140.870872 seconds and Direct Play
+stopped at 102.700074 seconds. Generated representation directories were cleaned up;
+Agent readiness remained 200. The Settings page is left open with original limits.
+
+
+Final frontend-only readout correction deployed as
+`ccbc023aaa592c8e9531706d8bb4df9ea23e61f7` on blue-reel-web01. Image digest:
+`sha256:2150f951c91331f690c5198e79a3d1a8f61dc72287743ab394cb9ed40aca9a0a`.
+TypeScript/local and server production builds passed; frontend health passed.
+Agent overlay and all other service pins remain unchanged. The final Settings page
+was reloaded after activation; no active playback or unsaved test settings remain.
+
+
+## Canonical source reconciliation - September 13, 2026
+
+Canonical source preserves original Blue Home, Remote Streaming and Transcoding
+commits. Portal integrates their linear superset. Agent merges that superset with
+canonical secure local transport, retaining both parents. Portal migration head
+`071bluehome` follows `a4216f5ad211`; Agent head `300100000001` follows `2f0100000001`.
+No migration was renamed and no merge migration or additional DDL is needed.
+
+Secure local transport retains endpoint validation/discovery, signed single-use
+tickets, encrypted handshake, bounded sessions, heartbeat revocation and cleanup.
+`/api/agents/{agent_id}/local-ticket` includes optional signed `blue_home` context
+from the account session. Invalid explicit selection returns 403 `Profile selection
+required`. Heartbeat compares current context and revokes stale local sessions.
+Unused tickets retain their 60-second validity; active bindings use the existing
+five-second heartbeat. Reconnect with fresh authorization after selection/renewal.
+A pre-change Agent rejects tickets with the additional field: consumers must require
+`status.blue_home_profiles` for profile isolation and retain authorized relay fallback.
+
+Profile identity comes from signed local tickets or Portal relay authorization,
+never client RPC arguments. Principal caches include profile context and transport.
+Direct-file caches recheck viewing identity and remote policy. Local playback stays
+local; originally remote playback cannot evade policy by changing route. New profile
+subjects are committed before playback admission, preventing rollback of their watch
+identity. Old-profile chunks cannot be fetched after switching viewing subjects.
+
+Web RemoteSession remains a relay client. Owned repositories verify endpoints,
+crypto, policy and session renewal; TV local preference, route failure and relay
+failover still require Claude's device acceptance. No TV repository was accessed.
+Existing TV protocol and additive optional playback fields are retained. HEVC/AV1/VP9
+source direct play is distinct from deferred HEVC hardware output. Hardware remains
+**IN DEVELOPMENT**. Hardware decoding, HDR tone mapping, universal client capability
+negotiation, full codec negotiation and broader hardware certification stay deferred.
+
+Source reconciliation performs no deployment. Live frontend stays at
+`ccbc023aaa592c8e9531706d8bb4df9ea23e61f7`, image
+`sha256:2150f951c91331f690c5198e79a3d1a8f61dc72287743ab394cb9ed40aca9a0a`.
+API/broker/relay/mailer stay at `b4e11665e38cd6b440f984f45621acdf3e4a5fce`.
+Installed Agent Transcoding overlay stays at
+`921897d2fbbec99ca8abfb2c8b884c9690f0d107`, preserving earlier Blue Home and Remote
+Streaming files. All six receipt hashes and SQLite head `300100000001` were checked
+read-only. Version stays `0.1.0-development.6`. No live database change, installer,
+version bump, release or tag occurred. Future adoption needs a code update against
+these already deployed migration heads. Canonical includes secure local transport
+and reconciliation fixes not yet installed. Earlier deployment/completion sections
+are historical stage evidence, not statements of current canonical integration.

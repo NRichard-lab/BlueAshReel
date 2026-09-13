@@ -13,7 +13,7 @@ from typing import Any
 
 import anyio
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import AppConfig
@@ -21,6 +21,7 @@ from app.dependencies import Principal
 from app.models import ApplicationSetting, MediaFile, PlaybackSession, UserSession, WatchProgress, utcnow
 from app.security import _as_utc
 from app.services.catalog import authorized_file
+from app.services.remote_streaming import require_remote_enabled
 from app.services.transcoding_policy import session_policy
 
 
@@ -61,12 +62,19 @@ def load_playback(
     db: Session, principal: Principal, session_id: str, config: AppConfig
 ) -> tuple[PlaybackSession, MediaFile, Path]:
     playback = db.get(PlaybackSession, session_id)
-    if playback is None or playback.user_id != principal.user.id or playback.auth_session_id != principal.session.id:
+    if (
+        playback is None
+        or playback.user_id != principal.user.id
+        or playback.auth_session_id != principal.session.id
+        or playback.decision.get("viewing_user_id", playback.user_id) != principal.watch_user_id
+    ):
         raise HTTPException(404, "Playback session not found")
     if playback.state != "active" or _as_utc(playback.last_seen_at) < utcnow() - timedelta(
         seconds=session_policy(playback, config).inactive_session_seconds
     ):
         raise HTTPException(410, "This playback session has ended. Start playback again.")
+    if playback.decision.get("remote_playback") or principal.remote_playback:
+        require_remote_enabled(db, config)
     file, source = authorized_file(db, principal.user.id, playback.media_file_id, config)
     if playback.fingerprint != file.fingerprint:
         raise HTTPException(409, "Source changed. Start a new playback session after rescanning.")
@@ -98,6 +106,7 @@ def file_chunks(
     # Freeze identifiers and release the request transaction before serving a large movie.
     bind = db.get_bind()
     session_id, user_id, auth_id = playback.id, playback.user_id, playback.auth_session_id
+    watch_user_id = playback.decision.get("viewing_user_id", user_id)
     size, modified = file.size_bytes, file.modified_ns
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     db.rollback()
@@ -114,7 +123,7 @@ def file_chunks(
             ):
                 return False
             try:
-                load_playback(check, Principal(auth.user, auth), session_id, config)
+                load_playback(check, Principal(auth.user, auth, watch_user_id), session_id, config)
             except HTTPException:
                 return False
             return True
@@ -176,10 +185,12 @@ def save_progress(
     playback.last_seen_at = now
     if reason == "playing" and playback.startup_ms is None:
         playback.startup_ms = max(0, int((now - _as_utc(playback.started_at)).total_seconds() * 1000))
+    watch_user_id = playback.decision.get("viewing_user_id", playback.user_id)
     latest = db.scalar(
         select(PlaybackSession.id)
         .where(
-            PlaybackSession.user_id == playback.user_id,
+            func.coalesce(PlaybackSession.decision["viewing_user_id"].as_string(), PlaybackSession.user_id)
+            == watch_user_id,
             PlaybackSession.media_item_id == playback.media_item_id,
             PlaybackSession.state == "active",
         )
@@ -190,17 +201,18 @@ def save_progress(
     if latest == playback.id and playback.watched_seconds >= 2:
         progress = db.scalar(
             select(WatchProgress).where(
-                WatchProgress.user_id == playback.user_id, WatchProgress.media_item_id == playback.media_item_id
+                WatchProgress.user_id == watch_user_id, WatchProgress.media_item_id == playback.media_item_id
             )
         )
         if progress is None:
-            progress = WatchProgress(user_id=playback.user_id, media_item_id=playback.media_item_id, watched_seconds=0)
+            progress = WatchProgress(user_id=watch_user_id, media_item_id=playback.media_item_id, watched_seconds=0)
             db.add(progress)
         progress.media_file_id = playback.media_file_id
         progress.position_seconds = playback.position_seconds
         progress.duration_seconds = playback.duration_seconds
         progress.watched_seconds += credit
         progress.last_played_at = now
+        progress.continue_dismissed_at = None
         threshold = setting(db, "watched_threshold", config.playback_watched_threshold)
         minimum = min(
             setting(db, "minimum_watch_seconds", config.playback_minimum_watch_seconds), playback.duration_seconds * 0.5

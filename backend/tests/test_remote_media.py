@@ -25,6 +25,7 @@ from app.models import (
     Library,
     LocalArtwork,
     MediaFile,
+    MetadataRecord,
     PlaybackSession,
     PortalGrant,
     SubtitleStream,
@@ -367,6 +368,56 @@ def test_remote_view_bounds(owner_context, invalid):
         call(media, auth, "catalog.list", **invalid)
 
 
+def test_remote_watch_state_and_continue_dismissal_persist(owner_context):
+    media, auth, (_, local_id, _, _) = setup_remote(owner_context)
+    card = call(media, auth, "catalog.list")["items"][0]
+    call(media, auth, "catalog.watched", media_id=card["id"], watched=False)
+    with owner_context[0].session_factory() as db:
+        progress = db.scalar(select(WatchProgress).where(WatchProgress.media_item_id == local_id))
+        progress.position_seconds = 42
+        db.commit()
+
+    assert call(media, auth, "catalog.list", history="continue")["items"][0]["id"] == card["id"]
+    assert call(media, auth, "catalog.continue.remove", media_id=card["id"]) == {"removed": True}
+    assert call(media, auth, "catalog.list", history="continue")["items"] == []
+    with owner_context[0].session_factory() as db:
+        progress = db.scalar(select(WatchProgress).where(WatchProgress.media_item_id == local_id))
+        assert progress.position_seconds == 42 and not progress.watched and progress.continue_dismissed_at
+
+    assert call(media, auth, "catalog.watched", media_id=card["id"], watched=True) == {"watched": True}
+    assert call(media, auth, "catalog.detail", media_id=card["id"])["watched"] is True
+    assert call(media, auth, "catalog.watched", media_id=card["id"], watched=False) == {"watched": False}
+    assert call(media, auth, "catalog.detail", media_id=card["id"])["position_seconds"] == 0
+
+
+def test_remote_catalog_facets_and_filters_are_additive(owner_context):
+    media, auth, (_, local_id, _, _) = setup_remote(owner_context)
+    with owner_context[0].session_factory() as db:
+        db.add(
+            MetadataRecord(
+                media_item_id=local_id,
+                kind="movie",
+                status="complete",
+                provider="tmdb",
+                provider_id="1",
+                title="Local",
+                year=2026,
+                genres=["Drama"],
+                field_overrides={"genres": ["Crime"]},
+            )
+        )
+        db.commit()
+    facets = call(media, auth, "catalog.facets", kind="movie")
+    assert facets["libraries"] and facets["libraries"][0]["id"]
+    assert facets["genres"] == ["Crime"]
+    assert call(media, auth, "catalog.list", sort="added", watch_state="unwatched")["total"] == 1
+    assert call(media, auth, "catalog.list", resolution_class="sd")["total"] == 1
+    assert call(media, auth, "catalog.list", genre="Crime")["total"] == 1
+    assert call(media, auth, "catalog.list", genre="Drama")["total"] == 0
+    assert call(media, auth, "catalog.list", q="Local")["total"] == 1
+    assert call(media, auth, "catalog.list", q="2026")["total"] == 1
+
+
 def test_encrypted_dispatch_hides_media_and_sanitizes_errors(owner_context):
     media, auth, _ = setup_remote(owner_context)
     session, incoming, _, _, _, _ = browser_session()
@@ -648,8 +699,15 @@ def test_same_owner_repair_preserves_local_account_and_watch_history(owner_conte
     call(media, auth, "catalog.list")
     with media.factory() as db:
         local_user_id = db.get(PortalGrant, auth["user_id"]).local_user_id
-        db.add(WatchProgress(user_id=local_user_id, media_item_id=media_id,
-                             media_file_id=file_id, position_seconds=25, duration_seconds=120))
+        db.add(
+            WatchProgress(
+                user_id=local_user_id,
+                media_item_id=media_id,
+                media_file_id=file_id,
+                position_seconds=25,
+                duration_seconds=120,
+            )
+        )
         db.commit()
     source_before = source.read_bytes()
     old_auth = dict(auth)

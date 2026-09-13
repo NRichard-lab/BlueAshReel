@@ -79,3 +79,56 @@ def test_local_bind_and_transport_chunk_limits() -> None:
             AppConfig(**common, local_transport_address=address)
     assert RemoteMedia.chunk_limit({"transport": "relay"}) == MAX_CHUNK
     assert RemoteMedia.chunk_limit({"transport": "local"}) == MAX_CHUNK_LOCAL
+
+
+def test_local_handshake_uses_signed_profile_and_cleans_up() -> None:
+    import asyncio
+    from unittest.mock import Mock
+
+    transport, signing, offer, payload = fixture()
+    profile = {"home_id": str(uuid.uuid4()), "profile_id": str(uuid.uuid4()),
+               "owner_account_id": payload["user_id"], "owner_profile": False}
+    payload["blue_home"] = profile
+    transport.connector.private_key = Ed25519PrivateKey.generate()
+    transport.connector.media = Mock()
+
+    class Socket:
+        remote_address = ("192.168.1.5", 12345)
+        request = SimpleNamespace(path="/ws/local")
+
+        async def recv(self):
+            return json.dumps({"type": "local_offer", "ticket": ticket(signing, payload), "offer": offer})
+
+        async def send(self, value):
+            assert json.loads(value)["type"] == "accept"
+            assert transport.bindings()[0]["blue_home"] == profile
+
+        async def close(self, code):
+            pytest.fail(f"Unexpected socket close: {code}")
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    asyncio.run(transport.handle(Socket()))
+    authorization = transport.connector.media.discard_authorization.call_args.args[0]
+    assert authorization["blue_home"] == profile
+    assert authorization["transport"] == "local"
+    assert not transport.sessions and transport.active == 0
+
+
+def test_local_profile_revocation_releases_playback() -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+
+    transport, _, _, payload = fixture()
+    socket = SimpleNamespace(close=AsyncMock())
+    authorization = {"blue_home": {"profile_id": str(uuid.uuid4())}, "expires_at": payload["exp"]}
+    transport.connector.media = Mock()
+    transport.sessions[payload["jti"]] = (socket, authorization)
+    asyncio.run(transport.revoke([payload["jti"]]))
+    assert authorization["revoked"] and authorization["expires_at"] == 0
+    transport.connector.media.release.assert_called_once_with(authorization)
+    socket.close.assert_awaited_once_with(4403)
