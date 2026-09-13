@@ -1,7 +1,7 @@
 # Blue Ash Reel architecture
 
-Verified against source and the live development environment on September 12,
-2026 (America/Denver; verification continued September 13 UTC). This is a map:
+Verified against source and the live development environment on September 13,
+2026 (America/Denver; Remote Streaming verification). This is a map:
 verify repository state and runtime evidence before architectural or deployment work.
 
 This updates the existing Agent `docs/architecture.md`; the Portal guide is a pointer here.
@@ -16,8 +16,8 @@ require compatibility review and a TV handoff.
 The Portal repository is `NRichard-lab/BlueAshReelPortal`, locally at
 `C:/Users/dog10/OneDrive/Documents/ChatGPT/BlueAshReel`. The Agent checkout is
 `C:/Users/dog10/OneDrive/Documents/ChatGPT/BlueReel/BlueAshReel`.
-Both Libraries development branches are `codex/library-settings`, descended from
-the already deployed General Settings work. Do not substitute `origin/main`
+Both current development branches are `codex/remote-streaming-settings`, descended
+from the deployed Libraries and Blue Home work. Do not substitute `origin/main`
 for the deployed branch without reconciling its ancestry and component pins.
 
 ## System and data ownership
@@ -76,8 +76,8 @@ other component pins, account database and downloads intact. A frontend restart
 interrupts existing browser relay circuits: reconnect and verify playback after
 the final activation. Never use a full-stack deployment for a frontend-only edit.
 
-Accepted frontend source for this change: `9b1d9d290ffe17c0c41e5b28fe4681678c7465f5`.
-API/broker/relay/mailer remain on their previous component images. Documentation
+Current frontend source: `78fbd520d7ba37b702a272a6788f68675f028e7c`.
+API/broker/relay/mailer remain on `b4e11665e38cd6b440f984f45621acdf3e4a5fce`. Documentation
 commits after this SHA do not imply a new running frontend image.
 
 ## Native Agent environment and updates
@@ -99,7 +99,7 @@ Online SQLite backup is additional protection, never a reason to restore older
 mutable data during an ordinary program update. Tray maintenance commands bind to
 the current runtime ID/PID and expire; use `pause`/`restart`, never unpair/reset.
 
-This deployment used Agent program source `b5b47260c132b6703ce1898806d4a539a77e1938`,
+The historical Libraries deployment used Agent source `b5b47260c132b6703ce1898806d4a539a77e1938`,
 plus dependency declaration `8392dde35d682fd86c17ef75caf19cb9ae29e36f`.
 Windows needs IANA zone data: `tzdata==2026.3` is now declared and hash-pinned.
 The existing packaged runtime lacked it. Its 627 package files were added to
@@ -142,7 +142,18 @@ restart is requested. Analysis is captured at scan start, not changed mid-probe.
 
 ## Remote Streaming policy and Settings relocation
 
-September 13, 2026 source implementation: Portal Settings now displays Remote
+September 13, 2026 verified deployment: Agent source overlay
+`afeefd0d3f2def36a273be04ea5a5f2f04ae6f98` and Portal frontend
+`78fbd520d7ba37b702a272a6788f68675f028e7c` are active in development. Receipt
+`state/remote-streaming-deployment.json` records the six exact source hashes,
+immutable program backup and online SQLite snapshot. Pairing/configuration,
+original watch rows and catalog counts passed preservation checks. The tray's
+installation source_revision remains its baseline; the source receipt identifies
+this overlay. Live Save/refresh/Discard, reconnect, movie/TV browsing and resumed
+Direct Play passed. Original remote defaults were restored after verification.
+See Portal `docs/REMOTE_STREAMING_COMPLETION_REPORT.md` for exact evidence.
+
+Portal Settings now displays Remote
 Streaming while retaining `remote-access` hashes/component identifiers. Connection
 status is extracted intact into a single System card after the existing Agent
 summary; other System placeholders/actions remain unimplemented and unchanged.
