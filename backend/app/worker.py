@@ -50,6 +50,14 @@ def run_worker(stop_event: threading.Event | None = None) -> None:
     configure_logging(config.log_level)
     signal.signal(signal.SIGINT, _request_stop)
     signal.signal(signal.SIGTERM, _request_stop)
+    from app.services.automatic_scanning import run_automatic_scanning
+
+    automatic_stop = threading.Event()
+    automatic = threading.Thread(
+        target=run_automatic_scanning, args=(SessionLocal, config, automatic_stop), daemon=True,
+        name="automatic-scanning",
+    )
+    automatic.start()
     with SessionLocal() as db:
         recovered, failed = recover_stale_jobs(db, config)
         logger.info(
@@ -105,6 +113,8 @@ def run_worker(stop_event: threading.Event | None = None) -> None:
                 if current is not None:
                     fail_job(db, current, "Local background processing did not complete")
                 logger.warning("Background job attempt did not complete")
+    automatic_stop.set()
+    automatic.join(timeout=5)
     logger.info("Worker stopped")
 
 

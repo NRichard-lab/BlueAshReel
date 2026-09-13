@@ -429,6 +429,15 @@ class RemoteMedia:
                         raise ValueError("General settings read does not accept a payload")
                     return read_general(db, self.config, startup_registration(self.config)).model_dump()
                 return update_general(db, self.config, args, startup_registration(self.config)).model_dump()
+            elif op in {"settings.libraries.get", "settings.libraries.update"}:
+                from app.services.library_settings import read_library_settings, update_library_settings
+
+                self.owner(authorization)
+                if op == "settings.libraries.get":
+                    if args:
+                        raise ValueError("Libraries settings read does not accept a payload")
+                    return read_library_settings(db).model_dump()
+                return update_library_settings(db, args).model_dump()
             elif op in {"transcoding.get", "transcoding.update", "transcoding.test"}:
                 self.owner(authorization)
                 policy = read_policy(db, self.config)
@@ -728,6 +737,46 @@ class RemoteMedia:
                 "page_size": size,
             }, "file"
         if op == "libraries.update":
+            if args.get("add_selection_ids") or args.get("remove_path_ids"):
+                from app.models import LibraryPath, MediaFile, utcnow
+                from app.services.media_state import recompute_media_availability
+
+                administration._ensure_library_not_scanning(db, library_id)
+                payload = LibraryUpdate.model_validate({key: args[key] for key in ("name", "enabled") if key in args})
+                if payload.enabled is not None:
+                    raise ValueError("Change library state separately from folders")
+                # Resolve and validate the entire edit before changing any configuration.
+                additions = administration._validated_paths(
+                    self.selected_paths(args.get("add_selection_ids", [])), self.config,
+                ) if args.get("add_selection_ids") else []
+                removed = args.get("remove_path_ids", [])
+                if not isinstance(removed, list) or len(removed) > 16:
+                    raise ValueError("Invalid paths")
+                remove_ids = {self.resolve(db, "path", value) for value in removed}
+                paths = list(db.scalars(select(LibraryPath).where(LibraryPath.library_id == library_id)))
+                if remove_ids - {path.id for path in paths}:
+                    raise ValueError("Folder does not belong to this library")
+                library = db.get(Library, library_id)
+                assert library is not None
+                if payload.name is not None:
+                    library.name = payload.name.strip()
+                for path in additions:
+                    existing = next((row for row in paths if row.canonical_path == str(path)), None)
+                    if existing is not None:
+                        existing.enabled = True
+                    else:
+                        db.add(LibraryPath(library_id=library_id, canonical_path=str(path)))
+                for path in paths:
+                    if path.id in remove_ids:
+                        path.enabled = False
+                if remove_ids:
+                    db.execute(update(MediaFile).where(
+                        MediaFile.library_path_id.in_(remove_ids), MediaFile.available.is_(True),
+                    ).values(available=False, missing_since=utcnow()))
+                db.flush()
+                recompute_media_availability(db, library_id)
+                db.commit()
+                return administration.get_library(library_id, principal, db, self.config), "library"
             administration.update_library(
                 library_id,
                 LibraryUpdate.model_validate({key: args[key] for key in ("name", "enabled") if key in args}),
