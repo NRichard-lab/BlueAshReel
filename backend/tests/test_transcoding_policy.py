@@ -200,7 +200,7 @@ def test_probe_success_records_only_actual_tested_codec(owner_context: tuple[Tes
     assert "-xerror" in launch.call_args_list[1].args[1]
     tests = manager.health()["hardware_tests"]
     assert tests[0]["test_status"] == "passed" and tests[0]["available_codecs"] == ["h264"]
-    assert all(row["test_status"] == "failed" for row in tests[1:])
+    assert all(row["test_status"] == "unavailable" for row in tests[1:])
 
 
 @pytest.mark.parametrize(
@@ -212,15 +212,18 @@ def test_probe_success_records_only_actual_tested_codec(owner_context: tuple[Tes
         ("software_only", False, False),
     ],
 )
+@pytest.mark.parametrize("allow_fallback", [True, False])
 def test_startup_fallback_is_per_session_and_required_never_uses_cpu(
     owner_context: tuple[TestContext, str],
     mode: str,
     required: bool,
     fallback: bool,
+    allow_fallback: bool,
 ) -> None:
     context, csrf = owner_context
     _lib, _item, fid, _source = playable(context, csrf)
-    update_policy(context, csrf, mode=mode, preferred_hardware="qsv")
+    update_policy(context, csrf, mode=mode, preferred_hardware="qsv", allow_software_fallback=allow_fallback)
+    required = required or (not allow_fallback and mode != "software_only")
     with context.session_factory() as db:
         file = db.get(MediaFile, fid)
         assert file
@@ -296,13 +299,15 @@ def test_temp_root_change_preserves_existing_storage(owner_context: tuple[TestCo
 
 
 @pytest.mark.parametrize("mode", ["automatic", "hardware_preferred", "hardware_required", "software_only"])
+@pytest.mark.parametrize("allow_fallback", [True, False])
 def test_runtime_hardware_recovery_is_authorized_once_and_preserves_original_policy(
     owner_context: tuple[TestContext, str],
     mode: str,
+    allow_fallback: bool,
 ) -> None:
     context, csrf = owner_context
     _lib, _item, fid, _source = playable(context, csrf)
-    update_policy(context, csrf, mode=mode, preferred_hardware="qsv")
+    update_policy(context, csrf, mode=mode, preferred_hardware="qsv", allow_software_fallback=allow_fallback)
     with context.session_factory() as db:
         file = db.get(MediaFile, fid)
         assert file
@@ -334,7 +339,7 @@ def test_runtime_hardware_recovery_is_authorized_once_and_preserves_original_pol
         job.process.poll.return_value = job.process.wait.return_value = 5
         endpoint = f"/api/v1/playback/{first['id']}/recovery"
         recoverable = context.client.get(endpoint).json()["recoverable"]
-        assert recoverable == (mode in ("automatic", "hardware_preferred"))
+        assert recoverable == (mode in ("automatic", "hardware_preferred") and allow_fallback)
         if not recoverable:
             return
         # Recovery is continuation of the original mode, not a newly changed Owner policy.

@@ -422,7 +422,7 @@ class PlaybackManager:
                     str(directory / "probe.h264"),
                 ]
                 try:
-                    if ENCODERS[key] not in advertised or not gpu_hint(key, self.gpus, policy.hardware_device):
+                    if ENCODERS[key] not in advertised:
                         raise OSError("Hardware prerequisites unavailable")
                     with self.lock:
                         if self.stop_event.is_set():
@@ -439,9 +439,23 @@ class PlaybackManager:
                         if process.stdout:
                             process.stdout.close()
                         # A successful encode exit alone does not prove usable output.
-                        command = [self.config.ffmpeg_path, "-hide_banner", "-nostdin", "-loglevel", "error",
-                                   "-xerror", "-threads", "1", "-protocol_whitelist", "file,pipe",
-                                   "-i", str(output), "-f", "null", "-"]
+                        command = [
+                            self.config.ffmpeg_path,
+                            "-hide_banner",
+                            "-nostdin",
+                            "-loglevel",
+                            "error",
+                            "-xerror",
+                            "-threads",
+                            "1",
+                            "-protocol_whitelist",
+                            "file,pipe",
+                            "-i",
+                            str(output),
+                            "-f",
+                            "null",
+                            "-",
+                        ]
                         with self.lock:
                             process = self._launch(directory, command, 8, 1048576)
                             self.auxiliary[directory] = process
@@ -456,7 +470,11 @@ class PlaybackManager:
                     self.hardware_tests[key] = {
                         "encoder": key,
                         "gpu": gpu_hint(key, self.gpus, policy.hardware_device),
-                        "test_status": "passed" if passed else "failed",
+                        "test_status": "passed"
+                        if passed
+                        else "failed"
+                        if ENCODERS[key] in advertised
+                        else "unavailable",
                         "last_test_at": utcnow().isoformat(),
                         "available_codecs": ["h264"] if passed else [],
                         "device": policy.hardware_device,
@@ -497,7 +515,8 @@ class PlaybackManager:
             return "libx264", False, None
         candidates = [policy.preferred_hardware] if policy.preferred_hardware != "auto" else ["qsv", "nvenc", "amf"]
         verified = (
-            self.tested_binary is not None and self.tested_binary == binary_identity(self.config.ffmpeg_path)
+            self.tested_binary is not None
+            and self.tested_binary == binary_identity(self.config.ffmpeg_path)
             and time.monotonic() - self.hardware_checked_at < HARDWARE_RECHECK_SECONDS
         )
         for key in candidates:
@@ -508,8 +527,10 @@ class PlaybackManager:
             ):
                 return ENCODERS[key], False, None
         reason = "No selected hardware encoder has passed a test with this FFmpeg binary and device; using software."
-        if policy.mode == "hardware_required":
-            raise HTTPException(422, "Hardware Required: the selected encoder/device is not verified. Retest hardware.")
+        if not policy.software_fallback_allowed:
+            raise HTTPException(
+                422, "Hardware Required: no verified encoder; software fallback is disabled. Retest hardware."
+            )
         return "libx264", True, reason
 
     def create(
@@ -530,7 +551,7 @@ class PlaybackManager:
             if decision.method == "transcode" and policy.mode == "hardware_required":
                 raise HTTPException(422, "Hardware Required cannot perform audio-only software conversion")
         elif software_fallback:
-            if policy.mode not in ("automatic", "hardware_preferred"):
+            if not policy.software_fallback_allowed:
                 raise HTTPException(422, "This playback policy does not allow software fallback")
             encoder, fallback, fallback_reason = "libx264", True, software_fallback
         else:
@@ -573,6 +594,17 @@ class PlaybackManager:
             # last referencing stream stops; active playback always has priority.
             if len(self.jobs) >= policy.max_processes:
                 raise HTTPException(429, "Local conversion capacity reached. Stop another converted stream first.")
+            if (
+                not decision.video_copy
+                and sum(j.encoder != "copy" for j in self.jobs.values()) >= policy.max_video_transcodes
+            ):
+                raise HTTPException(429, "Transcoding capacity reached: video transcode limit.")
+            if (
+                playback.audio_index is not None
+                and not decision.audio_copy
+                and sum(j.audio_encoder != "copy" for j in self.jobs.values()) >= policy.max_audio_transcodes
+            ):
+                raise HTTPException(429, "Transcoding capacity reached: audio transcode limit.")
             quota = policy.max_storage_mb * 1048576 // policy.max_processes
             job_directories = {job.directory for job in self.jobs.values()}
             # Charge each directory once. Subtracting separately sampled sizes
@@ -616,7 +648,7 @@ class PlaybackManager:
                 reservation_bytes=quota,
                 policy=policy,
                 starting=True,
-                audio_encoder="copy" if decision.audio_copy else "aac (CPU)",
+                audio_encoder="copy" if decision.audio_copy or playback.audio_index is None else "aac (CPU)",
             )
             self.jobs[directory.name] = job
             self.pending.discard(directory)
@@ -638,7 +670,7 @@ class PlaybackManager:
                 if not decision.video_copy and encoder != "libx264":
                     self.invalidate_encoder(encoder, "Hardware video encoding failed during startup. Retest hardware.")
                     reason = "Hardware video encoding failed during startup. Software fallback is active."
-                    if policy.mode in ("automatic", "hardware_preferred"):
+                    if policy.software_fallback_allowed:
                         return self.create(file, source, playback, decision, offset, software_fallback=reason)
                     raise HTTPException(
                         422, "Hardware Required: the selected encoder failed; software fallback is disabled"
@@ -651,7 +683,7 @@ class PlaybackManager:
         if not decision.video_copy and encoder != "libx264":
             self.invalidate_encoder(encoder, "Hardware video encoding did not become ready in time. Retest hardware.")
             reason = "Hardware video encoding did not become ready in time. Software fallback is active."
-            if policy.mode in ("automatic", "hardware_preferred"):
+            if policy.software_fallback_allowed:
                 return self.create(file, source, playback, decision, offset, software_fallback=reason)
             raise HTTPException(504, "Hardware Required: the selected encoder timed out; software fallback is disabled")
         raise HTTPException(
@@ -679,6 +711,13 @@ class PlaybackManager:
             "fallback": job.fallback,
             "fallback_reason": job.fallback_reason,
             "audio_encoder": job.audio_encoder,
+            "fallback_reason_code": (
+                "HARDWARE_FAILED_SOFTWARE_FALLBACK"
+                if job.fallback_reason and job.fallback_reason.startswith("Hardware")
+                else "HARDWARE_UNAVAILABLE_SOFTWARE_FALLBACK"
+            )
+            if job.fallback
+            else None,
         }
         playback.last_seen_at = utcnow()
 
@@ -712,7 +751,7 @@ class PlaybackManager:
     def can_recover(self, playback: PlaybackSession) -> bool:
         policy = session_policy(playback, self.config)
         if (
-            policy.mode not in ("automatic", "hardware_preferred")
+            not policy.software_fallback_allowed
             or playback.decision.get("recovery_used")
             or playback.decision.get("active_encoder") not in {"h264_qsv", "h264_nvenc", "h264_amf"}
         ):

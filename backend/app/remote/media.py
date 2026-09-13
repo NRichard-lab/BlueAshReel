@@ -328,9 +328,11 @@ class RemoteMedia:
             from app.services.remote_streaming import DISABLED, LIMIT_REACHED
 
             if error.detail in (DISABLED, LIMIT_REACHED):
-                return {"id": request_id, "ok": False, "error": (
-                    "remote_streaming_disabled" if error.detail == DISABLED else "remote_session_limit"
-                )}
+                return {
+                    "id": request_id,
+                    "ok": False,
+                    "error": ("remote_streaming_disabled" if error.detail == DISABLED else "remote_session_limit"),
+                }
             code = {
                 401: "access_denied",
                 403: "access_denied",
@@ -475,12 +477,21 @@ class RemoteMedia:
                 self.owner(authorization)
                 policy = read_policy(db, self.config)
                 if op == "transcoding.update":
-                    if set(args) - {"mode", "preferred_hardware"} or args.get("mode") not in {
-                        "automatic",
-                        "hardware_preferred",
-                        "software_only",
+                    if not args or set(args) - {
+                        "mode",
+                        "preferred_hardware",
+                        "cpu_preset",
+                        "max_height",
+                        "max_bitrate_kbps",
+                        "max_video_transcodes",
+                        "max_audio_transcodes",
+                        "allow_software_fallback",
+                        "allow_4k",
                     }:
                         raise ValueError("Invalid transcoding settings")
+                    db.rollback()
+                    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                    policy = read_policy(db, self.config)
                     policy = TranscodingPolicy.model_validate({**policy.model_dump(), **args})
                     playback.update_transcoding_policy(policy, principal, db, self.config, self.manager)
                 elif op == "transcoding.test":
@@ -489,11 +500,17 @@ class RemoteMedia:
                     self.manager.detect_hardware(policy)
                 health = self.manager.health()
                 return {
+                    "settings_schema": 1,
+                    **{key: value for key, value in policy.model_dump().items() if key != "temp_directory"},
                     "mode": policy.mode,
                     "preferred_hardware": policy.preferred_hardware,
                     "selected_encoder": health["selected_encoder"],
                     "fallback": health["software_fallback"],
                     "fallback_reason": health["failure"],
+                    "detected_gpus": health["detected_gpus"],
+                    "hardware_status": "in_development",
+                    "hardware_decoding": False,
+                    "hdr_tone_mapping": False,
                     "hardware_tests": [
                         {k: value[k] for k in ("encoder", "test_status", "last_test_at", "failure")}
                         for value in health["hardware_tests"]

@@ -521,3 +521,79 @@ Startup expires old playback sessions but keeps durable resume points.
 The reverse proxy never exposes a media directory. Every direct, HLS and subtitle
 request passes authenticated authorization; only generated segment basenames are
 accepted. No media URL grants access by possession alone. See [conversion](transcoding.md).
+
+
+## Settings → Transcoding development stage (September 13, 2026)
+
+The current source review found a real H.264 FFmpeg pipeline beneath a duplicated
+Portal preview. The Portal now uses its shared Agent-backed Save/Discard provider
+for `transcoding.get` / partial `transcoding.update`. The response advertises
+`settings_schema: 1`; older Agents remain disabled with an upgrade explanation.
+Only the Owner can read/update/test. Partial writes merge under SQLite
+`BEGIN IMMEDIATE`; no central settings copy, new database, migration or version bump.
+The existing `transcoding.policy` record and per-playback snapshots remain authoritative.
+Private temporary-directory paths are omitted from encrypted settings responses.
+
+New policy fields: strict positive integer `max_video_transcodes` and
+`max_audio_transcodes` (1–8), plus strict boolean `allow_software_fallback` (true).
+Old records/snapshots inherit both workload caps from their existing `max_processes`.
+The existing total conversion/storage reservation limit remains separately enforced;
+completed output keeps reservations until its last session stops. Video-copy/audio
+encoding consumes only an audio workload slot. Full encoding consumes both; Direct
+Play consumes neither. Admission is under the manager lock, refuses excess work
+with HTTP 429, and never evicts existing playback. Source restarts and existing
+watchdog/supervisor ownership, timeout, disk quota and cleanup behavior remain intact.
+
+Quality labels map to existing CPU presets: Performance=ultrafast,
+Balanced=veryfast, Quality=medium. Legacy custom presets remain visible/preserved.
+Hardware retains backend-specific defaults; no libx264 preset is sent to QSV/NVENC/AMF.
+`max_height` now accepts null for no additional Agent height ceiling, while client
+caps and the source height still apply. Existing numeric defaults are unchanged
+(native 1080p/8 Mbps, shared configuration 2160p/12 Mbps). Scaling preserves aspect
+ratio with even dimensions. The bitrate field remains integer decimal kbps internally,
+shown as Mbps /1000 (0.5–50 Mbps); it targets video output, not a hard network rate.
+Existing playback policy ALREADY used global bitrate/resolution ceilings to decide
+conversion, including otherwise codec-compatible media. This behavior is preserved
+and disclosed, not silently changed. Remote Streaming still has its separate policy
+and audio/mux budget. The separate existing 4K source-conversion opt-in remains.
+
+The fallback switch applies to unverified hardware, failed/timed-out startup and
+post-start recovery. Disabled fallback fails video conversion cleanly. Software Only
+still encodes on CPU, and Hardware Required always disallows fallback regardless of
+the stored switch. Settings changes affect new streams; recovery follows its original
+snapshot. `fallback_reason_code` distinguishes unavailable hardware from failed hardware.
+
+Hardware acceleration is globally IN DEVELOPMENT. The existing H.264 prototype is
+retained, gated by a real generated-frame encode AND software decode of that output
+with the exact FFmpeg binary/device. Vendor hints no longer prevent attempting a
+listed encoder. Missing encoders report unavailable; attempted failures report failed;
+only passed tests enable experimental encoding. Tests are bounded, supervised and
+clean up their tiny private artifacts; active conversions prevent testing. Results
+remain process-local and expire/retest as before. Hardware decoding, HEVC output,
+HDR tone mapping, subtitle burn-in and image subtitles remain unimplemented/untested.
+The disabled HDR and decoding controls display off. GPU inventory alone proves nothing.
+
+Active stream fields are additive: `playback_mode` (direct, remux, audio_transcode,
+video_transcode, full_transcode), existing human-readable reason, optional reason_codes,
+source_video_codec/source_audio_codec and fallback_reason_code. Existing method and
+method_label retain their meanings. The readout shows actual encoder/audio work,
+known source dimensions and estimated output dimensions, target video bitrate,
+observed output average, client buffer freshness, session state and start time.
+No CPU percentages, file paths or invented client capability claims are added.
+Reason codes describe the current conservative rule engine; no universal negotiation
+engine is implemented. Existing precise HLS seek uses PRECISE_SEEK and converts both
+tracks for alignment. Direct/range endpoints, opaque aliases, authorization, source
+fingerprint checks, track selection and watch state remain compatible.
+
+Workstation verification: AMD Ryzen 7 2700X; visible adapters are Microsoft Hyper-V
+Video and Microsoft Remote Display Adapter. Installed FFmpeg real generated H.264
+encode/decode passed for libx264; h264_qsv, h264_nvenc and h264_amf failed. No working
+hardware prototype is claimed on this host and none was removed from the product.
+
+Deferred: broader physical GPU/device/driver testing; actual hardware decoding and
+HEVC capability/output work; correct HDR metadata/colorspace/tone-mapping pipeline;
+precise measured output geometry for unusual sample aspect ratios; richer sanitized
+FFmpeg diagnostics (existing supervisor discards raw stderr); universal client
+negotiation; hard network shaping; richer resource telemetry; independently adjustable
+storage/process pool UI. H.264 generated tests do not certify HDR or hardware decode.
+See the Portal TRANSCODING_COMPLETION_REPORT.md and CLAUDE_TRANSCODING_HANDOFF.md.

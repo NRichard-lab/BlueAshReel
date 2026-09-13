@@ -44,6 +44,7 @@ class Decision(BaseModel):
     version: int = RULES_VERSION
     method: Literal["direct", "remux", "transcode", "unsupported"]
     reason: str
+    reason_codes: list[str] = Field(default_factory=list)
     video_copy: bool = False
     audio_copy: bool = False
     output_height: int = 0
@@ -53,7 +54,10 @@ class Decision(BaseModel):
 
 
 def decide(
-    file: MediaFile, choice: PlaybackChoice, config: AppConfig, policy: TranscodingPolicy | None = None,
+    file: MediaFile,
+    choice: PlaybackChoice,
+    config: AppConfig,
+    policy: TranscodingPolicy | None = None,
     remote: RemoteStreamingSettings | None = None,
 ) -> Decision:
     policy = policy or default_policy(config)
@@ -80,12 +84,12 @@ def decide(
         )
     caps = choice.capabilities
     quality_height, quality_bitrate = {
-        "original": (policy.max_height, policy.max_bitrate_kbps),
+        "original": (policy.max_height or video.height or caps.max_height, policy.max_bitrate_kbps),
         "1080p": (1080, 6000),
         "720p": (720, 3000),
         "480p": (480, 1200),
     }[choice.quality]
-    height = min(video.height or 1080, quality_height, caps.max_height, policy.max_height)
+    height = min(video.height or 1080, quality_height, caps.max_height, policy.max_height or caps.max_height)
     if remote and remote.max_height is not None:
         if not video.height:
             return unsupported("Remote quality cannot be verified for this source. Rescan this file.")
@@ -115,12 +119,18 @@ def decide(
     default_audio = len(audios) <= 1
     container = set((file.container or "").split(","))
     if (
-        choice.delivery == "auto" and h264 and aac and not reduce and not burn
-        and default_audio and container.intersection({"mov", "mp4"})
+        choice.delivery == "auto"
+        and h264
+        and aac
+        and not reduce
+        and not burn
+        and default_audio
+        and container.intersection({"mov", "mp4"})
     ):
         return Decision(
             method="direct",
             reason="Compatible MP4 video and audio; decoding is verified by the player.",
+            reason_codes=["DIRECT_COMPATIBLE"],
             video_copy=True,
             audio_copy=True,
             output_height=video.height or 0,
@@ -144,6 +154,7 @@ def decide(
         return Decision(
             method="direct",
             reason="Compatible WebM video and audio.",
+            reason_codes=["DIRECT_COMPATIBLE"],
             video_copy=True,
             audio_copy=True,
             output_height=height,
@@ -165,6 +176,14 @@ def decide(
         )
     return Decision(
         method=method,
+        reason_codes=(
+            (["CONTAINER_OR_TRACK_REMAPPING"] if method == "remux" else [])
+            + (["VIDEO_CODEC_INCOMPATIBLE"] if not h264 else [])
+            + (["AUDIO_CODEC_INCOMPATIBLE"] if not aac else [])
+            + (["RESOLUTION_LIMIT"] if (video.height or 0) > height else [])
+            + (["BITRATE_LIMIT"] if reduce and (video.height or 0) <= height else [])
+            + (["CLIENT_REQUESTED_TRANSCODE"] if choice.delivery == "transcode" else [])
+        ),
         reason="Local container/audio-track remapping."
         if method == "remux"
         else "Local conversion is required by the selected video, audio, subtitle, or quality settings.",

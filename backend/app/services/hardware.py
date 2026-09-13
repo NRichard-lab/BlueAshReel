@@ -104,7 +104,9 @@ def device_output_options(encoder: str, device: str) -> list[str]:
 
 
 def video_filter(height: int, encoder: str, device: str) -> str:
-    value = f"scale=-2:{height}"
+    # Guard against incomplete/stale probe dimensions: the actual decoded frame
+    # is the final ceiling, including when metadata cannot establish its height.
+    value = f"scale=-2:trunc(min(ih\\,{height})/2)*2"
     if encoder == "h264_amf" and device != "auto":
         value += ",format=nv12,hwupload"
     return value
