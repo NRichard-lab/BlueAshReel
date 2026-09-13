@@ -26,6 +26,26 @@ def program_file(root: Path, name: str) -> Path:
     return target
 
 
+def new_program_file(root: Path, name: str) -> Path:
+    """Resolve an explicitly selected absent source beneath an existing component."""
+    relative = Path(name)
+    if relative.is_absolute() or ".." in relative.parts or relative.suffix != ".py":
+        raise ValueError("Only explicitly selected Python program sources can be updated")
+    base = root.resolve(strict=True)
+    parent = (base / relative).parent.resolve(strict=True)
+    if not parent.is_relative_to(base):
+        raise ValueError("Program source escapes its component directory")
+    for part in (parent, *parent.parents):
+        if part == base.parent:
+            break
+        if part.is_symlink() or getattr(part.stat(), "st_file_attributes", 0) & 0x400:
+            raise ValueError("Linked program sources are not supported")
+    target = parent / relative.name
+    if target.exists() or target.is_symlink():
+        raise ValueError("New program source already exists")
+    return target
+
+
 def replace_file(source: Path, target: Path) -> None:
     stage = target.with_name(target.name + ".development-update.tmp")
     if stage.exists():
@@ -43,6 +63,7 @@ def replace_file(source: Path, target: Path) -> None:
 def update_program(
     program: Path, staged: Path, backup: Path, names: Sequence[str], *,
     stop: Callable[[], None], start: Callable[[], None], validate: Callable[[], bool],
+    new_names: Sequence[str] = (),
 ) -> dict[str, str]:
     """Validation must cover startup, identity/reconnection and real playback.
 
@@ -52,7 +73,14 @@ def update_program(
     """
     if not names or len(set(names)) != len(names):
         raise ValueError("An explicit unique file list is required")
-    originals = {name: program_file(program, name) for name in names}
+    additions = set(new_names)
+    if len(additions) != len(new_names) or additions - set(names):
+        raise ValueError("New files must be a unique subset of the explicit file list")
+    originals = {name: program_file(program, name) for name in names if name not in additions}
+    targets = {
+        name: new_program_file(program, name) if name in additions else originals[name]
+        for name in names
+    }
     sources = {name: program_file(staged, name) for name in names}
     # Compile first without generating bytecode in either program directory.
     for source in sources.values():
@@ -65,14 +93,17 @@ def update_program(
     stop()
     try:
         for name in names:
-            replace_file(sources[name], originals[name])
+            replace_file(sources[name], targets[name])
         start()
         if not validate():
             raise RuntimeError("Updated Agent failed startup, reconnection or playback validation")
     except BaseException:  # noqa: BLE001 - restore program files even when validation is interrupted
         stop()
-        for name in names:
-            replace_file(backup / name, originals[name])
+        for name, target in targets.items():
+            if name in additions:
+                target.unlink(missing_ok=True)
+            else:
+                replace_file(backup / name, target)
         start()
         raise RuntimeError("Updated program files were rolled back automatically") from None
-    return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in originals.items()}
+    return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in targets.items()}

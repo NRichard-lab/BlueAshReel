@@ -13,6 +13,7 @@ import os
 import subprocess
 import time
 import uuid
+import webbrowser
 from pathlib import Path
 from typing import Any, Literal
 
@@ -26,7 +27,7 @@ from app.native_runtime import (
     protect_child_processes,
     write_stop_marker,
 )
-from app.remote.control import queue_action
+from app.remote.control import PORTAL_ORIGIN, queue_action
 from app.remote.protocol import fingerprint
 from app.remote.storage import read_json, unprotect_secret
 from app.services.paths import assert_no_link_components
@@ -106,14 +107,27 @@ class Supervisor:
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
 
-    def start(self) -> None:
+    def preferences(self) -> Any:
+        from sqlalchemy.orm import sessionmaker
+
+        from app.database import create_database_engine
+        from app.services.general_settings import read_general
+
+        engine = create_database_engine(self.config.database_url)
+        try:
+            with sessionmaker(bind=engine)() as db:
+                return read_general(db, self.config)
+        finally:
+            engine.dispose()
+
+    def start(self, *, connect: bool = True) -> None:
         if any(child.poll() is None for child in self.children.values()):
             raise RuntimeError("The previous Agent process has not ended")
         self.children.clear()
         for directory in (self.control, self.installation.data_dir / "remote-identity"):
             assert_no_link_components(directory)
             directory.mkdir(parents=True, exist_ok=True)
-        write_json(self.control / "desired.json", {"enabled": True})
+        write_json(self.control / "desired.json", {"enabled": connect})
         for role in ("api", "worker"):
             self.spawn(role)
         deadline = time.monotonic() + 60
@@ -220,7 +234,10 @@ class Supervisor:
         self.publish("Running")
         clean_exit = False
         try:
-            self.start()
+            preferences = self.preferences().startup_connection
+            self.start(connect=preferences.auto_connect)
+            if preferences.launch_portal_on_start:
+                webbrowser.open(PORTAL_ORIGIN, new=2)
             while True:
                 if self.parent_pid and not parent_alive(self.parent_pid):
                     clean_exit = True
@@ -243,8 +260,10 @@ class Supervisor:
                         self.stop()
                         if action == "pause":
                             self.paused = True
+                        elif action == "reconnect":
+                            self.start(connect=True)
                         else:
-                            self.start()
+                            self.start(connect=self.preferences().startup_connection.auto_connect)
                 self.publish()
                 time.sleep(1)
             return 0

@@ -6,6 +6,7 @@ import secrets
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -13,7 +14,7 @@ from dotenv import dotenv_values
 
 from app import native_consent, native_install, native_user_install
 from app.native_runtime import NativeRuntimeError, load_configuration, load_installation
-from app.native_tray import command_action, connection_label
+from app.native_tray import Supervisor, command_action, connection_label
 
 
 @pytest.fixture
@@ -189,6 +190,27 @@ def test_maintenance_stop_cannot_terminate_replacement_runtime(binding: str) -> 
 @pytest.mark.parametrize("action", ["exit", "pause", "restart", "reconnect"])
 def test_ordinary_tray_commands_remain_compatible(action: str) -> None:
     assert command_action({"action": action, "created_at": 99}, runtime_id="current", pid=123, now=100) == action
+
+
+@pytest.mark.parametrize("launch", [False, True])
+def test_supervisor_start_preferences_apply_once_without_affecting_reconnect_loop(launch: bool) -> None:
+    supervisor = object.__new__(Supervisor)
+    supervisor.parent_pid = 123
+    supervisor.product = SimpleNamespace(version="test", source_revision=None)
+    calls: list[bool] = []
+    with (
+        patch.object(supervisor, "publish"),
+        patch.object(supervisor, "preferences", return_value=SimpleNamespace(
+            startup_connection=SimpleNamespace(auto_connect=False, launch_portal_on_start=launch)
+        )),
+        patch.object(supervisor, "start", side_effect=lambda *, connect: calls.append(connect)),
+        patch.object(supervisor, "stop"),
+        patch("app.native_tray.parent_alive", return_value=False),
+        patch("app.native_tray.webbrowser.open") as opened,
+    ):
+        assert supervisor.run() == 0
+    assert calls == [False]
+    assert opened.call_count == int(launch)
 
 
 @pytest.mark.parametrize("command", [
