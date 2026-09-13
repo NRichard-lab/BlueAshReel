@@ -21,10 +21,11 @@ fails, the registry value is restored to its previous state.
 
 Pairing identity remains the Ed25519 key and permanent Agent UUID in the protected
 identity directory. The friendly name is display metadata only. The connector
-projects the current local name in an optional broker heartbeat field so the
-Portal inventory can update without changing pairing, keys, membership, grants,
-or the encrypted session transcript. Older Portals and Agents remain compatible
-because the heartbeat field and both settings RPC operations are additive.
+projects the current local name in an optional broker heartbeat field after the
+Portal advertises support, so the Portal inventory can update without changing
+pairing, keys, membership, grants, or the encrypted session transcript. Older
+Portals and Agents remain compatible because the capability, heartbeat field,
+and both settings RPC operations are additive.
 
 ## Stored contract
 

@@ -133,6 +133,7 @@ class Connector:
         self.next_update_check = 0.0
         self.update_available = False
         self.update_version: str | None = None
+        self.name_projection = False
         # Integrated native mode does not use main()'s process-wide log disable.
         # Never let debug socket logging serialize authentication frames.
         logging.getLogger("websockets.client").setLevel(logging.CRITICAL + 1)
@@ -358,13 +359,17 @@ class Connector:
 
     async def broker_loop(self, socket: Any) -> None:
         while True:
-            await self.send(socket, {
+            heartbeat = {
                 "type": "heartbeat", "protocol": 1, "version": self.version, "os": OS_CATEGORY,
-                "name": self.agent_name(),
-            })
+            }
+            if self.name_projection:
+                heartbeat["name"] = self.agent_name()
+            await self.send(socket, heartbeat)
             response = json.loads(await asyncio.wait_for(socket.recv(), timeout=30))
             if response.get("type") != "heartbeat_ack":
                 raise ValueError("Invalid heartbeat response")
+            if response.get("general_name_projection") is True:
+                self.name_projection = True
             self.last_heartbeat = dt.datetime.now(dt.UTC).isoformat()
             self.publish()
             await asyncio.sleep(20)
