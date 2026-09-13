@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -205,7 +205,7 @@ class RemoteMedia:
         if missing:
             db.add_all(missing)
             db.flush()
-        return self.external(db, result, aliases=aliases)
+        return cast(dict[str, Any], self.external(db, result, aliases=aliases))
 
     def principal(self, db: Any, authorization: dict[str, Any]) -> Principal:
         if (
@@ -421,7 +421,7 @@ class RemoteMedia:
             size = integer(args.get("page_size", 24), 1, 24)
             kind = "media"
             if op == "status":
-                result = {"health": "ok", "mode": "relay", "remote_media_available": True}
+                result: Any = {"health": "ok", "mode": "relay", "remote_media_available": True}
             elif op in {"settings.general.get", "settings.general.update"}:
                 self.owner(authorization)
                 if op == "settings.general.get":
@@ -538,7 +538,9 @@ class RemoteMedia:
                 if set(args) != allowed or (op == "catalog.watched" and type(args.get("watched")) is not bool):
                     raise ValueError("Invalid watch-state request")
                 media_id = self.resolve(db, "media", args["media_id"])
-                catalog.load_item(db, principal.user.id, media_id)
+                from app.services.catalog import load_item
+
+                load_item(db, principal.user.id, media_id)
                 result = (
                     catalog.set_watched(db, principal.user.id, media_id, args["watched"])
                     if op == "catalog.watched"
@@ -742,8 +744,8 @@ class RemoteMedia:
                 from app.services.media_state import recompute_media_availability
 
                 administration._ensure_library_not_scanning(db, library_id)
-                payload = LibraryUpdate.model_validate({key: args[key] for key in ("name", "enabled") if key in args})
-                if payload.enabled is not None:
+                folder_update = LibraryUpdate.model_validate({key: args[key] for key in ("name", "enabled") if key in args})
+                if folder_update.enabled is not None:
                     raise ValueError("Change library state separately from folders")
                 # Resolve and validate the entire edit before changing any configuration.
                 additions = administration._validated_paths(
@@ -758,8 +760,8 @@ class RemoteMedia:
                     raise ValueError("Folder does not belong to this library")
                 library = db.get(Library, library_id)
                 assert library is not None
-                if payload.name is not None:
-                    library.name = payload.name.strip()
+                if folder_update.name is not None:
+                    library.name = folder_update.name.strip()
                 for path in additions:
                     existing = next((row for row in paths if row.canonical_path == str(path)), None)
                     if existing is not None:
