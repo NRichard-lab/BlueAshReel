@@ -76,7 +76,7 @@ other component pins, account database and downloads intact. A frontend restart
 interrupts existing browser relay circuits: reconnect and verify playback after
 the final activation. Never use a full-stack deployment for a frontend-only edit.
 
-Current frontend source: `dd243808ba18677c685f40a3b0a11f6169c0c77c`.
+Current frontend source: `ccbc023aaa592c8e9531706d8bb4df9ea23e61f7`.
 API/broker/relay/mailer remain on `b4e11665e38cd6b440f984f45621acdf3e4a5fce`. Documentation
 commits after this SHA do not imply a new running frontend image.
 
@@ -649,3 +649,11 @@ Owner Stop Stream completed for both remaining test sessions. Final database sta
 zero active sessions; latest transcode stopped at 140.870872 seconds and Direct Play
 stopped at 102.700074 seconds. Generated representation directories were cleaned up;
 Agent readiness remained 200. The Settings page is left open with original limits.
+
+
+Final frontend-only readout correction deployed as
+`ccbc023aaa592c8e9531706d8bb4df9ea23e61f7` on blue-reel-web01. Image digest:
+`sha256:2150f951c91331f690c5198e79a3d1a8f61dc72287743ab394cb9ed40aca9a0a`.
+TypeScript/local and server production builds passed; frontend health passed.
+Agent overlay and all other service pins remain unchanged. The final Settings page
+was reloaded after activation; no active playback or unsaved test settings remain.
