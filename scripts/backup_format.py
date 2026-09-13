@@ -18,7 +18,7 @@ from typing import Any
 ARCHIVE_FORMAT = "home-media-backup"
 MANIFEST_VERSION = 1
 PHASE1_REVISION = "773863f5a6aa"
-EXPECTED_ALEMBIC_HEAD = "2f0100000001"
+EXPECTED_ALEMBIC_HEAD = "300100000001"
 MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database/app.db"
 PRODUCT_CONFIG_MEMBER = "configuration/product/product.json"
@@ -113,6 +113,7 @@ SCHEMAS_BY_REVISION = {
         "metadata_records",
     },
 }
+SCHEMAS_BY_REVISION["300100000001"] = SCHEMAS_BY_REVISION["2f0100000001"] | {"blue_home_state"}
 REQUIRED_APPLICATION_TABLES = SCHEMAS_BY_REVISION[EXPECTED_ALEMBIC_HEAD]
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")

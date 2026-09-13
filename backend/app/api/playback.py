@@ -91,6 +91,7 @@ def create_playback(
         if (
             recovery is None
             or recovery.user_id != principal.user.id
+            or recovery.decision.get("viewing_user_id", recovery.user_id) != principal.watch_user_id
             or recovery.auth_session_id != principal.session.id
             or recovery.media_file_id != payload.file_id
         ):
@@ -135,7 +136,7 @@ def create_playback(
         raise HTTPException(429, "Active stream limit reached. Stop another stream first.")
     progress = db.scalar(
         select(WatchProgress).where(
-            WatchProgress.user_id == principal.user.id, WatchProgress.media_item_id == file.media_item_id
+            WatchProgress.user_id == principal.watch_user_id, WatchProgress.media_item_id == file.media_item_id
         )
     )
     position = progress.position_seconds if progress and not progress.watched and not payload.restart else 0
@@ -168,7 +169,7 @@ def create_playback(
         media_file_id=file.id,
         fingerprint=file.fingerprint,
         method=choice.method,
-        decision={**choice.model_dump(), "settings": policy.model_dump()},
+        decision={**choice.model_dump(), "settings": policy.model_dump(), "viewing_user_id": principal.watch_user_id},
         capabilities=payload.capabilities.model_dump(),
         audio_index=payload.audio_index
         if payload.audio_index is not None
@@ -281,7 +282,12 @@ def playback_recovery(
     manager: PlaybackManager = Depends(get_playback_manager),
 ) -> dict[str, Any]:
     row = db.get(PlaybackSession, session_id)
-    if row is None or row.user_id != principal.user.id or row.auth_session_id != principal.session.id:
+    if (
+        row is None
+        or row.user_id != principal.user.id
+        or row.auth_session_id != principal.session.id
+        or row.decision.get("viewing_user_id", row.user_id) != principal.watch_user_id
+    ):
         raise HTTPException(404, "Playback session not found")
     recoverable = manager.can_recover(row)
     return {
@@ -305,8 +311,11 @@ def progress(
         raise HTTPException(401, "Authentication required")
     playback, _file, _source = load_playback(db, principal, session_id, config)
     if payload.telemetry is not None and payload.sequence > playback.sequence:
-        playback.decision = {**playback.decision, "client_health": payload.telemetry.model_dump(),
-                             "client_health_at": utcnow().isoformat()}
+        playback.decision = {
+            **playback.decision,
+            "client_health": payload.telemetry.model_dump(),
+            "client_health_at": utcnow().isoformat(),
+        }
     return save_progress(
         db, playback, payload.position_seconds, payload.playing, payload.reason, payload.sequence, config
     )
@@ -320,7 +329,12 @@ def stop(
     manager: PlaybackManager = Depends(get_playback_manager),
 ) -> None:
     playback = db.get(PlaybackSession, session_id)
-    if playback is None or playback.user_id != principal.user.id or playback.auth_session_id != principal.session.id:
+    if (
+        playback is None
+        or playback.user_id != principal.user.id
+        or playback.auth_session_id != principal.session.id
+        or playback.decision.get("viewing_user_id", playback.user_id) != principal.watch_user_id
+    ):
         raise HTTPException(404, "Playback session not found")
     was_failed = playback.state == "failed"
     playback.state = "failed" if was_failed else "stopping"
@@ -438,9 +452,12 @@ def streams(
                 "source_width": video.width if video else None,
                 "source_bitrate_kbps": file.bitrate / 1000 if file.bitrate else None,
                 "output_width": (
-                    video.width if row.decision.get("video_copy") else
-                    round(video.width * row.decision.get("output_height", 0) / video.height / 2) * 2
-                ) if video and video.width and video.height else None,
+                    video.width
+                    if row.decision.get("video_copy")
+                    else round(video.width * row.decision.get("output_height", 0) / video.height / 2) * 2
+                )
+                if video and video.width and video.height
+                else None,
                 "subtitle_mode": "WebVTT" if row.subtitle_index is not None else "Off",
                 "started_at": _as_utc(row.started_at).isoformat(),
                 "client_health": row.decision.get("client_health"),

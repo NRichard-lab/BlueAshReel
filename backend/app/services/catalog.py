@@ -150,7 +150,14 @@ def primary_video_height() -> ScalarSelect[int | None]:
     )
 
 
-def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | None = None) -> list[dict[str, Any]]:
+def cards(
+    db: Session,
+    user_id: str,
+    items: list[MediaItem],
+    resolution: int | None = None,
+    *,
+    watch_user_id: str | None = None,
+) -> list[dict[str, Any]]:
     ids = [item.id for item in items]
     descriptive = (
         {
@@ -197,7 +204,9 @@ def cards(db: Session, user_id: str, items: list[MediaItem], resolution: int | N
     progress = {
         p.media_item_id: p
         for p in db.scalars(
-            select(WatchProgress).where(WatchProgress.user_id == user_id, WatchProgress.media_item_id.in_(ids))
+            select(WatchProgress).where(
+                WatchProgress.user_id == (watch_user_id or user_id), WatchProgress.media_item_id.in_(ids)
+            )
         )
     }
     artwork = {

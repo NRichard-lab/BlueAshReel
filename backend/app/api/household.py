@@ -231,7 +231,7 @@ def delete_user(
 
 @router.get("/profile")
 def profile(principal: Principal = Depends(current_principal), db: Session = Depends(get_db)) -> dict[str, Any]:
-    preferences = db.get(UserPreference, principal.user.id)
+    preferences = db.get(UserPreference, principal.watch_user_id)
     return {
         **public_user(principal.user, assignments(db, principal.user.id)),
         "auto_next": preferences.auto_next if preferences else True,
@@ -243,9 +243,9 @@ def profile(principal: Principal = Depends(current_principal), db: Session = Dep
 def update_profile(
     payload: PreferencesInput, principal: Principal = Depends(require_user_csrf), db: Session = Depends(get_db)
 ) -> dict[str, Any]:
-    preferences = db.get(UserPreference, principal.user.id)
+    preferences = db.get(UserPreference, principal.watch_user_id)
     if preferences is None:
-        preferences = UserPreference(user_id=principal.user.id)
+        preferences = UserPreference(user_id=principal.watch_user_id)
         db.add(preferences)
     preferences.auto_next = payload.auto_next
     preferences.next_countdown = payload.next_countdown

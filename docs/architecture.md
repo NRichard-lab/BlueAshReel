@@ -227,6 +227,37 @@ is revalidated on coordinator ticks; large root counts may warrant future cachin
 
 ## Connections and TV compatibility
 
+### Blue Home profile integration
+
+The central household domain is documented in the companion Portal's
+`docs/ARCHITECTURE.md` (Blue Home identity foundation) and
+`docs/CLAUDE_BLUE_HOME_HANDOFF.md`. It is separate from account authentication,
+Agent ownership and local library permissions. Do not merge the separate Blue Ash
+launch portal and Reel account databases by email; no federation currently exists.
+
+The Agent trusts an additive `blue_home` claim only from existing authenticated
+Portal authorization validation. Migration `300100000001` adds `blue_home_state`:
+stable profile/home/owner-account IDs map to a local viewing-state subject. Owner
+profiles reuse existing local owner IDs; new profiles use non-login state subjects
+without roles or library grants. No existing watch rows are copied/reset. The
+backup schema registry recognizes both the old schema and this additive migration.
+
+`Principal.user` remains the authenticated account for authorization and stream
+quotas; `Principal.watch_user_id` is used only for viewing state and preferences.
+Playback decisions freeze `viewing_user_id`; catalog/history/resume and progress
+writes use it. Watch-state identity does not confer library access. Linked external
+accounts need existing Portal membership and explicit local library grants, even
+when they share a viewing identity with a locally selected profile. New profiles
+do not see the owner's watch history. Names, PINs and custom avatar bytes remain
+central, not in Agent state. Disabled/unlinked profiles retain their history.
+
+Profile switches expire prior Portal media authorizations, causing existing relay
+revocation to retire circuits. Cleanup filters the old viewing identity; another
+profile's new playback is preserved. Missing claims retain legacy account state;
+trusted owner claims map losslessly to the original owner's state. The encrypted
+status operation advertises `blue_home_profiles: true`. The TV app has not been
+modified; consumers must implement the documented selection/PIN/reconnect flow.
+
 Pairing uses permanent Agent identity and protected private keys. Signed service
 authentication is independent from interactive MFA. General friendly-name
 projection is capability-negotiated. Portal inventory/status checks, outbound

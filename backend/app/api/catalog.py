@@ -122,7 +122,11 @@ def catalog(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     user_id = principal.user.id
-    query = select(MediaItem).outerjoin(WatchProgress, progress_join(user_id)).where(permitted_library(user_id))
+    query = (
+        select(MediaItem)
+        .outerjoin(WatchProgress, progress_join(principal.watch_user_id))
+        .where(permitted_library(user_id))
+    )
     if kind:
         query = query.where(MediaItem.kind == kind)
     if library_id:
@@ -254,12 +258,17 @@ def catalog(
             .limit(page_size)
         )
     )
-    return {"items": cards(db, user_id, items, resolution), "total": total, "page": page, "page_size": page_size}
+    return {
+        "items": cards(db, user_id, items, resolution, watch_user_id=principal.watch_user_id),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/home", response_model=HomeResponse)
 def home(principal: Principal = Depends(current_principal), db: Session = Depends(get_db)) -> dict[str, Any]:
-    return home_catalog(db, principal.user.id)
+    return home_catalog(db, principal.user.id, principal.watch_user_id)
 
 
 @router.get("/media/{media_id}")
@@ -270,7 +279,7 @@ def detail(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     item = load_item(db, principal.user.id, media_id)
-    result = cards(db, principal.user.id, [item])[0]
+    result = cards(db, principal.user.id, [item], watch_user_id=principal.watch_user_id)[0]
     files = db.scalars(
         select(MediaFile)
         .join(LibraryPath)
@@ -404,7 +413,12 @@ def episodes(
             .limit(page_size)
         )
     )
-    return {"items": cards(db, principal.user.id, items), "total": total, "page": page, "page_size": page_size}
+    return {
+        "items": cards(db, principal.user.id, items, watch_user_id=principal.watch_user_id),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/media/{media_id}/next")
@@ -420,7 +434,7 @@ def next_episode(
         select(MediaItem)
         .join(Episode)
         .join(Season)
-        .outerjoin(WatchProgress, progress_join(principal.user.id))
+        .outerjoin(WatchProgress, progress_join(principal.watch_user_id))
         .where(Season.series_id == series_id, permitted_library(principal.user.id), file_available())
     )
     if season and episode:
@@ -439,7 +453,7 @@ def next_episode(
         if series_id
         else None
     )
-    return {"item": cards(db, principal.user.id, [found])[0] if found else None}
+    return {"item": cards(db, principal.user.id, [found], watch_user_id=principal.watch_user_id)[0] if found else None}
 
 
 class WatchInput(BaseModel):
@@ -485,7 +499,7 @@ def watched(
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
     load_item(db, principal.user.id, media_id)
-    return set_watched(db, principal.user.id, media_id, payload.watched)
+    return set_watched(db, principal.watch_user_id, media_id, payload.watched)
 
 
 @router.delete("/media/{media_id}/continue")
@@ -497,7 +511,7 @@ def remove_from_continue(
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
     load_item(db, principal.user.id, media_id)
-    return dismiss_continue(db, principal.user.id, media_id)
+    return dismiss_continue(db, principal.watch_user_id, media_id)
 
 
 @router.get("/artwork/{artwork_id}")

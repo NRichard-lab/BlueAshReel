@@ -17,7 +17,7 @@ from typing import Any, cast
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, select, tuple_, update
+from sqlalchemy import delete, select, text, tuple_, update
 
 from app.api import catalog, playback
 from app.api import router as administration
@@ -214,6 +214,8 @@ class RemoteMedia:
             or authorization.get("expires_at", 0) <= time.time()
         ):
             raise HTTPException(403, "Access denied")
+        if not db.in_transaction():
+            db.execute(text("BEGIN IMMEDIATE"))
         user_id = identifier(authorization["user_id"])
         role = authorization.get("role")
         grant = db.get(PortalGrant, user_id)
@@ -272,8 +274,11 @@ class RemoteMedia:
             raise HTTPException(403, "Access denied")
         else:
             session.expires_at = datetime.fromtimestamp(authorization["expires_at"], UTC)
+        from app.services.blue_home import viewing_user
+
+        state_user_id = viewing_user(db, authorization, self.owner_id, user)
         db.commit()
-        return Principal(user=user, session=session)
+        return Principal(user=user, session=session, profile_user_id=state_user_id)
 
     @staticmethod
     def new_user(db: Any, portal_user_id: str) -> User:
@@ -393,6 +398,12 @@ class RemoteMedia:
 
     def release(self, authorization: dict[str, Any]) -> None:
         with self.factory() as db:
+            from app.models import BlueHomeState
+
+            context = authorization.get("blue_home") or {}
+            mapping = db.get(BlueHomeState, context.get("profile_id")) if context.get("profile_id") else None
+            grant = db.get(PortalGrant, authorization["user_id"])
+            watch_id = mapping.local_user_id if mapping else grant.local_user_id if grant else None
             rows = list(
                 db.scalars(
                     select(PlaybackSession).where(
@@ -401,6 +412,7 @@ class RemoteMedia:
                     )
                 )
             )
+            rows = [row for row in rows if row.decision.get("viewing_user_id", row.user_id) == watch_id]
             for row in rows:
                 row.state, row.ended_at, row.was_playing = "stopped", utcnow(), False
                 self.forget_playback(row.id)
@@ -410,7 +422,7 @@ class RemoteMedia:
             self.manifest_snapshots = {
                 key: value
                 for key, value in self.manifest_snapshots.items()
-                if value.binding[2] != authorization["session_id"]
+                if value.binding[3] not in {row.id for row in rows}
             }
 
     def _execute(self, request: dict[str, Any], authorization: dict[str, Any]) -> Any:
@@ -421,7 +433,13 @@ class RemoteMedia:
             size = integer(args.get("page_size", 24), 1, 24)
             kind = "media"
             if op == "status":
-                result: Any = {"health": "ok", "mode": "relay", "remote_media_available": True}
+                result: Any = {
+                    "health": "ok",
+                    "mode": "relay",
+                    "remote_media_available": True,
+                    "blue_home_profiles": True,
+                    "blue_home": authorization.get("blue_home"),
+                }
             elif op in {"settings.general.get", "settings.general.update"}:
                 self.owner(authorization)
                 if op == "settings.general.get":
@@ -542,9 +560,9 @@ class RemoteMedia:
 
                 load_item(db, principal.user.id, media_id)
                 result = (
-                    catalog.set_watched(db, principal.user.id, media_id, args["watched"])
+                    catalog.set_watched(db, principal.watch_user_id, media_id, args["watched"])
                     if op == "catalog.watched"
-                    else catalog.dismiss_continue(db, principal.user.id, media_id)
+                    else catalog.dismiss_continue(db, principal.watch_user_id, media_id)
                 )
             elif op == "catalog.detail":
                 result = catalog.detail(self.resolve(db, "media", args["media_id"]), page, principal, db)
@@ -750,9 +768,14 @@ class RemoteMedia:
                 if folder_update.enabled is not None:
                     raise ValueError("Change library state separately from folders")
                 # Resolve and validate the entire edit before changing any configuration.
-                additions = administration._validated_paths(
-                    self.selected_paths(args.get("add_selection_ids", [])), self.config,
-                ) if args.get("add_selection_ids") else []
+                additions = (
+                    administration._validated_paths(
+                        self.selected_paths(args.get("add_selection_ids", [])),
+                        self.config,
+                    )
+                    if args.get("add_selection_ids")
+                    else []
+                )
                 removed = args.get("remove_path_ids", [])
                 if not isinstance(removed, list) or len(removed) > 16:
                     raise ValueError("Invalid paths")
@@ -774,9 +797,14 @@ class RemoteMedia:
                     if path.id in remove_ids:
                         path.enabled = False
                 if remove_ids:
-                    db.execute(update(MediaFile).where(
-                        MediaFile.library_path_id.in_(remove_ids), MediaFile.available.is_(True),
-                    ).values(available=False, missing_since=utcnow()))
+                    db.execute(
+                        update(MediaFile)
+                        .where(
+                            MediaFile.library_path_id.in_(remove_ids),
+                            MediaFile.available.is_(True),
+                        )
+                        .values(available=False, missing_since=utcnow())
+                    )
                 db.flush()
                 recompute_media_availability(db, library_id)
                 db.commit()

@@ -59,6 +59,16 @@ class PortalGrant(Base):
     access_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
+class BlueHomeState(Base):
+    """Stable central profile -> existing local viewing-state subject, not a login/grant."""
+
+    __tablename__ = "blue_home_state"
+    profile_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    home_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    owner_account_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    local_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True)
+
+
 class RemoteObject(Base):
     """Random, Agent-scoped revocable aliases; never disclose local database IDs."""
 

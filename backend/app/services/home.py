@@ -13,7 +13,7 @@ HOME_RAIL_LIMIT = 20
 LEGACY_RAIL_LIMIT = 8
 
 
-def home_catalog(db: Session, user_id: str) -> dict[str, Any]:
+def home_catalog(db: Session, user_id: str, watch_user_id: str | None = None) -> dict[str, Any]:
     base = (
         select(MediaItem)
         .where(permitted_library(user_id), MediaItem.available.is_(True), file_available())
@@ -27,7 +27,7 @@ def home_catalog(db: Session, user_id: str) -> dict[str, Any]:
         if kind in {"episode", "series"}:
             query = query.where(MediaItem.library_id.in_(select(Library.id).where(Library.library_type == "tv")))
         if history:
-            query = query.join(WatchProgress, progress_join(user_id))
+            query = query.join(WatchProgress, progress_join(watch_user_id or user_id))
             if history == "continue":
                 query = query.where(
                     WatchProgress.watched.is_(False),
@@ -60,7 +60,11 @@ def home_catalog(db: Session, user_id: str) -> dict[str, Any]:
     unique = {item.id: item for items in rails.values() for item in items}
     # Files, video metadata, progress and artwork are fetched once for the
     # bounded union, never once per card or repeatedly for overlapping rails.
-    card_map = {card["id"]: card for card in cards(db, user_id, list(unique.values()))} if unique else {}
+    card_map = (
+        {card["id"]: card for card in cards(db, user_id, list(unique.values()), watch_user_id=watch_user_id)}
+        if unique
+        else {}
+    )
     shows = (
         dict(
             db.execute(
