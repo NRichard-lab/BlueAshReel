@@ -229,6 +229,16 @@ is revalidated on coordinator ticks; large root counts may warrant future cachin
 
 ### Blue Home profile integration
 
+Verified development source overlay: `a348ae759dfebd14b6b93dca8eaef3797e21415c`,
+paired with Portal `b4e11665e38cd6b440f984f45621acdf3e4a5fce` on current server
+`blue-reel-web01` / `192.168.50.107` (2026-09-13 UTC). Source-only update receipt:
+`state/blue-home-deployment.json` beneath the Development data root. The tray's
+installation-baseline source_revision is not rewritten by source overlays.
+Migration `300100000001`, pairing/configuration preservation, owner resume mapping
+and live Direct Play were verified. Additive migration and backup schema registry
+remain available on a runtime-source rollback; mutable data is never overwritten
+by this source update. Full evidence is in the Portal completion report.
+
 The central household domain is documented in the companion Portal's
 `docs/ARCHITECTURE.md` (Blue Home identity foundation) and
 `docs/CLAUDE_BLUE_HOME_HANDOFF.md`. It is separate from account authentication,
