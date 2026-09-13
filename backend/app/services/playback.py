@@ -21,6 +21,7 @@ from app.dependencies import Principal
 from app.models import ApplicationSetting, MediaFile, PlaybackSession, UserSession, WatchProgress, utcnow
 from app.security import _as_utc
 from app.services.catalog import authorized_file
+from app.services.remote_streaming import require_remote_enabled
 from app.services.transcoding_policy import session_policy
 
 
@@ -72,6 +73,8 @@ def load_playback(
         seconds=session_policy(playback, config).inactive_session_seconds
     ):
         raise HTTPException(410, "This playback session has ended. Start playback again.")
+    if playback.decision.get("remote_playback") or principal.remote_playback:
+        require_remote_enabled(db, config)
     file, source = authorized_file(db, principal.user.id, playback.media_file_id, config)
     if playback.fingerprint != file.fingerprint:
         raise HTTPException(409, "Source changed. Start a new playback session after rescanning.")

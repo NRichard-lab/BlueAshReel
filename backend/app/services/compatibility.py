@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import AppConfig
 from app.models import MediaFile
+from app.services.remote_streaming import RemoteStreamingSettings
 from app.services.transcoding_policy import TranscodingPolicy, default_policy
 
 RULES_VERSION = 2
@@ -52,7 +53,8 @@ class Decision(BaseModel):
 
 
 def decide(
-    file: MediaFile, choice: PlaybackChoice, config: AppConfig, policy: TranscodingPolicy | None = None
+    file: MediaFile, choice: PlaybackChoice, config: AppConfig, policy: TranscodingPolicy | None = None,
+    remote: RemoteStreamingSettings | None = None,
 ) -> Decision:
     policy = policy or default_policy(config)
 
@@ -84,9 +86,20 @@ def decide(
         "480p": (480, 1200),
     }[choice.quality]
     height = min(video.height or 1080, quality_height, caps.max_height, policy.max_height)
+    if remote and remote.max_height is not None:
+        if not video.height:
+            return unsupported("Remote quality cannot be verified for this source. Rescan this file.")
+        height = min(height, remote.max_height)
     height = max(2, height // 2 * 2)
     bitrate = min(quality_bitrate, policy.max_bitrate_kbps)
     reduce = (video.height or 0) > height or bool(file.bitrate and file.bitrate > bitrate * 1000)
+    remote_bitrate = remote.bitrate_limit_bps if remote else None
+    if remote_bitrate:
+        # Container bitrate is the existing probe's aggregate source measurement.
+        # Unknown bitrate must not silently bypass an explicitly configured cap.
+        reduce = reduce or not file.bitrate or file.bitrate > remote_bitrate
+        # Reserve audio (160 kbps) and 5% mux overhead; FFmpeg maxrate is video-only.
+        bitrate = min(bitrate, int(remote_bitrate * 0.95) // 1000 - 160)
     burn = bool(subtitle and subtitle.codec in IMAGE_SUBTITLES)
     h264 = (
         caps.h264
@@ -139,6 +152,8 @@ def decide(
     if not (caps.hls and caps.h264 and caps.aac):
         return unsupported("This browser cannot play the source or the local H.264/AAC streaming output.")
     video_copy = h264 and not reduce and not burn and choice.delivery != "transcode"
+    if remote_bitrate and not aac:
+        video_copy = False
     if choice.delivery == "remux" and not (video_copy and aac):
         return unsupported("Forced Remux requires compatible video and audio without quality reduction.")
     method = "remux" if video_copy and aac else "transcode"
@@ -154,7 +169,7 @@ def decide(
         if method == "remux"
         else "Local conversion is required by the selected video, audio, subtitle, or quality settings.",
         video_copy=video_copy,
-        audio_copy=aac,
+        audio_copy=aac and (not remote_bitrate or video_copy),
         output_height=height,
         bitrate_kbps=bitrate,
         burn_subtitle=burn,

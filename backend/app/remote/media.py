@@ -278,7 +278,7 @@ class RemoteMedia:
 
         state_user_id = viewing_user(db, authorization, self.owner_id, user)
         db.commit()
-        return Principal(user=user, session=session, profile_user_id=state_user_id)
+        return Principal(user=user, session=session, profile_user_id=state_user_id, remote_playback=True)
 
     @staticmethod
     def new_user(db: Any, portal_user_id: str) -> User:
@@ -325,6 +325,12 @@ class RemoteMedia:
                 result = await asyncio.to_thread(self.execute, request, authorization)
             return {"id": request_id, "ok": True, "result": result}
         except HTTPException as error:
+            from app.services.remote_streaming import DISABLED, LIMIT_REACHED
+
+            if error.detail in (DISABLED, LIMIT_REACHED):
+                return {"id": request_id, "ok": False, "error": (
+                    "remote_streaming_disabled" if error.detail == DISABLED else "remote_session_limit"
+                )}
             code = {
                 401: "access_denied",
                 403: "access_denied",
@@ -456,6 +462,15 @@ class RemoteMedia:
                         raise ValueError("Libraries settings read does not accept a payload")
                     return read_library_settings(db).model_dump()
                 return update_library_settings(db, args).model_dump()
+            elif op in {"settings.remote_streaming.get", "settings.remote_streaming.update"}:
+                from app.services.remote_streaming import read_remote_settings, update_remote_settings
+
+                self.owner(authorization)
+                if op == "settings.remote_streaming.get":
+                    if args:
+                        raise ValueError("Remote Streaming settings read does not accept a payload")
+                    return read_remote_settings(db, self.config).model_dump()
+                return update_remote_settings(db, self.config, args).model_dump()
             elif op in {"transcoding.get", "transcoding.update", "transcoding.test"}:
                 self.owner(authorization)
                 policy = read_policy(db, self.config)

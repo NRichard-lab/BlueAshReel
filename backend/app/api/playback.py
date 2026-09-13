@@ -18,6 +18,7 @@ from app.services.catalog import authorized_file
 from app.services.compatibility import TEXT_SUBTITLES, Capabilities, Decision, PlaybackChoice, decide
 from app.services.playback import byte_range, file_chunks, load_playback, playback_budget, save_progress, setting
 from app.services.process_supervisor import owned_size
+from app.services.remote_streaming import LIMIT_REACHED, require_remote_enabled
 from app.services.subtitles import extract_subtitles, retime_vtt
 from app.services.transcoding import SEGMENT_NAME, PlaybackManager, no_links
 from app.services.transcoding_policy import (
@@ -68,7 +69,8 @@ def decision(
 ) -> Decision:
     playback_budget.check(f"decision:{principal.user.id}", 60)
     file, _source = authorized_file(db, principal.user.id, payload.file_id, config)
-    return decide(file, payload, config, read_policy(db, config))
+    remote = require_remote_enabled(db, config) if principal.remote_playback else None
+    return decide(file, payload, config, read_policy(db, config), remote)
 
 
 @router.post("/playback/sessions", status_code=201)
@@ -85,6 +87,7 @@ def create_playback(
     db.execute(text("BEGIN IMMEDIATE"))
     if not principal.user.is_active or principal.session.revoked_at is not None:
         raise HTTPException(401, "Authentication required")
+    remote = require_remote_enabled(db, config) if principal.remote_playback else None
     recovery: PlaybackSession | None = None
     if payload.recovery_from:
         recovery = db.get(PlaybackSession, payload.recovery_from)
@@ -114,7 +117,7 @@ def create_playback(
         recovery.state, recovery.ended_at, recovery.was_playing = "failed", utcnow(), False
         recovery.error = "Hardware conversion failed during playback. A software recovery was requested."
         recovery.decision = {**recovery.decision, "recovery_used": True}
-    choice = decide(file, payload, config, policy)
+    choice = decide(file, payload, config, policy, remote)
     if choice.method == "unsupported":
         raise HTTPException(422, choice.reason)
     for old in db.scalars(select(PlaybackSession).where(PlaybackSession.state == "active")):
@@ -123,6 +126,13 @@ def create_playback(
         ):
             old.state, old.ended_at = "expired", utcnow()
     db.flush()
+    if remote:
+        remote_count = db.scalar(select(func.count(PlaybackSession.id)).where(
+            PlaybackSession.state == "active",
+            PlaybackSession.decision["remote_playback"].as_boolean().is_(True),
+        )) or 0
+        if remote_count >= remote.session_limit:
+            raise HTTPException(429, LIMIT_REACHED)
     total = db.scalar(select(func.count(PlaybackSession.id)).where(PlaybackSession.state == "active")) or 0
     own = (
         db.scalar(
@@ -169,7 +179,9 @@ def create_playback(
         media_file_id=file.id,
         fingerprint=file.fingerprint,
         method=choice.method,
-        decision={**choice.model_dump(), "settings": policy.model_dump(), "viewing_user_id": principal.watch_user_id},
+        decision={**choice.model_dump(), "settings": policy.model_dump(), "viewing_user_id": principal.watch_user_id,
+                  "remote_playback": principal.remote_playback,
+                  "remote_settings": remote.model_dump() if remote else None},
         capabilities=payload.capabilities.model_dump(),
         audio_index=payload.audio_index
         if payload.audio_index is not None

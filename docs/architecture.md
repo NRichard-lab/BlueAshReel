@@ -140,6 +140,62 @@ controls do not display frontend placeholders as real Agent configuration.
 Save applies policy for future coordinator ticks and new analysis work; no
 restart is requested. Analysis is captured at scan start, not changed mid-probe.
 
+## Remote Streaming policy and Settings relocation
+
+September 13, 2026 source implementation: Portal Settings now displays Remote
+Streaming while retaining `remote-access` hashes/component identifiers. Connection
+status is extracted intact into a single System card after the existing Agent
+summary; other System placeholders/actions remain unimplemented and unchanged.
+The companion Portal `docs/ARCHITECTURE.md` documents the UI and full contract.
+
+Agent `services/remote_streaming.py` owns schema 1 in existing
+`application_settings`, key `remote_streaming.settings`. Owner-only encrypted RPC
+`settings.remote_streaming.get/update` reads/partially updates strict `enabled`,
+`max_quality`, `bitrate_limit_bps` and `session_limit`. Defaults are enabled,
+original/no additional quality cap, null/no additional bitrate cap, and the
+existing overall session ceiling (bounded 1–100). Explicit bitrate is integer
+1,000,000–50,000,000 bps; sessions are integer 1–100. Reads do not write. Atomic
+SQLite updates validate and commit; Web's existing Save/Discard has an independent
+remote baseline and retains failed edits. No DDL migration/restart is required.
+
+`RemoteMedia.principal` sets an internal `remote_playback` flag for relay operations;
+clients cannot assert locality. All current Windows media RPC uses relay, including
+LAN browsers. Native loopback authorization provides status, not a LAN playback
+listener. The retained container HTTP API remains a local-network ingress and keeps
+its local classification. No forwarded-header or request-payload trust was added.
+Any future direct-media ingress needs its own trusted locality contract.
+
+Disabled remote streaming rejects decisions, new admission and further remote
+media/state/progress reads with `remote_streaming_disabled` (403 internally).
+Stop, catalog, settings, pairing and Portal connectivity remain available. Buffered
+media may finish; unchanged inactivity cleanup reaps abandoned processes. Local
+playback is unaffected. The existing admission `BEGIN IMMEDIATE` expires stale
+sessions then atomically counts active `decision.remote_playback=true` rows across
+users. Full quota returns `remote_session_limit` (429 internally), preserving active
+streams. Existing total/per-user limits and inactivity timeout (default 90s, range
+30–600s) still apply. Startup expires old unmarked active rows as it already did.
+
+Compatibility `decide` accepts an internal optional remote policy, composing ceilings
+with existing transcoding policy/capabilities. Resolution never upscales. Missing
+height with explicit quality ceiling fails pending rescan. Known sources below
+limits keep Direct Play/remux; unknown/excess aggregate bitrate under an explicit
+cap requires the current converter. Forced-remux/direct-only/4K restrictions still
+reject unsupported conversions. Policy is snapshotted in existing decision JSON;
+no parallel playback system or client request schema was introduced.
+
+The bitrate control is a per-stream media encoding budget. Conversion subtracts
+5% mux allowance and 160 kbps AAC from decimal bps, then caps existing video
+`-b:v`/`-maxrate`/`-bufsize`; audio uses the existing 160 kbps AAC path when video
+converts under an explicit cap. Source estimates, VBR peaks and actual mux overhead
+mean this is not an instantaneous wire-rate guarantee; UI and Portal docs state
+that limitation. Original/null preserve the existing global transcoding behavior.
+
+TV contracts remain additive; old request shapes, authentication and opaque IDs
+are unchanged. TV sources are untouched. Optional error-message support is described
+in Portal `docs/CLAUDE_REMOTE_STREAMING_HANDOFF.md`. Deferred: native direct playback
+locality, exact wire-rate shaping, richer probe/peak measurements, complete client
+negotiation, codec matrices, hardware profiles and dynamic encoder discovery.
+
 ## Libraries and safety
 
 Models: `Library`, `LibraryPath`, `MediaItem`, `MediaFile` in Agent `app/models.py`.

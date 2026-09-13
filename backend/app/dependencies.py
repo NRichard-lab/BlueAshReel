@@ -18,6 +18,7 @@ class Principal:
     user: User
     session: UserSession
     profile_user_id: str | None = None
+    remote_playback: bool = False  # Set only by the Agent relay dispatcher, never a client payload.
 
     @property
     def watch_user_id(self) -> str:
