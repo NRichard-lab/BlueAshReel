@@ -134,6 +134,7 @@ class Connector:
         self.next_update_check = 0.0
         self.update_available = False
         self.update_version: str | None = None
+        self.name_projection = False
         # Integrated native mode does not use main()'s process-wide log disable.
         # Never let debug socket logging serialize authentication frames.
         logging.getLogger("websockets.client").setLevel(logging.CRITICAL + 1)
@@ -366,8 +367,9 @@ class Connector:
         while True:
             heartbeat = {
                 "type": "heartbeat", "protocol": 1, "version": self.version, "os": OS_CATEGORY,
-                "name": self.agent_name(),
             }
+            if self.name_projection:
+                heartbeat["name"] = self.agent_name()
             if self.media and self.media.config.local_transport_enabled:
                 heartbeat["local_transport"] = {
                     "version": 1,
@@ -383,6 +385,8 @@ class Connector:
             response = json.loads(await asyncio.wait_for(socket.recv(), timeout=30))
             if response.get("type") != "heartbeat_ack":
                 raise ValueError("Invalid heartbeat response")
+            if response.get("general_name_projection") is True:
+                self.name_projection = True
             ticket_key = response.get("local_ticket_public_key")
             if ticket_key:
                 decode(ticket_key, 32)

@@ -8,7 +8,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import yaml
@@ -285,6 +285,28 @@ def test_relay_application_heartbeats_continue_without_browser_sessions(tmp_path
         asyncio.run(connector.relay_loop(IdleSocket()))
     assert len(messages) >= 4
     assert all(frame == {"type": "heartbeat", "protocol": 1} for frame in messages)
+
+
+def test_broker_negotiates_name_projection_before_sending_name(tmp_path: Path) -> None:
+    media = Mock()
+    media.config.local_transport_enabled = False
+    media.general_settings.return_value.identity.agent_name = "Family Agent"
+    connector = Connector(tmp_path / "control", tmp_path / "identity", "0.1.0", media=media)
+    messages: list[dict] = []
+
+    class Socket:
+        async def send(self, frame: str) -> None:
+            messages.append(json.loads(frame))
+
+        async def recv(self) -> str:
+            if len(messages) == 1:
+                return '{"type":"heartbeat_ack","general_name_projection":true}'
+            raise asyncio.CancelledError
+
+    with patch("app.remote.connector.asyncio.sleep", new=AsyncMock()), pytest.raises(asyncio.CancelledError):
+        asyncio.run(connector.broker_loop(Socket()))
+    assert "name" not in messages[0]
+    assert messages[1]["name"] == "Family Agent"
 
 
 def test_transient_socket_policy_close_does_not_destroy_local_identity(tmp_path: Path) -> None:
