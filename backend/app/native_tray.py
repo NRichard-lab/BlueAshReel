@@ -108,12 +108,21 @@ class Supervisor:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
 
     def preferences(self) -> Any:
+        from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
-        from app.database import create_database_engine
         from app.services.general_settings import read_general
 
-        engine = create_database_engine(self.config.database_url)
+        # The tray supervisor has an already validated native configuration, but
+        # it intentionally does not install the API process environment. Avoid
+        # importing app.database here because its module-level engine reads that
+        # separate environment during import.
+        engine = create_engine(
+            self.config.database_url,
+            connect_args={"check_same_thread": False, "timeout": 30},
+            pool_pre_ping=True,
+            future=True,
+        )
         try:
             with sessionmaker(bind=engine)() as db:
                 return read_general(db, self.config)
