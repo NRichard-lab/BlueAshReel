@@ -37,7 +37,7 @@ from app.models import (
 )
 from app.remote.protocol import encode
 from app.remote.storage import read_json, write_json
-from app.schemas import LibraryCreate, LibraryPathCreate, LibraryUpdate, ScanRequest
+from app.schemas import LibraryCreate, LibraryUpdate, ScanRequest
 from app.services.catalog import safe_text
 from app.services.compatibility import PlaybackChoice
 from app.services.general_settings import GeneralSettings, read_general, update_general
@@ -744,7 +744,9 @@ class RemoteMedia:
                 from app.services.media_state import recompute_media_availability
 
                 administration._ensure_library_not_scanning(db, library_id)
-                folder_update = LibraryUpdate.model_validate({key: args[key] for key in ("name", "enabled") if key in args})
+                folder_update = LibraryUpdate.model_validate(
+                    {key: args[key] for key in ("name", "enabled") if key in args}
+                )
                 if folder_update.enabled is not None:
                     raise ValueError("Change library state separately from folders")
                 # Resolve and validate the entire edit before changing any configuration.
@@ -786,16 +788,6 @@ class RemoteMedia:
                 db,
                 self.config,
             )
-            if args.get("add_selection_ids"):
-                for path in self.selected_paths(args["add_selection_ids"]):
-                    administration.add_library_path(
-                        library_id, LibraryPathCreate(path=path), principal, db, self.config
-                    )
-            removed = args.get("remove_path_ids", [])
-            if not isinstance(removed, list) or len(removed) > 16:
-                raise ValueError("Invalid paths")
-            for path_id in removed:
-                administration.remove_library_path(library_id, self.resolve(db, "path", path_id), principal, db)
             return administration.get_library(library_id, principal, db, self.config), "library"
         if op == "libraries.delete":
             if db.get(ScanLock, library_id):
