@@ -108,6 +108,8 @@ dispatched. Relevant operations:
 | `grants.set` | user_id, viewer/manager role, enabled, access_version, local library_ids |
 | `grants.list` | optional page |
 | `grants.get` | user_id; exact member grant, independent of list pagination; maximum 100 library assignments |
+| `settings.general.get` | empty; Owner-only versioned local General settings and capabilities |
+| `settings.general.update` | Owner-only partial `identity`, `language_region`, and `startup_connection` groups |
 | `playback.decision`, `playback.start` | file_id, browser capabilities, audio_index, subtitle_index, quality, position_seconds |
 | `playback.bytes` | session_id, resource file/manifest/segment/subtitles, optional segment UUID, offset, length; optional snapshot_id UUID for manifests |
 | `playback.manifest.release` | session_id, snapshot_id; idempotent release of an authorized manifest snapshot |

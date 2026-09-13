@@ -41,10 +41,12 @@ from app.remote.storage import read_json, write_json
 from app.schemas import LibraryCreate, LibraryPathCreate, LibraryUpdate, ScanRequest
 from app.services.catalog import safe_text
 from app.services.compatibility import PlaybackChoice
+from app.services.general_settings import GeneralSettings, read_general, update_general
 from app.services.media_roots import _ensure_not_protected
 from app.services.paths import assert_no_link_components, native_directory_guard, validate_windows_path_text
 from app.services.playback import load_playback
 from app.services.transcoding_policy import TranscodingPolicy, read_policy
+from app.services.windows_startup import startup_registration
 
 MAX_CHUNK = 131072
 MAX_CHUNK_LOCAL = 1048576
@@ -96,6 +98,10 @@ class RemoteMedia:
     def bind(self, agent_id: str, owner_id: str, identity_fingerprint: str = "") -> None:
         self.agent_id, self.owner_id = identifier(agent_id), identifier(owner_id)
         self.identity_fingerprint = identity_fingerprint
+
+    def general_settings(self) -> GeneralSettings:
+        with self.factory() as db:
+            return read_general(db, self.config, startup_registration(self.config))
 
     def alias(self, db: Any, kind: str, local_id: str) -> str:
         row = db.scalar(
@@ -354,6 +360,8 @@ class RemoteMedia:
             code = "invalid_request"
         except (TimeoutError, ImportError):
             code = "local_confirmation_required"
+        except OSError:
+            code = "system_operation_failed"
         except Exception:
             code = "operation_failed"
         finally:
@@ -455,6 +463,13 @@ class RemoteMedia:
                         "version": 1, "port": self.config.local_transport_port,
                         "identity_fingerprint": self.identity_fingerprint, "max_chunk_bytes": MAX_CHUNK_LOCAL,
                     }
+            elif op in {"settings.general.get", "settings.general.update"}:
+                self.owner(authorization)
+                if op == "settings.general.get":
+                    if args:
+                        raise ValueError("General settings read does not accept a payload")
+                    return read_general(db, self.config, startup_registration(self.config)).model_dump()
+                return update_general(db, self.config, args, startup_registration(self.config)).model_dump()
             elif op in {"transcoding.get", "transcoding.update", "transcoding.test"}:
                 self.owner(authorization)
                 policy = read_policy(db, self.config)

@@ -38,6 +38,12 @@ the shared configuration/Compose defaults.
 
 Deployment settings live in the uncommitted `.env` file. Product identity lives only in `config/product.json`. Application settings that need an audit trail are stored in SQLite and changed through Owner-authorized APIs/UI.
 
+Owner-editable General settings are documented in
+[General Agent settings](general-settings.md). Their durable values live in the
+existing `application_settings` SQLite table; the native Windows login-startup
+toggle reflects the actual per-user registry registration instead of a database
+flag.
+
 Run a bootstrap script to generate `.env`; do not copy the placeholder secret into a live installation.
 
 ## Product identity

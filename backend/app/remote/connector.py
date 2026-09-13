@@ -167,12 +167,22 @@ class Connector:
     def enabled(self) -> bool:
         return read_json(self.control / "desired.json").get("enabled") is True
 
+    def agent_name(self) -> str:
+        settings = getattr(self.media, "general_settings", None)
+        if callable(settings):
+            return settings().identity.agent_name
+        return str(self.credentials.get("name") or "Blue Ash Reel Agent")
+
+    def auto_reconnect(self) -> bool:
+        settings = getattr(self.media, "general_settings", None)
+        return not callable(settings) or settings().startup_connection.auto_reconnect
+
     def publish(self) -> None:
         public = self.private_key.public_key().public_bytes_raw() if self.private_key else None
         write_json(self.control / "status.json", {
             "enabled": self.enabled(), "paired": self.paired, "state": self.state,
             "agent_id": self.credentials.get("agent_id"), "account_email": self.credentials.get("account_email"),
-            "name": self.credentials.get("name"), "fingerprint": fingerprint(public) if public else None,
+            "name": self.agent_name(), "fingerprint": fingerprint(public) if public else None,
             "fingerprint_short": readable_fingerprint(fingerprint(public)) if public else None,
             "last_heartbeat": self.last_heartbeat, "updated_at": time.time(),
             "central_revocation_pending": (self.identity / "revocation.json").exists(),
@@ -354,7 +364,10 @@ class Connector:
 
     async def broker_loop(self, socket: Any) -> None:
         while True:
-            heartbeat = {"type": "heartbeat", "protocol": 1, "version": self.version, "os": OS_CATEGORY}
+            heartbeat = {
+                "type": "heartbeat", "protocol": 1, "version": self.version, "os": OS_CATEGORY,
+                "name": self.agent_name(),
+            }
             if self.media and self.media.config.local_transport_enabled:
                 heartbeat["local_transport"] = {
                     "version": 1,
@@ -515,7 +528,7 @@ class Connector:
                                 outstanding[sid] += 1
                                 queues[sid].put_nowait(request)
                         else:
-                            reply = sessions[sid].respond(frame, name=self.credentials["name"], version=self.version)
+                            reply = sessions[sid].respond(frame, name=self.agent_name(), version=self.version)
                             await self.send(socket, reply)
                     elif frame.get("type") == "close":
                         discard(sid, revoked=frame.get("reason") == "revoked")
@@ -598,10 +611,12 @@ class Connector:
                     except Exception:
                         self.state = "connection_failed"
                     self.connection = None
-                    if self.enabled():
+                    if self.enabled() and self.auto_reconnect():
                         self.state = "reconnecting"
-                    self.retry_at = time.monotonic() + reconnect_delay(self.attempt)
-                    self.attempt += 1
+                        self.retry_at = time.monotonic() + reconnect_delay(self.attempt)
+                        self.attempt += 1
+                    elif self.enabled():
+                        write_json(self.control / "desired.json", {"enabled": False})
                 if self.state in {"waiting_portal_approval", "waiting_local_confirmation"} and (
                     self.pairing_expires_at <= time.time()
                 ):
